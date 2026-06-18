@@ -1,0 +1,50 @@
+# ───── Python ─────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ───── Secrets / environment ─────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# ───── Learning data / model caches / scraped data ─────
+data/
+*.sqlite
+*.db
+*.log
+.cache/
+src/**/cache/
+
+# ───── Node / frontend ─────
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/node_modules/
+*.local
+
+# ───── Editors / OS ─────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ───── Playwright / browser profiles ─────
+.playwright/
+*-browser-profile/
+chrome-profile/

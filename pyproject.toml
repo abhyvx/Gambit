@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bet-placer"
+version = "0.1.0"
+description = "AI Sports Betting Analyst & Value Betting Engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "catboost>=1.2",
+    "scipy>=1.11",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "playwright>=1.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.1"]
+
+[project.scripts]
+bet-placer = "bet_placer.main:main"
+bet-placer-api = "bet_placer.api.server:run_server"
+
+[tool.setuptools.packages.find]
+where = ["src"]

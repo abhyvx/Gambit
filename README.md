@@ -1,4 +1,4 @@
-# GAMBIT — AI Sports Betting Analyst & Value Betting Engine
+# GAMBIT - AI Sports Betting Analyst & Value Betting Engine
 
 > **© 2026 Abhyuday Khanna. All Rights Reserved. Proprietary and confidential.**
 > This is private, closed-source software. No license to use, copy, modify, or

@@ -74,18 +74,18 @@ export default function PortfolioPage() {
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
 
   const summary = useMemo(() => ([
-    { label: 'Imported bets', value: portfolio.bet_count ?? 0 },
-    { label: 'Settled', value: portfolio.settled_count ?? 0 },
-    { label: 'Open', value: portfolio.open_count ?? 0 },
-    { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%` },
+    { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%`, tone: (portfolio.roi_pct ?? 0) >= 0 ? 'good' : 'warn' },
+    { label: 'P/L', value: fmtUsd(portfolio.profit_usd), tone: (portfolio.profit_usd ?? 0) >= 0 ? 'good' : 'warn' },
     { label: 'Staked (USD)', value: fmtUsd(portfolio.total_staked) },
-    { label: 'Returned (USD)', value: fmtUsd(portfolio.total_return) },
-    { label: 'P/L (USD)', value: fmtUsd(portfolio.profit_usd) },
     { label: 'Win-loss', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}` },
     { label: 'Singles', value: portfolio.singles_count ?? 0 },
     { label: 'Parlays', value: portfolio.parlays_count ?? 0 },
     { label: 'Avg odds', value: portfolio.avg_odds ?? '—' },
   ]), [portfolio])
+
+  const curve = portfolio.cumulative_profit || []
+  const curveMax = Math.max(...curve.map((pt) => Math.abs(pt.running_profit_usd || 0)), 1)
+  const marketRows = portfolio.ranked_markets || []
 
   const savePrivacy = async (patch = {}) => {
     if (!state) return
@@ -124,153 +124,78 @@ export default function PortfolioPage() {
 
   return (
     <div className="page portfolio-page">
-      <header className="simple-hero fade-up">
-        <span className="page-eyebrow">🔒 PRIVATE PORTFOLIO</span>
-        <h1>Stake-linked portfolio</h1>
-        <p className="subtitle">
-          Private by default. Portfolio sync stays off until you accept the privacy warning, and your imported data
-          remains hidden from other users unless you explicitly enable this device-local portfolio.
-        </p>
-      </header>
-
-      {err && <div className="portfolio-alert error">{err}</div>}
-
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Privacy and consent</h2>
-            <p className="muted">
-              Imported Stake data stays saved locally even if the browser session expires. You can disconnect the
-              session without deleting stored history.
-            </p>
-          </div>
-          <span className={`portfolio-pill ${portfolioReady ? 'ok' : 'warn'}`}>
-            {portfolioReady ? 'Enabled' : 'Disabled'}
-          </span>
+      <header className="portfolio-hero fade-up">
+        <div>
+          <span className="page-eyebrow">PRIVATE PORTFOLIO</span>
+          <h1>Betting journal and improvement desk</h1>
+          <p className="subtitle">
+            Imported from your Stake session, organized into strengths, leaks, recent form, and the guardrails your
+            main match screen should follow.
+          </p>
+          {portfolio.profile?.summary && (
+            <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
+          )}
         </div>
-
-        <label className="portfolio-check">
-          <input
-            type="checkbox"
-            checked={Boolean(privacy.risk_acknowledged)}
-            onChange={(e) => savePrivacy({ risk_acknowledged: e.target.checked })}
-            disabled={busy === 'privacy'}
-          />
-          <span>I understand the privacy risks of importing sensitive betting history into this app.</span>
-        </label>
-
-        <label className="portfolio-check">
-          <input
-            type="checkbox"
-            checked={Boolean(privacy.portfolio_enabled)}
-            onChange={(e) => savePrivacy({ portfolio_enabled: e.target.checked })}
-            disabled={busy === 'privacy'}
-          />
-          <span>Enable my private portfolio on this app.</span>
-        </label>
-
-        <label className="portfolio-check">
-          <input
-            type="checkbox"
-            checked={Boolean(privacy.learning_opt_in)}
-            onChange={(e) => savePrivacy({ learning_opt_in: e.target.checked })}
-            disabled={busy === 'privacy'}
-          />
-          <span>Allow future model-learning features to use my bet results after I opt in.</span>
-        </label>
-
-        <p className="muted">
-          Consent accepted: <strong>{fmtTs(privacy.consent_accepted_at)}</strong>
-        </p>
-      </section>
-
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Stake session</h2>
-            <p className="muted">
-              This uses a visible browser session you control. The app does not ask for your raw Stake password here.
-            </p>
-          </div>
-          <span className={`portfolio-pill ${browser.ready ? 'ok' : browser.warming ? 'warn' : 'idle'}`}>
-            {browser.ready ? 'Connected' : browser.warming ? 'Opening login window…' : 'Disconnected'}
-          </span>
-        </div>
-
-        <div className="portfolio-actions">
+        <div className="portfolio-hero-actions">
           <button
             className="refresh-btn"
             onClick={() => runAction('connect', connectPortfolioSession)}
             disabled={busy === 'connect'}
           >
-            {busy === 'connect' ? 'Opening…' : 'Open Stake login window'}
+            {busy === 'connect' ? 'Opening…' : 'Open Stake login'}
           </button>
-          <button
-            className="refresh-btn"
-            onClick={() => runAction('disconnect', disconnectPortfolioSession)}
-            disabled={busy === 'disconnect'}
-          >
-            {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect session'}
-          </button>
-          <button
-            className="refresh-btn"
-            onClick={() => runAction('reload', fetchPortfolioState)}
-            disabled={busy === 'reload'}
-          >
-            {busy === 'reload' ? 'Refreshing…' : 'Reload status'}
-          </button>
-        </div>
-
-        <div className="portfolio-grid compact">
-          <div className="portfolio-stat">
-            <span>Status</span>
-            <strong>{connection.status || 'disconnected'}</strong>
-          </div>
-          <div className="portfolio-stat">
-            <span>Browser ready</span>
-            <strong>{browser.ready ? 'Yes' : 'No'}</strong>
-          </div>
-          <div className="portfolio-stat">
-            <span>Last connected</span>
-            <strong>{fmtTs(connection.last_connected_at)}</strong>
-          </div>
-          <div className="portfolio-stat">
-            <span>Last sync</span>
-            <strong>{fmtTs(connection.last_sync_at)}</strong>
-          </div>
-        </div>
-
-        <p className="muted">{connection.last_sync_message || 'Open Stake login to prepare a private browser session.'}</p>
-      </section>
-
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Performance snapshot</h2>
-            <p className="muted">
-              This page refreshes from your Stake account history when privacy is enabled and the logged-in browser session is ready.
-            </p>
-          </div>
           <button
             className="refresh-btn"
             onClick={() => runAction('snapshot', refreshPortfolioSnapshot)}
             disabled={!portfolioReady || busy === 'snapshot'}
           >
-            {busy === 'snapshot' ? 'Refreshing…' : 'Refresh portfolio now'}
+            {busy === 'snapshot' ? 'Refreshing…' : 'Sync portfolio'}
           </button>
         </div>
+      </header>
 
-        <div className="portfolio-grid">
-          {summary.map((item) => (
-            <div key={item.label} className="portfolio-stat">
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-            </div>
-          ))}
+      {err && <div className="portfolio-alert error">{err}</div>}
+
+      <section className="portfolio-topline fade-up">
+        {summary.map((item) => (
+          <div key={item.label} className={`portfolio-kpi ${item.tone || ''}`}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+        ))}
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Performance curve</h2>
+            <p className="muted">
+              Your running profit over the imported sample, so you can see whether the current strategy is compounding or drifting.
+            </p>
+          </div>
+          <span className={`portfolio-pill ${browser.have_auth_token ? 'ok' : browser.ready ? 'warn' : 'idle'}`}>
+            {browser.have_auth_token ? 'Authenticated' : browser.ready ? 'Login open' : 'Connect first'}
+          </span>
         </div>
 
+        {curve.length > 1 ? (
+          <div className="portfolio-curve">
+            {curve.map((pt) => (
+              <div key={`${pt.i}-${pt.label}`} className="curve-col">
+                <div
+                  className={`curve-bar ${(pt.running_profit_usd || 0) >= 0 ? 'up' : 'down'}`}
+                  style={{ height: `${Math.max(10, (Math.abs(pt.running_profit_usd || 0) / curveMax) * 180)}px` }}
+                  title={`${pt.label}: ${fmtUsd(pt.running_profit_usd)}`}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">Sync more than one bet to unlock the performance curve.</p>
+        )}
+
         <div className="portfolio-note">
-          <h3>What to improve</h3>
+          <h3>Improve next</h3>
           {portfolio.insights?.length ? (
             <div className="portfolio-insights">
               {portfolio.insights.map((tip, idx) => (
@@ -287,25 +212,30 @@ export default function PortfolioPage() {
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
-            <h2>Bet mix</h2>
+            <h2>Strengths and leaks</h2>
             <p className="muted">
-              Where your action has been going so far and which bet families are helping or hurting.
+              Which bet families are earning trust and which ones are dragging the sample.
             </p>
           </div>
         </div>
 
-        {!Object.keys(portfolio.market_breakdown || {}).length ? (
+        {!marketRows.length ? (
           <p className="muted">Refresh after login to build your market breakdown.</p>
         ) : (
-          <div className="portfolio-market-grid">
-            {Object.entries(portfolio.market_breakdown || {}).map(([family, stats]) => (
-              <div key={family} className="portfolio-market-card">
-                <strong>{family.replace(/_/g, ' ')}</strong>
-                <div className="muted">{stats.count} bets</div>
-                <div className="portfolio-market-metrics">
-                  <span>W-L: <strong>{stats.wins}-{stats.losses}</strong></span>
-                  <span>P/L: <strong>{fmtUsd(stats.profit_usd)}</strong></span>
+          <div className="portfolio-market-list">
+            {marketRows.map((row) => (
+              <div key={row.market} className="portfolio-market-row">
+                <div className="portfolio-market-copy">
+                  <strong>{row.market.replace(/_/g, ' ')}</strong>
+                  <small>{row.count} bets · {row.wins}-{row.losses}</small>
                 </div>
+                <div className="portfolio-market-bar">
+                  <div
+                    className={`portfolio-market-fill ${row.profit_usd >= 0 ? 'up' : 'down'}`}
+                    style={{ width: `${Math.min(100, Math.max(8, Math.abs(row.profit_usd) * 10))}%` }}
+                  />
+                </div>
+                <strong className={row.profit_usd >= 0 ? 'green' : 'red'}>{fmtUsd(row.profit_usd)}</strong>
               </div>
             ))}
           </div>
@@ -315,24 +245,59 @@ export default function PortfolioPage() {
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
-            <h2>Model audit</h2>
+            <h2>Learning controls</h2>
             <p className="muted">
-              This is where the app will compare your placed bets against what the model believed at the time.
+              Keep the sensitive sync settings tucked away here instead of dominating the page.
             </p>
           </div>
-          <span className={`portfolio-pill ${portfolio.model_audit?.available ? 'ok' : 'warn'}`}>
-            {portfolio.model_audit?.available ? 'Ready' : 'Next layer'}
-          </span>
+          <span className={`portfolio-pill ${portfolioReady ? 'ok' : 'warn'}`}>{portfolioReady ? 'Enabled' : 'Off'}</span>
         </div>
-        <p className="muted">{portfolio.model_audit?.message}</p>
+        <div className="portfolio-controls">
+          <label className="portfolio-check compact">
+            <input
+              type="checkbox"
+              checked={Boolean(privacy.risk_acknowledged)}
+              onChange={(e) => savePrivacy({ risk_acknowledged: e.target.checked })}
+              disabled={busy === 'privacy'}
+            />
+            <span>Privacy consent accepted</span>
+          </label>
+          <label className="portfolio-check compact">
+            <input
+              type="checkbox"
+              checked={Boolean(privacy.portfolio_enabled)}
+              onChange={(e) => savePrivacy({ portfolio_enabled: e.target.checked })}
+              disabled={busy === 'privacy'}
+            />
+            <span>Portfolio sync enabled</span>
+          </label>
+          <label className="portfolio-check compact">
+            <input
+              type="checkbox"
+              checked={Boolean(privacy.learning_opt_in)}
+              onChange={(e) => savePrivacy({ learning_opt_in: e.target.checked })}
+              disabled={busy === 'privacy'}
+            />
+            <span>Use future results for learning</span>
+          </label>
+        </div>
+        <div className="portfolio-inline-actions">
+          <button className="refresh-btn" onClick={() => runAction('reload', fetchPortfolioState)} disabled={busy === 'reload'}>
+            {busy === 'reload' ? 'Refreshing…' : 'Reload'}
+          </button>
+          <button className="refresh-btn" onClick={() => runAction('disconnect', disconnectPortfolioSession)} disabled={busy === 'disconnect'}>
+            {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
+          </button>
+        </div>
+        <p className="muted">{connection.last_sync_message || portfolio.model_audit?.message}</p>
       </section>
 
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
-            <h2>Recent imported bets</h2>
+            <h2>Bet journal</h2>
             <p className="muted">
-              These are pulled from your Stake session and stored privately on this machine until you delete them.
+              A cleaner ledger of what you actually placed, so you can review execution without noise.
             </p>
           </div>
           <span className={`portfolio-pill ${portfolio.bets?.length ? 'ok' : 'idle'}`}>

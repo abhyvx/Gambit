@@ -120,6 +120,48 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         elif bet.get("status") == "lost":
             bucket["losses"] += 1
 
+    cumulative = []
+    running = 0.0
+    for idx, bet in enumerate(sorted(bets, key=lambda b: b.get("created_at") or "")):
+        running = round(running + float(bet.get("profit_usd") or 0), 2)
+        cumulative.append(
+            {
+                "i": idx + 1,
+                "label": bet.get("fixture_name") or f"Bet {idx + 1}",
+                "profit_usd": round(float(bet.get("profit_usd") or 0), 2),
+                "running_profit_usd": running,
+                "status": bet.get("status"),
+            }
+        )
+
+    ranked_markets = sorted(
+        (
+            {
+                "market": family,
+                **stats,
+                "roi_pct": round((stats["profit_usd"] / sum(float(b.get("stake_usd") or 0) for b in bets if b.get("market_family") == family)) * 100, 2)
+                if any(b.get("market_family") == family and float(b.get("stake_usd") or 0) > 0 for b in bets)
+                else 0.0,
+            }
+            for family, stats in market_breakdown.items()
+        ),
+        key=lambda item: item["profit_usd"],
+        reverse=True,
+    )
+    top_market = ranked_markets[0] if ranked_markets else None
+    leak_market = ranked_markets[-1] if len(ranked_markets) > 1 else None
+    recent = bets[:10]
+    recent_profit = round(sum(float(b.get("profit_usd") or 0) for b in recent), 2)
+    recent_hit_rate = round(
+        (sum(1 for b in recent if b.get("status") == "won") / max(1, sum(1 for b in recent if b.get("status") in {"won", "lost"}))) * 100,
+        1,
+    ) if recent else None
+
+    recommended_focus = [m["market"] for m in ranked_markets[:2] if m["profit_usd"] > 0]
+    caution_markets = [m["market"] for m in ranked_markets[-2:] if m["profit_usd"] < 0]
+    avoid_parlays = parlays >= singles and (sum(float(b.get("profit_usd") or 0) for b in bets if b.get("bet_type") == "parlay") < 0)
+    max_odds = 2.2 if longshot_losses >= 3 else 3.0
+
     insights: list[str] = []
     if parlays >= max(3, singles):
         insights.append("You are leaning heavily into parlays. That usually adds variance faster than it adds edge.")
@@ -130,6 +172,22 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         insights.append("Your recent sample is losing overall. Focus on fewer bets and tighter price discipline before scaling volume.")
     if sum(1 for b in bets if b.get("status") == "open") >= 5:
         insights.append("You have a large number of open bets. Watch for correlated exposure across the same teams or match narratives.")
+
+    profile = {
+        "confidence": "high" if len(bets) >= 25 else "medium" if len(bets) >= 10 else "low",
+        "focus_markets": recommended_focus,
+        "caution_markets": caution_markets,
+        "avoid_parlays": avoid_parlays,
+        "max_preferred_odds": max_odds,
+        "top_market": top_market,
+        "leak_market": leak_market,
+        "recent_profit_usd": recent_profit,
+        "recent_hit_rate_pct": recent_hit_rate,
+        "summary": (
+            f"Lean into {', '.join(recommended_focus) if recommended_focus else 'disciplined singles'}; "
+            f"be careful with {', '.join(caution_markets) if caution_markets else 'overextended longshots'}."
+        ),
+    }
 
     return {
         "bet_count": len(bets),
@@ -146,7 +204,10 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "parlays_count": parlays,
         "avg_odds": avg_odds,
         "market_breakdown": market_breakdown,
+        "ranked_markets": ranked_markets,
+        "cumulative_profit": cumulative,
         "insights": insights,
+        "profile": profile,
         "model_audit": {
             "available": False,
             "message": (
@@ -162,6 +223,16 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
 def get_portfolio_state() -> dict[str, Any]:
     with _LOCK:
         return _merged_status(_load_state())
+
+
+def get_portfolio_profile() -> dict[str, Any] | None:
+    with _LOCK:
+        state = _load_state()
+        portfolio = state.get("portfolio") or {}
+        profile = portfolio.get("profile")
+        if not profile:
+            return None
+        return deepcopy(profile)
 
 
 def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool, learning_opt_in: bool) -> dict[str, Any]:
@@ -245,7 +316,15 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
 
         try:
             scraper = StakeScraper(use_browser=True, allow_browser_launch=False, timeout=45)
-            bets = scraper.fetch_user_bet_history(limit=100, offset=0)
+            bets = []
+            page_size = 50
+            for offset in range(0, 150, page_size):
+                batch = scraper.fetch_user_bet_history(limit=page_size, offset=offset)
+                if not batch:
+                    break
+                bets.extend(batch)
+                if len(batch) < page_size:
+                    break
         except Exception as exc:
             msg = str(exc)
             state["connection"].update(

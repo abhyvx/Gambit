@@ -55,6 +55,7 @@ from bet_placer.models.types import (
     Match,
     TeamStats,
 )
+from bet_placer.portfolio.store import get_portfolio_profile
 
 if TYPE_CHECKING:
     from bet_placer.data.worldcup2026 import WCMatch
@@ -387,6 +388,7 @@ def analyze_worldcup(
     }
 
     active_label = stage_label(active_md) if is_knockout_matchday(active_md) else f"Matchday {active_md}"
+    portfolio_profile = get_portfolio_profile()
 
     return {
         "tournament": "FIFA World Cup 2026",
@@ -409,6 +411,10 @@ def analyze_worldcup(
         "groups": groups_summary,
         "matches": match_analyses,
         "betting_plan": _serialize_plan(plan),
+        "personalization": {
+            "enabled": bool(portfolio_profile),
+            "profile": portfolio_profile,
+        },
         "source": "espn_live",
         "message": (
             f"LIVE from ESPN — {live_count} in progress, {completed_count} finished, "

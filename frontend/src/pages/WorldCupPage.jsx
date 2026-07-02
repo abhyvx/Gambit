@@ -190,6 +190,7 @@ export default function WorldCupPage() {
   const live = data?.matches?.filter((m) => m.status === 'live') || []
   const upcoming = data?.matches?.filter((m) => m.status === 'upcoming') || []
   const completed = data?.matches?.filter((m) => m.status === 'completed') || []
+  const personal = data?.personalization?.profile
 
   return (
     <div className="page page-wide">
@@ -234,6 +235,24 @@ export default function WorldCupPage() {
             {refreshing ? 'Refreshing…' : 'Refresh now'}
           </button>
         </div>
+
+        {personal && (
+          <div className="personal-strip">
+            <div className="personal-strip-main">
+              <small>Your betting profile</small>
+              <strong>{personal.summary}</strong>
+            </div>
+            <div className="personal-strip-tags">
+              {personal.focus_markets?.slice(0, 2).map((m) => (
+                <span key={m} className="personal-tag good">Lean: {m}</span>
+              ))}
+              {personal.caution_markets?.slice(0, 2).map((m) => (
+                <span key={m} className="personal-tag warn">Careful: {m}</span>
+              ))}
+              {personal.avoid_parlays && <span className="personal-tag warn">Parlays running cold</span>}
+            </div>
+          </div>
+        )}
 
         <p className="budget-banner">
           You have <strong>{formatINR(perMatchBudget)} per game</strong> ·{' '}

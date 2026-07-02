@@ -20,6 +20,7 @@ DEFAULT_PARAMS: dict = {
         "result": {"a": 1.0, "b": 0.0},
         "totals": {"a": 1.0, "b": 0.0},
         "btts": {"a": 1.0, "b": 0.0},
+        "draw": {"a": 1.0, "b": 0.0},
         "_global": {"a": 1.0, "b": 0.0},
     },
     "goals_scale": 1.0,     # multiplies expected total goals
@@ -29,6 +30,7 @@ DEFAULT_PARAMS: dict = {
     # Learned from the full history of international football (ml/historical.py)
     "elo": {},              # canonical team name -> Elo rating
     "goal_model": {},       # {sup_a, sup_b, tot_a, tot_b} mapping Elo edge -> goals
+    "ad_model": {},         # {att, def, mu, ha, w_elo} attack/defence ensemble
 }
 
 _cache: dict | None = None
@@ -93,7 +95,7 @@ def market_group(market: str | None) -> str:
     return "_global"
 
 
-def calibrate_prob(p: float | None, market: str | None) -> float | None:
+def calibrate_prob(p: float | None, market: str | None, selection: str | None = None) -> float | None:
     """Apply the learned calibration for this market group."""
     if p is None:
         return None
@@ -102,7 +104,11 @@ def calibrate_prob(p: float | None, market: str | None) -> float | None:
     params = load_params()
     cal = params.get("calibration", {})
     grp = market_group(market)
-    coef = cal.get(grp) or cal.get("_global") or {"a": 1.0, "b": 0.0}
+    sel = (selection or "").lower()
+    if sel == "draw" or grp == "result" and sel == "draw":
+        coef = cal.get("draw") or cal.get("result") or cal.get("_global") or {"a": 1.0, "b": 0.0}
+    else:
+        coef = cal.get(grp) or cal.get("_global") or {"a": 1.0, "b": 0.0}
     a = coef.get("a", 1.0)
     b = coef.get("b", 0.0)
     if a == 1.0 and b == 0.0:

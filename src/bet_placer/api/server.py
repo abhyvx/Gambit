@@ -6,6 +6,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,27 +26,51 @@ logger = logging.getLogger(__name__)
 
 
 def _warmup_stake_browser() -> None:
-    """Pre-launch the Playwright Chromium / clear Cloudflare in a daemon thread.
+    """Optionally pre-launch Playwright Chromium (off by default).
 
-    Non-blocking (app starts serving immediately) and failure-tolerant: a warmup
-    failure must never stop the server — requests fall back to DraftKings pricing.
+    Non-blocking and failure-tolerant: a warmup failure must never stop the
+    server — requests fall back to DraftKings pricing until Stake is opened.
     """
     settings = get_settings()
     if not settings.stake_use_browser:
         logger.info("Stake browser warmup skipped (stake_use_browser=False)")
         return
+    if not settings.stake_browser_warmup_on_startup:
+        logger.info(
+            "Stake browser warmup deferred (set STAKE_BROWSER_WARMUP_ON_STARTUP=1 to pre-launch)"
+        )
+        return
 
     def _go() -> None:
         try:
             from bet_placer.data.stake_browser import warmup
+
             if warmup():
                 logger.info("Stake browser warmup complete")
             else:
-                logger.warning("Stake browser warmup did not complete; will retry lazily")
+                logger.warning("Stake browser warmup did not complete; will retry on demand")
         except Exception:
             logger.warning("Stake browser warmup failed", exc_info=True)
 
     threading.Thread(target=_go, daemon=True, name="stake-warmup").start()
+
+
+def _prefetch_stake_overlay() -> None:
+    """One background fetch of Stake WC odds — does not block page loads."""
+    settings = get_settings()
+    if not settings.stake_use_browser:
+        return
+
+    def _go() -> None:
+        try:
+            from bet_placer.engine.stake_odds import refresh_stake_overlay
+
+            result = refresh_stake_overlay()
+            logger.info("Stake overlay prefetch: %d fixtures", result.get("fixtures", 0))
+        except Exception:
+            logger.warning("Stake overlay prefetch failed", exc_info=True)
+
+    threading.Thread(target=_go, daemon=True, name="stake-overlay-prefetch").start()
 
 
 def _warmup_data() -> None:
@@ -92,6 +117,7 @@ def _warmup_model() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _warmup_data()
+    _prefetch_stake_overlay()
     _warmup_stake_browser()
     _warmup_model()
     yield
@@ -120,13 +146,20 @@ _verdict_engine = MatchVerdictEngine()
 _web = WebConsensusFetcher()
 
 
+class PortfolioPrivacyUpdate(BaseModel):
+    portfolio_enabled: bool
+    risk_acknowledged: bool
+    learning_opt_in: bool = False
+
+
 @app.get("/api/health")
 def health():
     settings = get_settings()
     stake_status = {}
     if settings.stake_use_browser:
         from bet_placer.data.stake_browser import browser_status
-        stake_status = browser_status()
+        from bet_placer.engine.stake_odds import stake_overlay_status
+        stake_status = {**browser_status(), "overlay": stake_overlay_status()}
     return {
         "status": "ok",
         "odds_api_configured": bool(settings.odds_api_key),
@@ -177,22 +210,83 @@ def events(sport: str = Query(default="soccer_fifa_world_cup"), match: str | Non
     }
 
 
+@app.post("/api/stake/refresh")
+def stake_refresh():
+    """Pull latest WC fixtures from Stake trending (fast, non-blocking)."""
+    from bet_placer.engine.stake_odds import refresh_stake_overlay
+    return refresh_stake_overlay()
+
+
+@app.get("/api/portfolio")
+def portfolio_state():
+    from bet_placer.portfolio.store import get_portfolio_state
+
+    return get_portfolio_state()
+
+
+@app.post("/api/portfolio/privacy")
+def portfolio_privacy(payload: PortfolioPrivacyUpdate):
+    from bet_placer.portfolio.store import update_privacy_settings
+
+    return update_privacy_settings(
+        portfolio_enabled=payload.portfolio_enabled,
+        risk_acknowledged=payload.risk_acknowledged,
+        learning_opt_in=payload.learning_opt_in,
+    )
+
+
+@app.post("/api/portfolio/connect")
+def portfolio_connect():
+    from bet_placer.portfolio.store import connect_browser_session
+
+    return connect_browser_session()
+
+
+@app.post("/api/portfolio/disconnect")
+def portfolio_disconnect():
+    from bet_placer.portfolio.store import disconnect_browser_session
+
+    return disconnect_browser_session()
+
+
+@app.post("/api/portfolio/refresh")
+def portfolio_refresh():
+    from bet_placer.portfolio.store import refresh_portfolio_snapshot
+
+    try:
+        return refresh_portfolio_snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/worldcup")
 def worldcup(
-    matchday: int | None = Query(default=None, ge=0, le=3),
+    matchday: int | None = Query(default=None, ge=0, le=9),
     event_id: str | None = None,
     budget_inr: float = Query(default=2000.0, ge=100, le=50000),
     budget_per_match_inr: float | None = Query(default=None, ge=50, le=5000),
     include_completed: bool = Query(default=False),
     force_refresh: bool = Query(default=False),
 ):
+    from bet_placer.data.wc_stages import (
+        FILTER_ALL,
+        STAGE_GROUP_MD1,
+        STAGE_GROUP_MD2,
+        STAGE_GROUP_MD3,
+        STAGE_THIRD,
+    )
     from bet_placer.engine.worldcup_pipeline import analyze_worldcup
+    show_all_stages = matchday in (
+        None, FILTER_ALL,
+        STAGE_GROUP_MD1, STAGE_GROUP_MD2, STAGE_GROUP_MD3,
+        4, 5, 6, 7, 8, STAGE_THIRD,
+    )
     return analyze_worldcup(
         matchday=matchday,
         event_id=event_id,
         budget_inr=budget_inr,
         budget_per_match_inr=budget_per_match_inr,
-        include_completed=include_completed or matchday in (0, 1, 2, 3) or matchday is None,
+        include_completed=include_completed or show_all_stages,
         force_refresh=force_refresh,
     )
 
@@ -233,6 +327,15 @@ def model_report(retrain: bool = Query(default=False)):
     wrong, and the corrections it has learned from real results."""
     from bet_placer.ml.tracker import get_report
     return get_report(retrain=retrain)
+
+
+@app.get("/api/model/scorecard")
+def model_scorecard():
+    """Live scorecard: how the model has called every finished World Cup game,
+    its accuracy trend by matchday, confidence-tier hit rates, and how it stacks
+    up against simply backing the bookmaker's favourite."""
+    from bet_placer.ml.tracker import worldcup_scorecard
+    return worldcup_scorecard()
 
 
 @app.get("/api/analyze")

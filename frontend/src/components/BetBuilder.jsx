@@ -467,6 +467,21 @@ export default function BetBuilder({ home, away, budget }) {
                       )}
                     </div>
                   )}
+                  {(data.easy_money?.length > 0 || data.situational_picks?.length > 0) && (
+                    <div className="easy-money-box">
+                      <h5>💎 Situation picks</h5>
+                      <ul className="easy-money-list">
+                        {(data.situational_picks || data.easy_money || []).map((p, i) => (
+                          <li key={i}>
+                            <span className="easy-tag">{p.tag}</span>
+                            <strong>{p.label}</strong>
+                            {p.odds && <span className="easy-odds"> @ {p.odds}</span>}
+                            <p className="muted">{p.why}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {recommended.length > 0 ? (
                     <>
                       <div className="analyst-picks-label">Our picks — tap to add</div>

@@ -1,8 +1,18 @@
+import { useEffect, useState } from 'react'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import './pages.css'
 
 export default function SettingsPage() {
   const { perMatchBudget, updatePerMatchBudget, presets } = useBankroll()
+  const [budgetDraft, setBudgetDraft] = useState(String(perMatchBudget))
+
+  useEffect(() => {
+    setBudgetDraft(String(perMatchBudget))
+  }, [perMatchBudget])
+
+  const commitBudgetDraft = () => {
+    updatePerMatchBudget(budgetDraft)
+  }
 
   return (
     <div className="page">
@@ -24,8 +34,14 @@ export default function SettingsPage() {
             type="number"
             min={50}
             max={5000}
-            value={perMatchBudget}
-            onChange={(e) => updatePerMatchBudget(e.target.value)}
+            value={budgetDraft}
+            onChange={(e) => setBudgetDraft(e.target.value)}
+            onBlur={commitBudgetDraft}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur()
+              }
+            }}
           />
         </div>
 

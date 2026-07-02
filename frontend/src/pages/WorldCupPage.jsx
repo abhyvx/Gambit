@@ -1,18 +1,34 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchWorldCup } from '../api/index'
+import { fetchWorldCup, refreshStakeOverlay } from '../api/index'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import VerdictBadge from '../components/VerdictBadge'
 import MatchSlipPanel from '../components/MatchSlipPanel'
 import './pages.css'
 
-const TABS = [
+const DEFAULT_TABS = [
   { id: null, label: 'Today', sub: 'Live' },
-  { id: 1, label: 'MD 1' },
-  { id: 2, label: 'MD 2' },
-  { id: 3, label: 'MD 3' },
   { id: 0, label: 'All games' },
 ]
+
+function stageTag(m) {
+  if (m.is_knockout || (m.matchday && m.matchday >= 4)) {
+    return m.stage_label || m.stage || `Round ${m.matchday}`
+  }
+  return `Group ${m.group}`
+}
+
+function sectionTitle(matchday, data) {
+  if (matchday === 0) return 'All matches'
+  if (matchday === null) {
+    const lbl = data?.active_stage_label
+    return lbl || `Matchday ${data?.active_matchday || ''} — today`
+  }
+  const tab = (data?.stage_tabs || DEFAULT_TABS).find((t) => t.id === matchday)
+  if (tab) return tab.label
+  if (matchday >= 4) return data?.stage_counts && Object.keys(data.stage_counts).find((k) => k.includes(String(matchday))) || `Stage ${matchday}`
+  return `Matchday ${matchday}`
+}
 
 function MatchCard({ m, expanded, onToggle, variant }) {
   const open = expanded === m.fixture_id
@@ -26,10 +42,13 @@ function MatchCard({ m, expanded, onToggle, variant }) {
           <div className="wc-tag-row">
             {isLive && <span className="live-pill pulse">● LIVE</span>}
             {isDone && <span className="ft-pill">FULL TIME</span>}
-            <span className="group-tag">{isDone ? `MD${m.matchday} · ` : ''}Group {m.group}</span>
+            <span className="group-tag">
+              {isDone ? `${m.stage_label || (m.matchday >= 4 ? m.stage : `MD${m.matchday}`)} · ` : ''}
+              {stageTag(m)}
+            </span>
             {!isLive && !isDone && m.odds_source && (
               <span className="odds-source-tag">
-                {m.odds_source === 'espn_draftkings' ? '📊 DraftKings (live)' : m.odds_source}
+                {m.stake_priced ? '💸 Stake payouts' : '📊 Live book (until Stake connects)'}
               </span>
             )}
           </div>
@@ -97,23 +116,36 @@ export default function WorldCupPage() {
   const [error, setError] = useState(null)
   const [expanded, setExpanded] = useState(null)
   const [showFinished, setShowFinished] = useState(false)
+  const stakeOverlaySynced = useRef(false)
+
+  const [stakeStatus, setStakeStatus] = useState(null)
 
   const load = (md, refresh = false) => {
     if (refresh) setRefreshing(true)
     else setLoading(true)
     setError(null)
-    fetchWorldCup({
-      matchday: md ?? undefined,
-      budgetPerMatchInr: perMatchBudget,
-      // Show full matchday slates (finished + live + upcoming), not just what's left to kick off
-      includeCompleted: md === null || md === 0 || md === 1 || md === 2 || md === 3,
-      forceRefresh: refresh,
-    })
-      .then(setData)
-      .catch((e) => setError(e?.message || 'Could not reach the engine.'))
+    const stakeRefresh = refresh
+      ? refreshStakeOverlay().catch(() => null)
+      : Promise.resolve(null)
+    stakeRefresh
+      .then((s) => { if (s?.status) setStakeStatus(s.status) })
       .finally(() => {
-        setLoading(false)
-        setRefreshing(false)
+        fetchWorldCup({
+          matchday: md ?? undefined,
+          budgetPerMatchInr: perMatchBudget,
+          includeCompleted: md === null || md === 0 || (md >= 1 && md <= 9),
+          forceRefresh: refresh,
+        })
+          .then(setData)
+          .catch((e) => setError(
+            e?.name === 'TimeoutError'
+              ? 'Taking too long — run ./scripts/run.sh from the Bet Placer folder, then refresh.'
+              : (e?.message || 'Could not load matches — run ./scripts/run.sh, then refresh.')
+          ))
+          .finally(() => {
+            setLoading(false)
+            setRefreshing(false)
+          })
       })
   }
 
@@ -122,7 +154,38 @@ export default function WorldCupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchday, perMatchBudget])
 
+  // When Stake overlay connects in the background, refresh once for real payouts.
+  useEffect(() => {
+    if (stakeOverlaySynced.current) return
+    let cancelled = false
+    const poll = () => {
+      fetch('/api/health')
+        .then((r) => r.json())
+        .then((h) => {
+          if (cancelled || stakeOverlaySynced.current) return
+          if (h?.stake_browser?.overlay) setStakeStatus(h.stake_browser.overlay)
+          if (h?.stake_browser?.overlay?.have_data) {
+            stakeOverlaySynced.current = true
+            load(matchday, true)
+          }
+        })
+        .catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 15000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [matchday])
+
+  // If the selected round tab isn't available yet (e.g. SF before ESPN publishes), reset.
+  useEffect(() => {
+    if (!data?.stage_tabs?.length || matchday === null || matchday === 0) return
+    const ok = data.stage_tabs.some((t) => t.id === matchday)
+    if (!ok) setMatchday(null)
+  }, [data?.stage_tabs, matchday])
+
   const toggle = (id) => setExpanded((cur) => (cur === id ? null : id))
+
+  const tabs = data?.stage_tabs?.length ? data.stage_tabs : DEFAULT_TABS
 
   const live = data?.matches?.filter((m) => m.status === 'live') || []
   const upcoming = data?.matches?.filter((m) => m.status === 'upcoming') || []
@@ -155,7 +218,11 @@ export default function WorldCupPage() {
 
         <div className="wc-hero-bar">
           <span className="wc-source-note">
-            🟢 Live scores from ESPN · 💸 Exact payouts pulled from Stake when you open a match
+            {stakeStatus?.have_data
+              ? `🟢 Stake connected — ${stakeStatus.fixtures} matches priced`
+              : stakeStatus?.fetching
+                ? '⏳ Pulling Stake odds…'
+                : '📊 Stake warming — open a match for live payouts'}
           </span>
           <button
             type="button"
@@ -174,7 +241,7 @@ export default function WorldCupPage() {
         </p>
 
         <div className="md-tabs" role="tablist">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id === null ? 'today' : String(t.id)}
               className={matchday === t.id ? 'md-tab active' : 'md-tab'}
@@ -183,6 +250,7 @@ export default function WorldCupPage() {
               aria-selected={matchday === t.id}
             >
               {t.label}
+              {t.count != null && t.count > 0 && <span className="md-tab-count">{t.count}</span>}
               {t.sub && <span className="md-tab-sub">{t.sub}</span>}
             </button>
           ))}
@@ -227,9 +295,7 @@ export default function WorldCupPage() {
 
           <section className="section">
             <div className="section-head">
-              <h2>
-                {matchday === 0 ? 'All matches' : matchday ? `Matchday ${matchday}` : `Matchday ${data?.active_matchday || ''} — today`}
-              </h2>
+              <h2>{sectionTitle(matchday, data)}</h2>
               {upcoming.length > 0 && (
                 <span className="section-count">{upcoming.length} upcoming</span>
               )}

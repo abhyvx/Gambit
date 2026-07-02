@@ -18,6 +18,7 @@ A hybrid intelligence system for identifying **positive expected value (EV)** be
 - **Ranking** — bets ranked by ROI, EV, confidence, risk, and market liquidity
 - **Explainability** — every bet includes a human-readable rationale
 - **Continuous learning** — feedback loop tracks results and adapts model weights
+- **Private portfolio foundation** — opt-in Stake browser-session connect, privacy consent, and device-local portfolio storage
 
 ## Stake.com Live Mode (default)
 
@@ -75,9 +76,26 @@ Open **http://127.0.0.1:5173**
 ### Navigation
 - **Dashboard** — top value bets across World Cup
 - **World Cup** — all FIFA World Cup 2026 matches
+- **Portfolio** — private Stake-linked portfolio controls and sync status
 - **Browse Sports** — NBA, NFL, EPL, Champions League, and more
 - **How It Works** — plain-English guide (EV, Kelly, when to skip)
 - **Bankroll** — set your bankroll; stakes capped at 3%
+
+### Private Stake Portfolio
+
+The app now includes the first slice of a privacy-first Stake portfolio flow:
+
+- **Private by default** — portfolio sync is off until the user explicitly enables it
+- **Browser-session login** — the app opens/uses a Stake browser session you control instead of collecting raw credentials
+- **Consent gate** — users must acknowledge privacy risk before any portfolio refresh is allowed
+- **Stored data survives session expiry** — imported/cached portfolio data stays saved locally until the user deletes it
+- **Learning is separate** — model-learning from personal bets is a separate opt-in
+
+Current status:
+
+- The private consent/settings store and refresh flow are wired up
+- The portfolio page auto-refreshes on open when privacy is enabled and the Stake browser session is ready
+- Actual account-history import/grading against original prices is the next implementation step
 
 ### Live Data Setup
 
@@ -124,6 +142,11 @@ Copy `.env.example` to `.env` and add API keys for live data:
 | `ODDS_API_KEY` | [The Odds API](https://the-odds-api.com/) | Live bookmaker odds |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap | Match-day weather |
 | `NEWS_API_KEY` | NewsAPI | Sentiment / NLP layer |
+| `STAKE_API_TOKEN` | Stake | Optional auth for certain Stake endpoints |
+| `STAKE_USE_BROWSER` | local env toggle | Enables the Playwright browser session used for Stake scraping |
+| `STAKE_BROWSER_HEADLESS` | local env toggle | Set `0` for a visible login / Cloudflare session |
+| `STAKE_BROWSER_WARMUP_ON_STARTUP` | local env toggle | Pre-launch the Stake browser on API boot |
+| `PORTFOLIO_STORE_PATH` | local path | Override where private portfolio/privacy state is stored |
 
 ## Architecture
 

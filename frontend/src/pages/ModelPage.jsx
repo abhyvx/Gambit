@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { fetchModelReport } from '../api'
+import { fetchModelReport, fetchModelScorecard } from '../api'
 import './pages.css'
 
 function pct(x) { return x == null ? '—' : `${Math.round(x)}%` }
 
+const CONF_LABEL = { lock: 'Lock (≥70%)', strong: 'Strong (≥62%)', lean: 'Lean (≥55%)', coinflip: 'Coin-flip (<55%)' }
+const SIDE_LABEL = { home: 'home win', away: 'away win', draw: 'draw' }
+
 export default function ModelPage() {
   const [rep, setRep] = useState(null)
+  const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
   const [retraining, setRetraining] = useState(false)
   const [err, setErr] = useState(null)
@@ -13,8 +17,11 @@ export default function ModelPage() {
   const load = (retrain = false) => {
     if (retrain) setRetraining(true); else setLoading(true)
     setErr(null)
-    fetchModelReport({ retrain })
-      .then((r) => setRep(r))
+    Promise.all([
+      fetchModelReport({ retrain }),
+      fetchModelScorecard().catch(() => null),
+    ])
+      .then(([r, c]) => { setRep(r); setCard(c) })
       .catch((e) => setErr(String(e)))
       .finally(() => { setLoading(false); setRetraining(false) })
   }
@@ -63,6 +70,90 @@ export default function ModelPage() {
           <small>{nWC} finished games this tournament</small>
         </div>
       </section>
+
+      {/* LIVE SCORECARD — how we're calling real finished games */}
+      {card && card.n_games > 0 && (
+        <section className="guide-section scorecard">
+          <h2>📈 Live scorecard — real games, graded</h2>
+          <p className="subtitle" style={{ marginTop: 0 }}>
+            Every finished World Cup game, graded against what actually happened. This is the model
+            proving itself on live results — and how it stacks up against just backing the bookmaker's favourite.
+          </p>
+
+          <div className="sc-top">
+            <div className="sc-big">
+              <span className="sc-big-label">Our result accuracy</span>
+              <strong className="sc-big-val">{pct((card.accuracy || 0) * 100)}</strong>
+              <small>{card.n_games} finished games</small>
+            </div>
+            <div className="sc-vs">
+              <div className={`sc-versus ${card.beats_market ? 'win' : ''}`}>
+                <div className="sc-versus-row"><span>Us</span><strong>{pct((card.accuracy || 0) * 100)}</strong></div>
+                <div className="sc-versus-row dim"><span>Bookmaker favourite</span><strong>{pct((card.market_accuracy || 0) * 100)}</strong></div>
+              </div>
+              <span className={`sc-verdict ${card.beats_market ? 'good' : 'warn'}`}>
+                {card.beats_market ? '✓ Matching or beating the book' : 'Book edges us so far'}
+              </span>
+            </div>
+          </div>
+
+          {/* accuracy by stage / matchday */}
+          {(card.by_stage?.length > 0 || card.by_matchday?.length > 0) && (
+            <div className="sc-block">
+              <h5>Accuracy by stage <span className="muted-inline">— is it learning?</span></h5>
+              <div className="sc-trend">
+                {(card.by_stage?.length ? card.by_stage : card.by_matchday).map((d) => (
+                  <div key={d.stage || d.matchday} className="sc-trend-col">
+                    <div className="sc-trend-bar-wrap">
+                      <div className="sc-trend-bar" style={{ height: `${Math.max(6, (d.accuracy || 0) * 100)}%` }}>
+                        <span>{pct((d.accuracy || 0) * 100)}</span>
+                      </div>
+                    </div>
+                    <span className="sc-trend-lbl">
+                      {d.stage || (d.matchday >= 4 ? `S${d.matchday}` : `MD${d.matchday ?? '?'}`)}
+                    </span>
+                    <small>{d.n} games</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* confidence tiers on real games */}
+          {card.by_confidence?.length > 0 && (
+            <div className="sc-block">
+              <h5>Accuracy by our confidence <span className="muted-inline">— the more sure we are, the more we're right</span></h5>
+              <div className="sc-conf">
+                {card.by_confidence.map((c) => (
+                  <div key={c.tier} className={`sc-conf-tile tier-${c.tier}`}>
+                    <span className="sc-conf-lbl">{CONF_LABEL[c.tier] || c.tier}</span>
+                    <strong>{pct((c.accuracy || 0) * 100)}</strong>
+                    <small>{c.n} games</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* per-game ledger */}
+          <div className="sc-block">
+            <h5>Every call, newest first</h5>
+            <div className="sc-games">
+              {card.games.map((g, i) => (
+                <div key={i} className={`sc-game ${g.hit ? 'hit' : 'miss'}`}>
+                  <span className={`sc-badge ${g.hit ? 'hit' : 'miss'}`}>{g.hit ? '✓' : '✗'}</span>
+                  <span className="sc-teams">{g.home} <em>{g.score}</em> {g.away}</span>
+                  <span className="sc-pick">
+                    called <strong>{g.our_pick_team}</strong> {SIDE_LABEL[g.our_pick] && g.our_pick !== 'draw' ? '' : ''}
+                    <span className="sc-pick-pct">{g.our_pick_pct}%</span>
+                  </span>
+                  <span className={`sc-md`}>{g.stage_label || (g.matchday >= 4 ? g.stage : `MD${g.matchday ?? '?'}`)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* the real story: accuracy WHEN confident */}
       {rep.confident && Object.keys(rep.confident).length > 0 && (

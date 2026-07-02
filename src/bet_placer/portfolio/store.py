@@ -105,6 +105,32 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     total_return = round(sum(float(b.get("payout_usd") or 0) for b in settled), 2)
     profit = round(total_return - total_staked, 2)
     roi_pct = round((profit / total_staked) * 100, 2) if total_staked else 0.0
+    singles = sum(1 for b in bets if (b.get("selection_count") or 0) <= 1)
+    parlays = sum(1 for b in bets if (b.get("selection_count") or 0) > 1)
+    avg_odds_values = [float(b.get("combined_odds") or 0) for b in bets if float(b.get("combined_odds") or 0) > 1]
+    avg_odds = round(sum(avg_odds_values) / len(avg_odds_values), 2) if avg_odds_values else None
+    market_breakdown: dict[str, dict[str, Any]] = {}
+    for bet in bets:
+        family = str(bet.get("market_family") or "other")
+        bucket = market_breakdown.setdefault(family, {"count": 0, "profit_usd": 0.0, "wins": 0, "losses": 0})
+        bucket["count"] += 1
+        bucket["profit_usd"] = round(bucket["profit_usd"] + float(bet.get("profit_usd") or 0), 2)
+        if bet.get("status") == "won":
+            bucket["wins"] += 1
+        elif bet.get("status") == "lost":
+            bucket["losses"] += 1
+
+    insights: list[str] = []
+    if parlays >= max(3, singles):
+        insights.append("You are leaning heavily into parlays. That usually adds variance faster than it adds edge.")
+    longshot_losses = sum(1 for b in bets if float(b.get("combined_odds") or 0) >= 3 and b.get("status") == "lost")
+    if longshot_losses >= 3:
+        insights.append("A lot of the damage is coming from long-odds bets. Trim stake size on 3.0+ prices unless the edge is clear.")
+    if losses > wins and total_staked >= 100:
+        insights.append("Your recent sample is losing overall. Focus on fewer bets and tighter price discipline before scaling volume.")
+    if sum(1 for b in bets if b.get("status") == "open") >= 5:
+        insights.append("You have a large number of open bets. Watch for correlated exposure across the same teams or match narratives.")
+
     return {
         "bet_count": len(bets),
         "settled_count": len(settled),
@@ -116,6 +142,18 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "total_return": total_return,
         "profit_usd": profit,
         "roi_pct": roi_pct,
+        "singles_count": singles,
+        "parlays_count": parlays,
+        "avg_odds": avg_odds,
+        "market_breakdown": market_breakdown,
+        "insights": insights,
+        "model_audit": {
+            "available": False,
+            "message": (
+                "Historical model-vs-bet grading needs saved prediction snapshots from the moment each bet was placed. "
+                "The import layer is now ready; the next layer is journaling model picks alongside future bets."
+            ),
+        },
         "bets": bets,
         "last_imported_at": _utc_now(),
     }

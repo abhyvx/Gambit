@@ -82,6 +82,9 @@ export default function PortfolioPage() {
     { label: 'Returned (USD)', value: fmtUsd(portfolio.total_return) },
     { label: 'P/L (USD)', value: fmtUsd(portfolio.profit_usd) },
     { label: 'Win-loss', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}` },
+    { label: 'Singles', value: portfolio.singles_count ?? 0 },
+    { label: 'Parlays', value: portfolio.parlays_count ?? 0 },
+    { label: 'Avg odds', value: portfolio.avg_odds ?? '—' },
   ]), [portfolio])
 
   const savePrivacy = async (patch = {}) => {
@@ -243,7 +246,7 @@ export default function PortfolioPage() {
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
-            <h2>Portfolio snapshot</h2>
+            <h2>Performance snapshot</h2>
             <p className="muted">
               This page refreshes from your Stake account history when privacy is enabled and the logged-in browser session is ready.
             </p>
@@ -267,13 +270,61 @@ export default function PortfolioPage() {
         </div>
 
         <div className="portfolio-note">
-          <h3>Current build status</h3>
-          <p>
-            The app now imports your recent Stake bet history into local private storage when refresh succeeds. Next I
-            still need to add model-vs-bet grading and original-price comparison on top of this imported ledger.
-          </p>
+          <h3>What to improve</h3>
+          {portfolio.insights?.length ? (
+            <div className="portfolio-insights">
+              {portfolio.insights.map((tip, idx) => (
+                <div key={idx} className="portfolio-insight">{tip}</div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No strong red flags yet from the imported sample.</p>
+          )}
           <p className="muted">Last imported: <strong>{fmtTs(portfolio.last_imported_at)}</strong></p>
         </div>
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Bet mix</h2>
+            <p className="muted">
+              Where your action has been going so far and which bet families are helping or hurting.
+            </p>
+          </div>
+        </div>
+
+        {!Object.keys(portfolio.market_breakdown || {}).length ? (
+          <p className="muted">Refresh after login to build your market breakdown.</p>
+        ) : (
+          <div className="portfolio-market-grid">
+            {Object.entries(portfolio.market_breakdown || {}).map(([family, stats]) => (
+              <div key={family} className="portfolio-market-card">
+                <strong>{family.replace(/_/g, ' ')}</strong>
+                <div className="muted">{stats.count} bets</div>
+                <div className="portfolio-market-metrics">
+                  <span>W-L: <strong>{stats.wins}-{stats.losses}</strong></span>
+                  <span>P/L: <strong>{fmtUsd(stats.profit_usd)}</strong></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Model audit</h2>
+            <p className="muted">
+              This is where the app will compare your placed bets against what the model believed at the time.
+            </p>
+          </div>
+          <span className={`portfolio-pill ${portfolio.model_audit?.available ? 'ok' : 'warn'}`}>
+            {portfolio.model_audit?.available ? 'Ready' : 'Next layer'}
+          </span>
+        </div>
+        <p className="muted">{portfolio.model_audit?.message}</p>
       </section>
 
       <section className="portfolio-card fade-up">
@@ -303,9 +354,13 @@ export default function PortfolioPage() {
                     <strong>{bet.fixture_name}</strong>
                     <div className="muted">{bet.league || 'Unknown league'} · {fmtTs(bet.created_at)}</div>
                   </div>
-                  <span className={`portfolio-pill ${bet.status === 'won' ? 'ok' : bet.status === 'lost' ? 'warn' : 'idle'}`}>
-                    {bet.status || 'unknown'}
-                  </span>
+                  <div className="portfolio-bet-badges">
+                    <span className="portfolio-pill idle">{bet.bet_type || 'bet'}</span>
+                    <span className="portfolio-pill idle">{bet.market_family || 'other'}</span>
+                    <span className={`portfolio-pill ${bet.status === 'won' ? 'ok' : bet.status === 'lost' ? 'warn' : 'idle'}`}>
+                      {bet.status || 'unknown'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="portfolio-bet-grid">

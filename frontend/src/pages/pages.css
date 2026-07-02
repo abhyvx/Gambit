@@ -113,6 +113,39 @@
   border-top: 1px solid var(--border-soft);
 }
 
+.portfolio-insights {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.portfolio-insight {
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(232, 185, 98, 0.18);
+  background: rgba(232, 185, 98, 0.06);
+}
+
+.portfolio-market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.portfolio-market-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: var(--sp-4);
+}
+
+.portfolio-market-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--sp-3);
+}
+
 .portfolio-bets {
   display: flex;
   flex-direction: column;
@@ -132,6 +165,13 @@
   gap: var(--sp-3);
   align-items: flex-start;
   margin-bottom: var(--sp-3);
+}
+
+.portfolio-bet-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .portfolio-bet-grid {
@@ -178,6 +218,10 @@
   .portfolio-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .portfolio-market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -192,6 +236,10 @@
 
   .portfolio-bet-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .portfolio-market-grid {
+    grid-template-columns: 1fr;
   }
 }
 

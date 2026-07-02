@@ -129,6 +129,37 @@
   background: rgba(232, 185, 98, 0.08);
 }
 
+.portfolio-pill.result-won {
+  border-color: rgba(186, 255, 103, 0.35);
+  color: var(--accent);
+  background: rgba(186, 255, 103, 0.08);
+}
+
+.portfolio-pill.result-lost {
+  border-color: rgba(255, 91, 91, 0.28);
+  color: #ffb1b1;
+  background: rgba(255, 91, 91, 0.08);
+}
+
+.portfolio-pill.result-push,
+.portfolio-pill.result-cashed_out {
+  border-color: rgba(232, 185, 98, 0.28);
+  color: #f1cf8d;
+  background: rgba(232, 185, 98, 0.08);
+}
+
+.portfolio-pill.model-good {
+  border-color: rgba(186, 255, 103, 0.35);
+  color: var(--accent);
+  background: rgba(186, 255, 103, 0.08);
+}
+
+.portfolio-pill.model-bad {
+  border-color: rgba(255, 91, 91, 0.28);
+  color: #ffb1b1;
+  background: rgba(255, 91, 91, 0.08);
+}
+
 .portfolio-check {
   display: flex;
   gap: var(--sp-3);
@@ -325,6 +356,19 @@
   background: var(--bg-elevated);
 }
 
+.portfolio-bet.status-won {
+  border-color: rgba(186, 255, 103, 0.22);
+}
+
+.portfolio-bet.status-lost {
+  border-color: rgba(255, 91, 91, 0.22);
+}
+
+.portfolio-bet.status-void,
+.portfolio-bet.status-cashout {
+  border-color: rgba(232, 185, 98, 0.22);
+}
+
 .portfolio-bet-top {
   display: flex;
   justify-content: space-between;
@@ -368,6 +412,31 @@
   border-radius: var(--r-sm);
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.portfolio-model-legs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: var(--sp-3);
+}
+
+.portfolio-model-leg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.portfolio-model-leg.good {
+  border-color: rgba(186, 255, 103, 0.22);
+}
+
+.portfolio-model-leg.bad {
+  border-color: rgba(255, 91, 91, 0.22);
 }
 
 .portfolio-alert {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,119 @@ _CONSENT_VERSION = "2026-07-02"
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _norm(text: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _flatten_menu(categories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flat: list[dict[str, Any]] = []
+    for category in categories or []:
+        for market in category.get("markets") or []:
+            for outcome in market.get("outcomes") or []:
+                flat.append({**outcome, "market_label": market.get("market_label"), "category": category.get("category")})
+    return flat
+
+
+def _match_model_outcome(selection: dict[str, Any], flat: list[dict[str, Any]]) -> dict[str, Any] | None:
+    sel_text = _norm(selection.get("selection"))
+    fixture_text = _norm(selection.get("fixture_name"))
+    target_odds = float(selection.get("odds") or 0)
+    best = None
+    best_score = -999.0
+    for outcome in flat:
+        label = _norm(outcome.get("label"))
+        raw_sel = _norm(outcome.get("selection"))
+        market_label = _norm(outcome.get("market_label"))
+        score = 0.0
+        if sel_text and (sel_text == raw_sel or sel_text == label):
+            score += 4
+        elif sel_text and (sel_text in label or raw_sel in sel_text):
+            score += 3
+        if fixture_text and fixture_text.split(" ")[0] in label:
+            score += 0.5
+        odds = float(outcome.get("odds") or 0)
+        if target_odds and odds:
+            score -= min(abs(odds - target_odds), 5) * 0.2
+        if any(word in market_label for word in ("goalscorer", "goalscorers")) and any(word in sel_text for word in ("over", "under", "yes", "no")):
+            score -= 2
+        if score > best_score:
+            best_score = score
+            best = outcome
+    return best if best_score >= 2 else None
+
+
+def _audit_bets_against_model(bets: list[dict[str, Any]]) -> dict[str, Any]:
+    from bet_placer.engine.bet_builder import build_bet_menu
+
+    by_fixture: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for bet in bets:
+        home, away = bet.get("home_team"), bet.get("away_team")
+        if home and away:
+            by_fixture.setdefault((home, away), []).append(bet)
+
+    audited = 0
+    aligned = 0
+    against = 0
+    strong_edges = 0
+    skip_flags = 0
+    for (home, away), fixture_bets in by_fixture.items():
+        try:
+            menu = build_bet_menu(home, away, budget_inr=300)
+        except Exception:
+            continue
+        flat = _flatten_menu(menu.get("categories") or [])
+        if not flat:
+            continue
+        for bet in fixture_bets:
+            bet_views = []
+            for sel in bet.get("selections") or []:
+                matched = _match_model_outcome(sel, flat)
+                if not matched:
+                    continue
+                verdict = matched.get("verdict") or {}
+                tone = verdict.get("tone") or "neutral"
+                edge = matched.get("edge_pct")
+                our_probability = matched.get("our_probability")
+                bet_views.append(
+                    {
+                        "label": matched.get("label"),
+                        "market_label": matched.get("market_label"),
+                        "tone": tone,
+                        "verdict_label": verdict.get("label"),
+                        "edge_pct": edge,
+                        "our_probability": our_probability,
+                    }
+                )
+                audited += 1
+                if tone == "good":
+                    aligned += 1
+                    if edge is not None and edge >= 5:
+                        strong_edges += 1
+                elif tone == "bad":
+                    against += 1
+                    skip_flags += 1
+            if bet_views:
+                tones = [v["tone"] for v in bet_views]
+                overall = "good" if all(t == "good" for t in tones) else "bad" if any(t == "bad" for t in tones) else "neutral"
+                bet["model_view"] = {
+                    "overall": overall,
+                    "legs": bet_views,
+                }
+    return {
+        "available": audited > 0,
+        "audited_legs": audited,
+        "aligned_legs": aligned,
+        "against_legs": against,
+        "strong_edges": strong_edges,
+        "skip_flags": skip_flags,
+        "message": (
+            f"Audited {audited} imported bet legs against the app's reconstructed board."
+            if audited
+            else "No imported bets could be matched back to the model board yet."
+        ),
+    }
 
 
 def _store_path() -> Path:
@@ -97,12 +211,14 @@ def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
-    settled = [b for b in bets if b.get("status") not in {"open", "pending", "unknown"}]
-    wins = sum(1 for b in bets if b.get("status") == "won")
-    losses = sum(1 for b in bets if b.get("status") == "lost")
-    pushes = sum(1 for b in bets if b.get("status") in {"void", "cancelled", "canceled"})
-    total_staked = round(sum(float(b.get("stake_usd") or 0) for b in bets), 2)
-    total_return = round(sum(float(b.get("payout_usd") or 0) for b in settled), 2)
+    display_currency = next((b.get("display_currency") for b in bets if b.get("display_currency")), "USD")
+    settled = [b for b in bets if b.get("result") not in {"open", "unknown"}]
+    wins = sum(1 for b in bets if b.get("result") == "won")
+    losses = sum(1 for b in bets if b.get("result") == "lost")
+    pushes = sum(1 for b in bets if b.get("result") == "push")
+    cashouts = sum(1 for b in bets if b.get("result") == "cashed_out")
+    total_staked = round(sum(float(b.get("stake_value") or 0) for b in bets), 2)
+    total_return = round(sum(float(b.get("payout_value") or 0) for b in settled), 2)
     profit = round(total_return - total_staked, 2)
     roi_pct = round((profit / total_staked) * 100, 2) if total_staked else 0.0
     singles = sum(1 for b in bets if (b.get("selection_count") or 0) <= 1)
@@ -112,25 +228,25 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     market_breakdown: dict[str, dict[str, Any]] = {}
     for bet in bets:
         family = str(bet.get("market_family") or "other")
-        bucket = market_breakdown.setdefault(family, {"count": 0, "profit_usd": 0.0, "wins": 0, "losses": 0})
+        bucket = market_breakdown.setdefault(family, {"count": 0, "profit_value": 0.0, "wins": 0, "losses": 0})
         bucket["count"] += 1
-        bucket["profit_usd"] = round(bucket["profit_usd"] + float(bet.get("profit_usd") or 0), 2)
-        if bet.get("status") == "won":
+        bucket["profit_value"] = round(bucket["profit_value"] + float(bet.get("profit_value") or 0), 2)
+        if bet.get("result") == "won":
             bucket["wins"] += 1
-        elif bet.get("status") == "lost":
+        elif bet.get("result") == "lost":
             bucket["losses"] += 1
 
     cumulative = []
     running = 0.0
     for idx, bet in enumerate(sorted(bets, key=lambda b: b.get("created_at") or "")):
-        running = round(running + float(bet.get("profit_usd") or 0), 2)
+        running = round(running + float(bet.get("profit_value") or 0), 2)
         cumulative.append(
             {
                 "i": idx + 1,
                 "label": bet.get("fixture_name") or f"Bet {idx + 1}",
-                "profit_usd": round(float(bet.get("profit_usd") or 0), 2),
-                "running_profit_usd": running,
-                "status": bet.get("status"),
+                "profit_value": round(float(bet.get("profit_value") or 0), 2),
+                "running_profit_value": running,
+                "result": bet.get("result"),
             }
         )
 
@@ -139,38 +255,38 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
             {
                 "market": family,
                 **stats,
-                "roi_pct": round((stats["profit_usd"] / sum(float(b.get("stake_usd") or 0) for b in bets if b.get("market_family") == family)) * 100, 2)
-                if any(b.get("market_family") == family and float(b.get("stake_usd") or 0) > 0 for b in bets)
+                "roi_pct": round((stats["profit_value"] / sum(float(b.get("stake_value") or 0) for b in bets if b.get("market_family") == family)) * 100, 2)
+                if any(b.get("market_family") == family and float(b.get("stake_value") or 0) > 0 for b in bets)
                 else 0.0,
             }
             for family, stats in market_breakdown.items()
         ),
-        key=lambda item: item["profit_usd"],
+        key=lambda item: item["profit_value"],
         reverse=True,
     )
     top_market = ranked_markets[0] if ranked_markets else None
     leak_market = ranked_markets[-1] if len(ranked_markets) > 1 else None
     recent = bets[:10]
-    recent_profit = round(sum(float(b.get("profit_usd") or 0) for b in recent), 2)
+    recent_profit = round(sum(float(b.get("profit_value") or 0) for b in recent), 2)
     recent_hit_rate = round(
-        (sum(1 for b in recent if b.get("status") == "won") / max(1, sum(1 for b in recent if b.get("status") in {"won", "lost"}))) * 100,
+        (sum(1 for b in recent if b.get("result") == "won") / max(1, sum(1 for b in recent if b.get("result") in {"won", "lost"}))) * 100,
         1,
     ) if recent else None
 
-    recommended_focus = [m["market"] for m in ranked_markets[:2] if m["profit_usd"] > 0]
-    caution_markets = [m["market"] for m in ranked_markets[-2:] if m["profit_usd"] < 0]
-    avoid_parlays = parlays >= singles and (sum(float(b.get("profit_usd") or 0) for b in bets if b.get("bet_type") == "parlay") < 0)
+    recommended_focus = [m["market"] for m in ranked_markets[:2] if m["profit_value"] > 0]
+    caution_markets = [m["market"] for m in ranked_markets[-2:] if m["profit_value"] < 0]
+    avoid_parlays = parlays >= singles and (sum(float(b.get("profit_value") or 0) for b in bets if b.get("bet_type") == "parlay") < 0)
     max_odds = 2.2 if longshot_losses >= 3 else 3.0
 
     insights: list[str] = []
     if parlays >= max(3, singles):
         insights.append("You are leaning heavily into parlays. That usually adds variance faster than it adds edge.")
-    longshot_losses = sum(1 for b in bets if float(b.get("combined_odds") or 0) >= 3 and b.get("status") == "lost")
+    longshot_losses = sum(1 for b in bets if float(b.get("combined_odds") or 0) >= 3 and b.get("result") == "lost")
     if longshot_losses >= 3:
         insights.append("A lot of the damage is coming from long-odds bets. Trim stake size on 3.0+ prices unless the edge is clear.")
     if losses > wins and total_staked >= 100:
         insights.append("Your recent sample is losing overall. Focus on fewer bets and tighter price discipline before scaling volume.")
-    if sum(1 for b in bets if b.get("status") == "open") >= 5:
+    if sum(1 for b in bets if b.get("result") == "open") >= 5:
         insights.append("You have a large number of open bets. Watch for correlated exposure across the same teams or match narratives.")
 
     profile = {
@@ -181,7 +297,7 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "max_preferred_odds": max_odds,
         "top_market": top_market,
         "leak_market": leak_market,
-        "recent_profit_usd": recent_profit,
+        "recent_profit_value": recent_profit,
         "recent_hit_rate_pct": recent_hit_rate,
         "summary": (
             f"Lean into {', '.join(recommended_focus) if recommended_focus else 'disciplined singles'}; "
@@ -198,8 +314,9 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "pushes": pushes,
         "total_staked": total_staked,
         "total_return": total_return,
-        "profit_usd": profit,
+        "profit_value": profit,
         "roi_pct": roi_pct,
+        "display_currency": display_currency,
         "singles_count": singles,
         "parlays_count": parlays,
         "avg_odds": avg_odds,
@@ -208,15 +325,9 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "cumulative_profit": cumulative,
         "insights": insights,
         "profile": profile,
-        "model_audit": {
-            "available": False,
-            "message": (
-                "Historical model-vs-bet grading needs saved prediction snapshots from the moment each bet was placed. "
-                "The import layer is now ready; the next layer is journaling model picks alongside future bets."
-            ),
-        },
         "bets": bets,
         "last_imported_at": _utc_now(),
+        "cashouts": cashouts,
     }
 
 
@@ -342,7 +453,9 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
             )
             return _merged_status(_save_state(state))
 
-        state["portfolio"] = _summarize_bets(bets)
+        summary = _summarize_bets(bets)
+        summary["model_audit"] = _audit_bets_against_model(summary["bets"])
+        state["portfolio"] = summary
         state["connection"].update(
             {
                 "status": "connected",

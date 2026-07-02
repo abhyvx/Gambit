@@ -17,9 +17,10 @@ function fmtTs(ts) {
   }
 }
 
-function fmtUsd(n) {
+function fmtMoney(n, currency = 'USD') {
   if (n == null) return '—'
-  return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  const symbol = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : `${currency} `
+  return `${symbol}${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 }
 
 export default function PortfolioPage() {
@@ -72,20 +73,22 @@ export default function PortfolioPage() {
   const browser = connection?.browser || {}
   const portfolio = state?.portfolio || {}
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
+  const money = (n) => fmtMoney(n, portfolio.display_currency)
 
   const summary = useMemo(() => ([
     { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%`, tone: (portfolio.roi_pct ?? 0) >= 0 ? 'good' : 'warn' },
-    { label: 'P/L', value: fmtUsd(portfolio.profit_usd), tone: (portfolio.profit_usd ?? 0) >= 0 ? 'good' : 'warn' },
-    { label: 'Staked (USD)', value: fmtUsd(portfolio.total_staked) },
-    { label: 'Win-loss', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}` },
+    { label: 'P/L', value: money(portfolio.profit_value), tone: (portfolio.profit_value ?? 0) >= 0 ? 'good' : 'warn' },
+    { label: 'Staked', value: money(portfolio.total_staked) },
+    { label: 'Win-loss-push', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}-${portfolio.pushes ?? 0}` },
     { label: 'Singles', value: portfolio.singles_count ?? 0 },
     { label: 'Parlays', value: portfolio.parlays_count ?? 0 },
     { label: 'Avg odds', value: portfolio.avg_odds ?? '—' },
   ]), [portfolio])
 
   const curve = portfolio.cumulative_profit || []
-  const curveMax = Math.max(...curve.map((pt) => Math.abs(pt.running_profit_usd || 0)), 1)
+  const curveMax = Math.max(...curve.map((pt) => Math.abs(pt.running_profit_value || 0)), 1)
   const marketRows = portfolio.ranked_markets || []
+  const audit = portfolio.model_audit || {}
 
   const savePrivacy = async (patch = {}) => {
     if (!state) return
@@ -183,9 +186,9 @@ export default function PortfolioPage() {
             {curve.map((pt) => (
               <div key={`${pt.i}-${pt.label}`} className="curve-col">
                 <div
-                  className={`curve-bar ${(pt.running_profit_usd || 0) >= 0 ? 'up' : 'down'}`}
-                  style={{ height: `${Math.max(10, (Math.abs(pt.running_profit_usd || 0) / curveMax) * 180)}px` }}
-                  title={`${pt.label}: ${fmtUsd(pt.running_profit_usd)}`}
+                  className={`curve-bar ${(pt.running_profit_value || 0) >= 0 ? 'up' : 'down'}`}
+                  style={{ height: `${Math.max(10, (Math.abs(pt.running_profit_value || 0) / curveMax) * 180)}px` }}
+                  title={`${pt.label}: ${money(pt.running_profit_value)}`}
                 />
               </div>
             ))}
@@ -231,11 +234,11 @@ export default function PortfolioPage() {
                 </div>
                 <div className="portfolio-market-bar">
                   <div
-                    className={`portfolio-market-fill ${row.profit_usd >= 0 ? 'up' : 'down'}`}
-                    style={{ width: `${Math.min(100, Math.max(8, Math.abs(row.profit_usd) * 10))}%` }}
+                    className={`portfolio-market-fill ${row.profit_value >= 0 ? 'up' : 'down'}`}
+                    style={{ width: `${Math.min(100, Math.max(8, Math.abs(row.profit_value) * 10))}%` }}
                   />
                 </div>
-                <strong className={row.profit_usd >= 0 ? 'green' : 'red'}>{fmtUsd(row.profit_usd)}</strong>
+                <strong className={row.profit_value >= 0 ? 'green' : 'red'}>{money(row.profit_value)}</strong>
               </div>
             ))}
           </div>
@@ -245,13 +248,33 @@ export default function PortfolioPage() {
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
-            <h2>Learning controls</h2>
+            <h2>Model audit and learning</h2>
             <p className="muted">
-              Keep the sensitive sync settings tucked away here instead of dominating the page.
+              Imported bets are now checked against the app's reconstructed board so you can see whether your own action aligned with the model.
             </p>
           </div>
-          <span className={`portfolio-pill ${portfolioReady ? 'ok' : 'warn'}`}>{portfolioReady ? 'Enabled' : 'Off'}</span>
+          <span className={`portfolio-pill ${audit.available ? 'ok' : 'warn'}`}>{audit.available ? 'Auditing live' : 'Needs more matches'}</span>
         </div>
+        {audit.available && (
+          <div className="portfolio-grid compact">
+            <div className="portfolio-stat">
+              <span>Audited legs</span>
+              <strong>{audit.audited_legs}</strong>
+            </div>
+            <div className="portfolio-stat">
+              <span>Model agreed</span>
+              <strong className="green">{audit.aligned_legs}</strong>
+            </div>
+            <div className="portfolio-stat">
+              <span>Model disliked</span>
+              <strong className="red">{audit.against_legs}</strong>
+            </div>
+            <div className="portfolio-stat">
+              <span>Strong edges</span>
+              <strong>{audit.strong_edges}</strong>
+            </div>
+          </div>
+        )}
         <div className="portfolio-controls">
           <label className="portfolio-check compact">
             <input
@@ -289,7 +312,7 @@ export default function PortfolioPage() {
             {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
           </button>
         </div>
-        <p className="muted">{connection.last_sync_message || portfolio.model_audit?.message}</p>
+        <p className="muted">{audit.message || connection.last_sync_message}</p>
       </section>
 
       <section className="portfolio-card fade-up">
@@ -313,7 +336,7 @@ export default function PortfolioPage() {
         ) : (
           <div className="portfolio-bets">
             {portfolio.bets.map((bet) => (
-              <div key={bet.id} className={`portfolio-bet status-${bet.status || 'unknown'}`}>
+              <div key={bet.id} className={`portfolio-bet status-${bet.result || bet.status || 'unknown'}`}>
                 <div className="portfolio-bet-top">
                   <div>
                     <strong>{bet.fixture_name}</strong>
@@ -322,9 +345,14 @@ export default function PortfolioPage() {
                   <div className="portfolio-bet-badges">
                     <span className="portfolio-pill idle">{bet.bet_type || 'bet'}</span>
                     <span className="portfolio-pill idle">{bet.market_family || 'other'}</span>
-                    <span className={`portfolio-pill ${bet.status === 'won' ? 'ok' : bet.status === 'lost' ? 'warn' : 'idle'}`}>
-                      {bet.status || 'unknown'}
+                    <span className={`portfolio-pill result-${bet.result || 'unknown'}`}>
+                      {bet.result || bet.status || 'unknown'}
                     </span>
+                    {bet.model_view?.overall && (
+                      <span className={`portfolio-pill model-${bet.model_view.overall}`}>
+                        model {bet.model_view.overall}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -342,8 +370,8 @@ export default function PortfolioPage() {
                     <strong>{bet.combined_odds || bet.potential_multiplier || '—'}</strong>
                   </div>
                   <div>
-                    <span>P/L USD</span>
-                    <strong>{fmtUsd(bet.profit_usd)}</strong>
+                    <span>P/L</span>
+                    <strong className={(bet.profit_value ?? 0) >= 0 ? 'green' : 'red'}>{money(bet.profit_value)}</strong>
                   </div>
                 </div>
 
@@ -355,6 +383,17 @@ export default function PortfolioPage() {
                     </div>
                   ))}
                 </div>
+                {bet.model_view?.legs?.length > 0 && (
+                  <div className="portfolio-model-legs">
+                    {bet.model_view.legs.map((leg, idx) => (
+                      <div key={`${bet.id}-model-${idx}`} className={`portfolio-model-leg ${leg.tone || 'neutral'}`}>
+                        <strong>{leg.verdict_label || 'Model read'}</strong>
+                        <span>{leg.label}</span>
+                        {leg.edge_pct != null && <small>Edge {leg.edge_pct}% · {Math.round((leg.our_probability || 0) * 100)}% win chance</small>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -17,6 +17,11 @@ function fmtTs(ts) {
   }
 }
 
+function fmtUsd(n) {
+  if (n == null) return '—'
+  return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+}
+
 export default function PortfolioPage() {
   const [state, setState] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -73,6 +78,10 @@ export default function PortfolioPage() {
     { label: 'Settled', value: portfolio.settled_count ?? 0 },
     { label: 'Open', value: portfolio.open_count ?? 0 },
     { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%` },
+    { label: 'Staked (USD)', value: fmtUsd(portfolio.total_staked) },
+    { label: 'Returned (USD)', value: fmtUsd(portfolio.total_return) },
+    { label: 'P/L (USD)', value: fmtUsd(portfolio.profit_usd) },
+    { label: 'Win-loss', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}` },
   ]), [portfolio])
 
   const savePrivacy = async (patch = {}) => {
@@ -177,11 +186,11 @@ export default function PortfolioPage() {
           <div>
             <h2>Stake session</h2>
             <p className="muted">
-              This uses a browser session you control. The app does not ask for your raw Stake password here.
+              This uses a visible browser session you control. The app does not ask for your raw Stake password here.
             </p>
           </div>
           <span className={`portfolio-pill ${browser.ready ? 'ok' : browser.warming ? 'warn' : 'idle'}`}>
-            {browser.ready ? 'Connected' : browser.warming ? 'Opening browser…' : 'Disconnected'}
+            {browser.ready ? 'Connected' : browser.warming ? 'Opening login window…' : 'Disconnected'}
           </span>
         </div>
 
@@ -191,7 +200,7 @@ export default function PortfolioPage() {
             onClick={() => runAction('connect', connectPortfolioSession)}
             disabled={busy === 'connect'}
           >
-            {busy === 'connect' ? 'Connecting…' : 'Connect Stake session'}
+            {busy === 'connect' ? 'Opening…' : 'Open Stake login window'}
           </button>
           <button
             className="refresh-btn"
@@ -228,7 +237,7 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        <p className="muted">{connection.last_sync_message || 'Connect Stake to prepare a private browser session.'}</p>
+        <p className="muted">{connection.last_sync_message || 'Open Stake login to prepare a private browser session.'}</p>
       </section>
 
       <section className="portfolio-card fade-up">
@@ -236,7 +245,7 @@ export default function PortfolioPage() {
           <div>
             <h2>Portfolio snapshot</h2>
             <p className="muted">
-              This page auto-refreshes on open when privacy is enabled and the Stake browser session is ready.
+              This page refreshes from your Stake account history when privacy is enabled and the logged-in browser session is ready.
             </p>
           </div>
           <button
@@ -260,12 +269,76 @@ export default function PortfolioPage() {
         <div className="portfolio-note">
           <h3>Current build status</h3>
           <p>
-            The private consent model, local storage, and browser-session refresh path are now wired in. The next step
-            is importing your actual Stake account history into this portfolio snapshot and grading those bets against
-            the model and original prices.
+            The app now imports your recent Stake bet history into local private storage when refresh succeeds. Next I
+            still need to add model-vs-bet grading and original-price comparison on top of this imported ledger.
           </p>
           <p className="muted">Last imported: <strong>{fmtTs(portfolio.last_imported_at)}</strong></p>
         </div>
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Recent imported bets</h2>
+            <p className="muted">
+              These are pulled from your Stake session and stored privately on this machine until you delete them.
+            </p>
+          </div>
+          <span className={`portfolio-pill ${portfolio.bets?.length ? 'ok' : 'idle'}`}>
+            {portfolio.bets?.length ? `${portfolio.bets.length} loaded` : 'No bets yet'}
+          </span>
+        </div>
+
+        {!portfolio.bets?.length ? (
+          <p className="muted">
+            No imported bets yet. Open the Stake login window, make sure you are fully signed in, then press
+            `Refresh portfolio now`.
+          </p>
+        ) : (
+          <div className="portfolio-bets">
+            {portfolio.bets.map((bet) => (
+              <div key={bet.id} className={`portfolio-bet status-${bet.status || 'unknown'}`}>
+                <div className="portfolio-bet-top">
+                  <div>
+                    <strong>{bet.fixture_name}</strong>
+                    <div className="muted">{bet.league || 'Unknown league'} · {fmtTs(bet.created_at)}</div>
+                  </div>
+                  <span className={`portfolio-pill ${bet.status === 'won' ? 'ok' : bet.status === 'lost' ? 'warn' : 'idle'}`}>
+                    {bet.status || 'unknown'}
+                  </span>
+                </div>
+
+                <div className="portfolio-bet-grid">
+                  <div>
+                    <span>Stake</span>
+                    <strong>{bet.stake} {bet.currency}</strong>
+                  </div>
+                  <div>
+                    <span>Payout</span>
+                    <strong>{bet.payout ? `${bet.payout} ${bet.currency}` : '—'}</strong>
+                  </div>
+                  <div>
+                    <span>Odds</span>
+                    <strong>{bet.combined_odds || bet.potential_multiplier || '—'}</strong>
+                  </div>
+                  <div>
+                    <span>P/L USD</span>
+                    <strong>{fmtUsd(bet.profit_usd)}</strong>
+                  </div>
+                </div>
+
+                <div className="portfolio-selection-list">
+                  {(bet.selections || []).map((sel, idx) => (
+                    <div key={`${bet.id}-${idx}`} className="portfolio-selection">
+                      <span>{sel.selection || 'Selection'}</span>
+                      <small>{sel.fixture_name || bet.fixture_name} · {sel.odds || '—'}</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )

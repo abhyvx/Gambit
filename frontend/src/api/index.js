@@ -88,8 +88,15 @@ export async function disconnectPortfolioSession() {
 export async function refreshPortfolioSnapshot() {
   const r = await fetch(`${API}/portfolio/refresh`, { method: 'POST', signal: AbortSignal.timeout(45000) })
   if (!r.ok) {
-    const msg = await r.text()
-    throw new Error(msg || `Portfolio refresh failed (${r.status})`)
+    let msg = `Portfolio refresh failed (${r.status})`
+    try {
+      const data = await r.json()
+      msg = data.detail || msg
+    } catch {
+      const text = await r.text()
+      if (text) msg = text
+    }
+    throw new Error(msg)
   }
   return r.json()
 }

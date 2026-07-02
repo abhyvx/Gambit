@@ -113,6 +113,57 @@
   border-top: 1px solid var(--border-soft);
 }
 
+.portfolio-bets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.portfolio-bet {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: var(--sp-4);
+  background: var(--bg-elevated);
+}
+
+.portfolio-bet-top {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  margin-bottom: var(--sp-3);
+}
+
+.portfolio-bet-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.portfolio-bet-grid span,
+.portfolio-selection span {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.portfolio-selection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.portfolio-selection {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 .portfolio-alert {
   border-radius: var(--r-md);
   padding: var(--sp-3) var(--sp-4);
@@ -137,6 +188,10 @@
   .portfolio-grid,
   .portfolio-grid.compact {
     grid-template-columns: 1fr;
+  }
+
+  .portfolio-bet-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

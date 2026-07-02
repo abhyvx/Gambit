@@ -8,7 +8,8 @@ from threading import Lock
 from typing import Any
 
 from bet_placer.config import get_settings
-from bet_placer.data.stake_browser import browser_status, warmup
+from bet_placer.data.stake_browser import browser_status, warmup_visible
+from bet_placer.data.stake_scraper import StakeScraper
 
 _LOCK = Lock()
 _CONSENT_VERSION = "2026-07-02"
@@ -95,6 +96,31 @@ def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
+    settled = [b for b in bets if b.get("status") not in {"open", "pending", "unknown"}]
+    wins = sum(1 for b in bets if b.get("status") == "won")
+    losses = sum(1 for b in bets if b.get("status") == "lost")
+    pushes = sum(1 for b in bets if b.get("status") in {"void", "cancelled", "canceled"})
+    total_staked = round(sum(float(b.get("stake_usd") or 0) for b in bets), 2)
+    total_return = round(sum(float(b.get("payout_usd") or 0) for b in settled), 2)
+    profit = round(total_return - total_staked, 2)
+    roi_pct = round((profit / total_staked) * 100, 2) if total_staked else 0.0
+    return {
+        "bet_count": len(bets),
+        "settled_count": len(settled),
+        "open_count": sum(1 for b in bets if b.get("status") == "open"),
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "total_staked": total_staked,
+        "total_return": total_return,
+        "profit_usd": profit,
+        "roi_pct": roi_pct,
+        "bets": bets,
+        "last_imported_at": _utc_now(),
+    }
+
+
 def get_portfolio_state() -> dict[str, Any]:
     with _LOCK:
         return _merged_status(_load_state())
@@ -120,7 +146,7 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
 def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
     with _LOCK:
         state = _load_state()
-        ok = warmup(timeout=timeout)
+        ok = warmup_visible(timeout=timeout)
         browser = browser_status()
         if ok or browser.get("ready"):
             state["connection"].update(
@@ -128,7 +154,7 @@ def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
                     "status": "connected",
                     "connected": True,
                     "last_connected_at": _utc_now(),
-                    "last_sync_message": "Stake browser session is ready. Log into Stake in that browser if needed, then open Portfolio to refresh.",
+                    "last_sync_message": "Visible Stake browser session is ready. Sign into Stake in that window if needed, then return here and refresh.",
                 }
             )
         else:
@@ -137,7 +163,7 @@ def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
                     "status": "connecting",
                     "connected": False,
                     "last_sync_message": (
-                        "Stake browser opened, but the session is not ready yet. "
+                        "Stake login window opened, but the session is not ready yet. "
                         "Complete Cloudflare/login in the browser window, then retry."
                     ),
                 }
@@ -179,16 +205,34 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
             )
             return _merged_status(_save_state(state))
 
+        try:
+            scraper = StakeScraper(use_browser=True, allow_browser_launch=False, timeout=45)
+            bets = scraper.fetch_user_bet_history(limit=100, offset=0)
+        except Exception as exc:
+            msg = str(exc)
+            state["connection"].update(
+                {
+                    "status": "connected",
+                    "connected": True,
+                    "last_sync_at": _utc_now(),
+                    "last_sync_status": "auth_required",
+                    "last_sync_message": (
+                        "Stake browser is open, but your account history could not be read yet. "
+                        "Make sure you are fully logged into Stake in that browser window, then refresh again. "
+                        f"Detail: {msg[:180]}"
+                    ),
+                }
+            )
+            return _merged_status(_save_state(state))
+
+        state["portfolio"] = _summarize_bets(bets)
         state["connection"].update(
             {
                 "status": "connected",
                 "connected": True,
                 "last_sync_at": _utc_now(),
-                "last_sync_status": "session_ready",
-                "last_sync_message": (
-                    "Browser session refreshed successfully. Private portfolio storage is ready; "
-                    "account-history import is the next step to wire into this session."
-                ),
+                "last_sync_status": "imported",
+                "last_sync_message": f"Imported {len(bets)} bets from your Stake account history.",
             }
         )
         return _merged_status(_save_state(state))

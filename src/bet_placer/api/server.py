@@ -56,21 +56,15 @@ def _warmup_stake_browser() -> None:
 
 
 def _prefetch_stake_overlay() -> None:
-    """One background fetch of Stake WC odds — does not block page loads."""
+    """Optionally prefetch Stake WC odds without waking a browser session.
+
+    If Stake uses the Playwright browser path, do nothing on startup so the app
+    never opens/warms Stake unless the user explicitly asks for it.
+    """
     settings = get_settings()
     if not settings.stake_use_browser:
         return
-
-    def _go() -> None:
-        try:
-            from bet_placer.engine.stake_odds import refresh_stake_overlay
-
-            result = refresh_stake_overlay()
-            logger.info("Stake overlay prefetch: %d fixtures", result.get("fixtures", 0))
-        except Exception:
-            logger.warning("Stake overlay prefetch failed", exc_info=True)
-
-    threading.Thread(target=_go, daemon=True, name="stake-overlay-prefetch").start()
+    logger.info("Stake overlay prefetch deferred until manual request (browser mode)")
 
 
 def _warmup_data() -> None:

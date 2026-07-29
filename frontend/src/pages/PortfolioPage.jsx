@@ -33,6 +33,7 @@ export default function PortfolioPage() {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [cloudStake, setCloudStake] = useState(false)
+  const [stakeLive, setStakeLive] = useState(false)
   useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
@@ -43,7 +44,7 @@ export default function PortfolioPage() {
       autoRefresh &&
       next?.privacy?.portfolio_enabled &&
       next?.privacy?.risk_acknowledged &&
-      next?.connection?.browser?.ready
+      (next?.connection?.status === 'authenticated' || next?.connection?.browser?.have_auth_token)
     ) {
       const refreshed = await refreshPortfolioSnapshot()
       setState(refreshed)
@@ -60,11 +61,16 @@ export default function PortfolioPage() {
         ])
         if (!mounted) return
         setState(next)
-        setCloudStake(health?.stake_use_browser === false)
+        const live = Boolean(health?.stake_live || health?.stake_remote)
+        setStakeLive(live)
+        // Host has no live browser path — journal still works from last sync.
+        setCloudStake(health?.stake_use_browser === false && !health?.stake_remote)
         if (
           next?.privacy?.portfolio_enabled &&
           next?.privacy?.risk_acknowledged &&
-          next?.connection?.browser?.ready
+          (next?.connection?.status === 'authenticated'
+            || next?.connection?.browser?.have_auth_token)
+          && live
         ) {
           const refreshed = await refreshPortfolioSnapshot()
           if (mounted) setState(refreshed)
@@ -84,11 +90,22 @@ export default function PortfolioPage() {
   const portfolio = state?.portfolio || {}
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
   const syncStatus = connection.last_sync_status || 'never'
-  const syncFailed = ['needs_reconnect', 'auth_required', 'never', 'cloud'].includes(syncStatus)
-    || connection.status === 'cloud'
+  const betCount = Array.isArray(portfolio.bets) ? portfolio.bets.length : 0
+  const hasJournal = betCount > 0 || syncStatus === 'imported' || connection.status === 'relay'
   const syncMessage = connection.last_sync_message || ''
+  const loginUrl = connection.login_url || browser.login_url || ''
+  const canLiveConnect = stakeLive || !cloudStake
+  const stakeLoggedIn = connection.status === 'authenticated'
+    || connection.status === 'relay'
+    || Boolean(browser.have_auth_token)
+  const canSync = portfolioReady && canLiveConnect && (stakeLoggedIn || browser.ready)
+  const needsSignIn = ['awaiting_login', 'auth_required'].includes(connection.status)
+    || syncStatus === 'auth_required'
+  const softSetup = !hasJournal && (
+    ['setup', 'cloud'].includes(connection.status) || (cloudStake && !stakeLive)
+  )
+  const showAttention = needsSignIn && !hasJournal
   const money = (n) => fmtMoney(n, portfolio.display_currency)
-  const cloudBlocked = cloudStake || connection.status === 'cloud'
 
   const summary = useMemo(() => ([
     { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%`, tone: (portfolio.roi_pct ?? 0) >= 0 ? 'good' : 'warn' },
@@ -169,49 +186,67 @@ export default function PortfolioPage() {
           <button
             className="refresh-btn"
             onClick={() => runAction('connect', connectPortfolioSession)}
-            disabled={busy === 'connect' || cloudBlocked}
-            title={
-              cloudBlocked
-                ? 'Stake login needs your laptop (STAKE_USE_BROWSER). Cloud cannot open Chrome.'
-                : 'Open a visible Stake Chrome window'
-            }
+            disabled={busy === 'connect'}
+            title="Connect your Stake account"
           >
-            {busy === 'connect' ? 'Opening…' : cloudBlocked ? 'Stake login (laptop only)' : 'Open Stake login'}
+            {busy === 'connect' ? 'Connecting…' : 'Connect Stake'}
           </button>
           <button
             className="refresh-btn"
             onClick={() => runAction('snapshot', refreshPortfolioSnapshot)}
-            disabled={!portfolioReady || busy === 'snapshot' || cloudBlocked}
+            disabled={!canSync || busy === 'snapshot'}
             title={
-              cloudBlocked
-                ? 'Sync Stake bets from a local session with browser login'
-                : !portfolioReady
-                  ? 'Enable portfolio sync and accept the privacy warning first'
-                  : !browser.ready
-                    ? 'Open the Stake login window first'
-                    : 'Import your latest Stake bet history'
+              !portfolioReady
+                ? 'Enable portfolio sync and accept the privacy note first'
+                : !canLiveConnect
+                  ? 'Sync will be available once Stake connect is ready'
+                  : !stakeLoggedIn && !browser.ready
+                    ? 'Connect Stake first'
+                    : 'Refresh your Stake bet history'
             }
           >
-            {busy === 'snapshot' ? 'Refreshing…' : 'Sync portfolio'}
+            {busy === 'snapshot' ? 'Refreshing…' : 'Sync'}
           </button>
         </div>
       </header>
 
-      {cloudBlocked && (
-        <div className="portfolio-alert warn">
-          <strong>Stake login is laptop-only on cloud.</strong>{' '}
-          Run the app locally with STAKE_USE_BROWSER=true, open Stake login, sync once,
-          or use ./scripts/start_stake_relay.sh for live odds. Portfolio import cannot open Chrome on Render.
+      {hasJournal && (
+        <div className="portfolio-alert">
+          {syncMessage || `Journal ready${betCount ? ` · ${betCount} bets` : ''}.`}
+          {connection.last_sync_at ? ` Updated ${fmtTs(connection.last_sync_at)}.` : ''}
+        </div>
+      )}
+
+      {softSetup && !err && (
+        <div className="portfolio-alert">
+          Connect Stake once to import your betting journal. Enable private sync below, then tap Connect Stake.
+          {canLiveConnect
+            ? ' We’ll open a secure sign-in window.'
+            : ' Live connect is finishing setup — your last synced journal still loads if available.'}
+        </div>
+      )}
+
+      {showAttention && (
+        <div className="portfolio-alert">
+          {syncMessage || 'Sign into Stake, then tap Connect Stake again.'}
+          {loginUrl ? (
+            <>
+              {' '}
+              <a href={loginUrl} target="_blank" rel="noreferrer">
+                Open Stake window
+              </a>
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
+        <div className="portfolio-alert">
+          Stake is connected. Tap Sync to import your history.
         </div>
       )}
 
       {err && <div className="portfolio-alert error">{err}</div>}
-
-      {syncFailed && syncMessage && !err && (
-        <div className="portfolio-alert warn">
-          <strong>Stake sync needs attention.</strong> {syncMessage}
-        </div>
-      )}
 
       <section className="portfolio-topline fade-up">
         {summary.map((item) => (

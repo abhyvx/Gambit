@@ -9,7 +9,7 @@ from threading import Lock, Thread
 from typing import Any
 
 from bet_placer.config import data_path, get_settings
-from bet_placer.data.stake_browser import browser_status, warmup_visible
+from bet_placer.data.stake_browser import browser_status, wait_until_logged_in
 from bet_placer.data.stake_scraper import StakeScraper
 
 _LOCK = Lock()
@@ -252,13 +252,11 @@ def _save_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
+    """Attach live browser flags without rewriting login status from CF-ready alone."""
     out = deepcopy(state)
     browser = browser_status()
     out["connection"]["browser"] = browser
-    if browser.get("ready"):
-        out["connection"]["status"] = "connected"
-        out["connection"]["connected"] = True
-    elif browser.get("warming"):
+    if browser.get("warming") and out["connection"].get("status") not in ("cloud", "authenticated", "relay"):
         out["connection"]["status"] = "connecting"
         out["connection"]["connected"] = False
     return out
@@ -496,40 +494,62 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
         return _merged_status(_save_state(state))
 
 
-def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
+def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
     from bet_placer.config import stake_network_enabled
 
-    # Cloud / STAKE_USE_BROWSER=false: never hang on Playwright
+    # No live Stake path (no local Chrome, no cloud browser, no token).
     if not stake_network_enabled():
         with _LOCK:
             state = _load_state()
+            has_bets = bool((state.get("portfolio") or {}).get("bets"))
             state["connection"].update(
                 {
-                    "status": "cloud",
-                    "connected": False,
+                    "status": "relay" if has_bets else "setup",
+                    "connected": bool(has_bets),
+                    "last_sync_status": "imported" if has_bets else "setup",
                     "last_sync_message": (
-                        "Cloud mode cannot open Stake Chrome. "
-                        "Portfolio sync needs a laptop with STAKE_USE_BROWSER=true "
-                        "(Settings Connect / ./scripts/start_stake_relay.sh), "
-                        "or import bets from a local session."
+                        "Your journal is up to date from the last sync."
+                        if has_bets
+                        else (
+                            "To import your Stake history, tap Connect Stake — "
+                            "we'll open a secure sign-in window. "
+                            "If that isn't available yet, sync once from any Gambit desktop session."
+                        )
                     ),
+                    "login_url": None,
                 }
             )
             return _merged_status(_save_state(state))
 
-    # Warmup can take minutes while the user clears Cloudflare — don't hold the
-    # portfolio lock for the whole wait or other API calls appear hung.
-    ok = warmup_visible(timeout=timeout)
+    # Don't hold portfolio lock while Chrome / user login runs (can take minutes).
+    login = wait_until_logged_in(timeout=timeout)
     browser = browser_status()
     with _LOCK:
         state = _load_state()
-        if ok or browser.get("ready"):
+        login_url = login.get("login_url") or browser.get("login_url")
+        if login.get("logged_in"):
+            user = login.get("user") or {}
+            who = user.get("name") or user.get("id") or "Stake"
             state["connection"].update(
                 {
-                    "status": "connected",
+                    "status": "authenticated",
                     "connected": True,
                     "last_connected_at": _utc_now(),
-                    "last_sync_message": "Visible Stake browser session is ready. Sign into Stake in that window if needed, then return here and refresh.",
+                    "last_sync_status": "authenticated",
+                    "last_sync_message": f"Connected as {who}. Tap Sync to refresh your journal.",
+                    "stake_user": {"id": user.get("id"), "name": user.get("name")},
+                    "login_url": login_url,
+                }
+            )
+        elif login.get("ready") or browser.get("ready"):
+            state["connection"].update(
+                {
+                    "status": "awaiting_login",
+                    "connected": False,
+                    "last_sync_status": "auth_required",
+                    "last_sync_message": login.get("message")
+                    or "Sign into Stake in the window we opened, then tap Connect again.",
+                    "login_url": login_url,
                 }
             )
         else:
@@ -537,10 +557,10 @@ def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
                 {
                     "status": "connecting",
                     "connected": False,
-                    "last_sync_message": (
-                        "Stake login window opened, but the session is not ready yet. "
-                        "Complete Cloudflare/login in the browser window, then retry."
-                    ),
+                    "last_sync_status": "needs_reconnect",
+                    "last_sync_message": login.get("message")
+                    or "Still starting the Stake window. Try Connect again in a moment.",
+                    "login_url": login_url,
                 }
             )
         return _merged_status(_save_state(state))
@@ -575,7 +595,21 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
                     "connected": False,
                     "last_sync_at": _utc_now(),
                     "last_sync_status": "needs_reconnect",
-                    "last_sync_message": "Stake session is not active. Reconnect the browser session, then refresh again.",
+                    "last_sync_message": "Stake session is not active. Open Stake login, sign in, then sync again.",
+                }
+            )
+            return _merged_status(_save_state(state))
+        if not browser.get("have_auth_token") and state["connection"].get("status") != "authenticated":
+            state["connection"].update(
+                {
+                    "status": "awaiting_login",
+                    "connected": False,
+                    "last_sync_at": _utc_now(),
+                    "last_sync_status": "auth_required",
+                    "last_sync_message": (
+                        "Stake Chrome is open, but no account session yet. "
+                        "Sign into Stake in that window (Open Stake login), then sync again."
+                    ),
                 }
             )
             return _merged_status(_save_state(state))
@@ -595,8 +629,8 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
             msg = str(exc)
             state["connection"].update(
                 {
-                    "status": "connected",
-                    "connected": True,
+                    "status": "awaiting_login",
+                    "connected": False,
                     "last_sync_at": _utc_now(),
                     "last_sync_status": "auth_required",
                     "last_sync_message": (
@@ -622,7 +656,7 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
         state["portfolio"] = summary
         state["connection"].update(
             {
-                "status": "connected",
+                "status": "authenticated",
                 "connected": True,
                 "last_sync_at": _utc_now(),
                 "last_sync_status": "imported",
@@ -649,3 +683,56 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
 
     Thread(target=_audit_in_background, daemon=True, name="portfolio-audit").start()
     return result
+
+
+def ingest_portfolio_relay(payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept a laptop-synced portfolio snapshot (cloud has no Stake Chrome)."""
+    with _LOCK:
+        state = _load_state()
+        portfolio = payload.get("portfolio")
+        if isinstance(portfolio, dict) and portfolio:
+            state["portfolio"] = portfolio
+        privacy = payload.get("privacy")
+        if isinstance(privacy, dict):
+            # Keep cloud privacy toggles opt-in from laptop snapshot only if explicit
+            for key in ("portfolio_enabled", "risk_acknowledged", "learning_opt_in"):
+                if key in privacy:
+                    state["privacy"][key] = bool(privacy[key])
+            if privacy.get("risk_acknowledged"):
+                state["privacy"]["consent_version"] = _CONSENT_VERSION
+                state["privacy"]["consent_accepted_at"] = privacy.get("consent_accepted_at") or _utc_now()
+        stake_user = (payload.get("connection") or {}).get("stake_user")
+        bet_count = len((state.get("portfolio") or {}).get("bets") or [])
+        state["connection"].update(
+            {
+                "status": "relay",
+                "connected": True,
+                "last_sync_at": _utc_now(),
+                "last_sync_status": "imported",
+                "last_sync_message": (
+                    f"Imported {bet_count} bets from laptop Stake login."
+                    if bet_count
+                    else "Received portfolio relay from laptop (empty history)."
+                ),
+                "stake_user": stake_user if isinstance(stake_user, dict) else state["connection"].get("stake_user"),
+            }
+        )
+        return _merged_status(_save_state(state))
+
+
+def portfolio_relay_export() -> dict[str, Any]:
+    """Slice of local state safe to POST to cloud /api/portfolio/relay."""
+    with _LOCK:
+        state = _load_state()
+    return {
+        "portfolio": state.get("portfolio") or {},
+        "privacy": {
+            "portfolio_enabled": bool((state.get("privacy") or {}).get("portfolio_enabled")),
+            "risk_acknowledged": bool((state.get("privacy") or {}).get("risk_acknowledged")),
+            "learning_opt_in": bool((state.get("privacy") or {}).get("learning_opt_in")),
+            "consent_accepted_at": (state.get("privacy") or {}).get("consent_accepted_at"),
+        },
+        "connection": {
+            "stake_user": (state.get("connection") or {}).get("stake_user"),
+        },
+    }

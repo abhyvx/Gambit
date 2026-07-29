@@ -913,13 +913,14 @@ def fetch_fast_stake_overlay(scraper: StakeScraper) -> dict[str, StakeFixture]:
             result[key] = fx
             continue
         if not fx.id:
-            result[key] = fx
+            # ponytail: skip empty shells — never poison overlay/disk with 0-market rows
             continue
         try:
-            result[key] = scraper.fetch_fixture_odds(fx.id)
+            detailed = scraper.fetch_fixture_odds(fx.id)
+            if detailed and detailed.markets:
+                result[key] = detailed
         except Exception as exc:
             logger.debug("Stake odds fetch %s failed: %s", key, exc)
-            result[key] = fx
 
     logger.info("Stake fast overlay: %d fixtures", len(result))
     return result
@@ -1141,10 +1142,22 @@ def _save_disk_cache() -> None:
     path = _stake_disk_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        fixtures = {
+            _k: _serialize_fixture(fx)
+            for _k, fx in _overlay_cache.items()
+            if fx.markets
+        }
+        overlays = {
+            _k: _overlay_for_disk(ov) for _k, ov in _overlay_disk_overlays.items()
+        }
+        # Never wipe a good disk cache with an empty write
+        if not fixtures and not overlays and path.is_file():
+            logger.warning("Stake disk cache save skipped — refusing empty wipe")
+            return
         payload = {
             "updated_at": datetime.utcnow().isoformat() + "Z",
-            "fixtures": {_k: _serialize_fixture(fx) for _k, fx in _overlay_cache.items() if fx.markets},
-            "overlays": {_k: _overlay_for_disk(ov) for _k, ov in _overlay_disk_overlays.items()},
+            "fixtures": fixtures,
+            "overlays": overlays,
         }
         path.write_text(json.dumps(payload, indent=0), encoding="utf-8")
     except Exception as exc:
@@ -1159,6 +1172,7 @@ def ingest_stake_relay(payload: dict) -> dict:
     with _overlay_cache_lock:
         for key, fx_data in (payload.get("fixtures") or {}).items():
             fx = _deserialize_fixture(fx_data)
+            # Refuse empty shells — a bad push must not wipe good lines
             if fx and fx.markets:
                 _overlay_cache[key] = fx
                 ingested += 1
@@ -1355,16 +1369,17 @@ def get_stake_overlay_map(
         _overlay_cache_ts = time.monotonic()
         _overlay_fail_ts = 0.0
         if fetched:
-            _overlay_cache.update(fetched)
-            for key, fx in fetched.items():
-                if not fx.markets:
-                    continue
-                try:
-                    ov = build_stake_overlay(fx)
-                    _persist_match_stake_unlocked(fx.home_team, fx.away_team, fx, ov)
-                except Exception as exc:
-                    logger.debug("Stake overlay persist failed for %s: %s", key, exc)
-            _save_disk_cache()
+            # Merge priced fixtures only — empty shells must not replace good lines
+            priced = {k: fx for k, fx in fetched.items() if fx and fx.markets}
+            if priced:
+                _overlay_cache.update(priced)
+                for key, fx in priced.items():
+                    try:
+                        ov = build_stake_overlay(fx)
+                        _persist_match_stake_unlocked(fx.home_team, fx.away_team, fx, ov)
+                    except Exception as exc:
+                        logger.debug("Stake overlay persist failed for %s: %s", key, exc)
+                _save_disk_cache()
             return dict(_overlay_cache)
         return dict(_overlay_cache)
 

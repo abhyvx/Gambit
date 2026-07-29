@@ -105,6 +105,35 @@ export function groupForSportKey(key) {
   return SPORT_GROUPS.find((g) => g.leagues.some((l) => l.key === key)) || SPORT_GROUPS[0]
 }
 
+/** Pick the SportPage league tab that contains this event. */
+export function leagueTabForEvent(ev) {
+  const key = String(ev?.sport_key || '')
+  const blob = `${ev?.league || ''} ${ev?.sport_title || ''}`.toLowerCase()
+  if (key && key !== 'soccer_all') {
+    for (const g of SPORT_GROUPS) {
+      if (g.leagues.some((l) => l.key === key)) return key
+    }
+  }
+  // soccer_all / unknown → map competition name to a tab
+  const SOCCER_HINTS = [
+    ['soccer_epl', ['premier league', 'eng.1', 'english premier']],
+    ['soccer_uefa_champs_league', ['champions league', 'uefa.champions']],
+    ['soccer_spain_la_liga', ['laliga', 'la liga', 'esp.1']],
+    ['soccer_germany_bundesliga', ['bundesliga', 'ger.1']],
+    ['soccer_italy_serie_a', ['serie a', 'ita.1']],
+    ['soccer_fifa_world_cup', ['world cup', 'fifa']],
+  ]
+  if (key.startsWith('soccer') || !key) {
+    for (const [tab, hints] of SOCCER_HINTS) {
+      if (hints.some((h) => blob.includes(h))) return tab
+    }
+    return 'soccer_other'
+  }
+  if (key.startsWith('basketball')) return key === 'basketball_nba' ? key : 'basketball_all'
+  if (key.startsWith('cricket')) return 'cricket_all'
+  return null
+}
+
 export function leagueMeta(key) {
   for (const g of SPORT_GROUPS) {
     const hit = g.leagues.find((l) => l.key === key)

@@ -405,6 +405,22 @@ def stake_relay(body: StakeRelayPayload):
     return ingest_stake_relay({"fixtures": body.fixtures})
 
 
+@app.get("/api/stake/snapshot")
+def stake_snapshot(secret: str = Query(...)):
+    """Download current Stake overlay (relay secret). Used to backup / restore after deploys."""
+    settings = get_settings()
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise HTTPException(status_code=401, detail="Invalid relay secret")
+    from bet_placer.engine.stake_odds import export_stake_overlay_payload, stake_overlay_status, warm_stake_cache_from_disk
+    warm_stake_cache_from_disk()
+    payload = export_stake_overlay_payload()
+    return {
+        **payload,
+        "status": stake_overlay_status(),
+        "count": len(payload.get("fixtures") or {}),
+    }
+
+
 @app.post("/api/stake/refresh")
 def stake_refresh():
     """Pull latest Stake trending locally, or return relay/disk cache on cloud."""

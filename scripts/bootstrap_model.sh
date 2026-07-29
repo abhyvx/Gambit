@@ -16,6 +16,8 @@ for name in craft.db model_params.json craft_nn.joblib; do
 done
 # Always refresh betting snapshot when missing (monthly charts)
 [ -f "$DEST/betting_evolution.db" ] || NEED_REFRESH=1
+# Stake overlay from last laptop push (survives redeploy)
+[ -f "$DEST/stake_overlay_cache.json" ] || NEED_REFRESH=1
 
 if [ "$NEED_REFRESH" = "0" ]; then
   echo "model: using cached state in $DEST"
@@ -30,7 +32,7 @@ if [ -z "$JSON" ] || echo "$JSON" | grep -q '"message"'; then
   exit 0
 fi
 
-for name in craft.db model_params.json craft_nn.joblib betting_evolution.db; do
+for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json; do
   URL=$(echo "$JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

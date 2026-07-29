@@ -108,7 +108,7 @@ export function OddsBtn({ label, value, stake, onClick }) {
   )
 }
 
-export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '' }) {
+export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '', onAddOdds }) {
   const odds = ev.odds || {}
   const priced = odds.home && odds.away
   const parts = (ev.status === 'live' || ev.status === 'completed')
@@ -141,10 +141,24 @@ export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '' }) {
         {parts && <strong className="fixture-score">{parts.away}</strong>}
       </div>
       {priced ? (
-        <div className="featured-odds" aria-label="Match odds">
-          <span>{fmtOdds(odds.home)}</span>
-          {showDraw && odds.draw ? <span>{fmtOdds(odds.draw)}</span> : null}
-          <span>{fmtOdds(odds.away)}</span>
+        <div
+          className="featured-odds"
+          aria-label="Match odds — click to add"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <OddsBtn
+            label="1"
+            value={odds.home}
+            onClick={() => onAddOdds?.(ev, 'home')}
+          />
+          {showDraw && odds.draw ? (
+            <OddsBtn label="X" value={odds.draw} onClick={() => onAddOdds?.(ev, 'draw')} />
+          ) : null}
+          <OddsBtn
+            label="2"
+            value={odds.away}
+            onClick={() => onAddOdds?.(ev, 'away')}
+          />
         </div>
       ) : (
         <small>{fmtKickoff(ev.kickoff) || ev.league}</small>

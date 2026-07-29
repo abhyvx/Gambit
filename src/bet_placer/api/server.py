@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from bet_placer.api.serializers import serialize_match_result, serialize_pipeline_results, serialize_value_bet
-from bet_placer.config import get_settings
+from bet_placer.config import get_settings, stake_network_enabled
 from bet_placer.consensus.bettors import analyze_bettor_consensus
 from bet_placer.consensus.web import WebConsensusFetcher
 from bet_placer.data.catalog import CATEGORIES, list_sports
@@ -56,8 +56,9 @@ def _warmup_stake_browser() -> None:
 
 
 def _prefetch_stake_overlay() -> None:
-    """Load persisted Stake overlay + warm popular soccer fixtures (no wait on request path)."""
+    """Load persisted Stake overlay from disk; skip live GraphQL on cloud (403)."""
     def _go() -> None:
+        from bet_placer.config import stake_network_enabled
         try:
             from bet_placer.engine.stake_odds import warm_stake_cache_from_disk
             n = warm_stake_cache_from_disk()
@@ -65,6 +66,9 @@ def _prefetch_stake_overlay() -> None:
                 logger.info("Stake disk cache warmed: %d fixtures", n)
         except Exception:
             logger.warning("Stake disk cache warmup failed", exc_info=True)
+        if not stake_network_enabled():
+            logger.info("Stake live fetch skipped (browser off — use ESPN/model prices on cloud)")
+            return
         try:
             from bet_placer.data.stake_scraper import StakeScraper
             from bet_placer.engine.stake_odds import fetch_fast_stake_overlay
@@ -230,6 +234,7 @@ def health():
         "odds_api_configured": bool(settings.odds_api_key),
         "stake_token_configured": bool(settings.stake_api_token),
         "stake_use_browser": settings.stake_use_browser,
+        "stake_live": stake_network_enabled(),
         "stake_browser": stake_status,
     }
 
@@ -378,7 +383,7 @@ def events(sport: str = Query(default="soccer_epl"), match: str | None = None):
 
 @app.post("/api/stake/refresh")
 def stake_refresh():
-    """Pull latest WC fixtures from Stake trending (fast, non-blocking)."""
+    """Pull latest Stake trending (local browser only — cloud uses model prices)."""
     from bet_placer.engine.stake_odds import refresh_stake_overlay
     return refresh_stake_overlay()
 
@@ -386,6 +391,12 @@ def stake_refresh():
 @app.post("/api/stake/connect")
 def stake_connect():
     """Open visible Chrome for Cloudflare/login, then pull Stake odds."""
+    from bet_placer.config import get_settings, stake_network_enabled
+    if not stake_network_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Stake connect requires STAKE_USE_BROWSER=true — only works on your laptop, not cloud deploy.",
+        )
     from bet_placer.data.stake_browser import browser_status, warmup_visible
     from bet_placer.engine.stake_odds import refresh_stake_overlay, stake_overlay_status
 

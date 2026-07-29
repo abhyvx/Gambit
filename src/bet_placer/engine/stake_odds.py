@@ -769,6 +769,10 @@ def fetch_fast_stake_overlay(scraper: StakeScraper) -> dict[str, StakeFixture]:
     Never re-fetch odds when markets are present (the detail query often 400s
     and blocks the single browser thread for minutes).
     """
+    from bet_placer.config import stake_network_enabled
+    if not stake_network_enabled():
+        return {}
+
     result: dict[str, StakeFixture] = {}
     fixtures: list = []
     # Unfiltered homepage trending covers soccer + basketball + cricket + more.
@@ -1117,6 +1121,17 @@ def _reset_stale_overlay_fetch() -> None:
 
 def refresh_stake_overlay() -> dict:
     """Force a fast trending refresh (used by /api/stake/refresh)."""
+    from bet_placer.config import stake_network_enabled
+    if not stake_network_enabled():
+        warm_stake_cache_from_disk()
+        with _overlay_cache_lock:
+            n = len(_overlay_cache)
+        return {
+            "fixtures": n,
+            "status": stake_overlay_status(),
+            "skipped": True,
+            "reason": "Stake live odds need STAKE_USE_BROWSER=true (local only — cloud gets 403)",
+        }
     global _overlay_fetching, _overlay_fetch_started
     with _overlay_cache_lock:
         _overlay_fetching = False

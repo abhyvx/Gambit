@@ -15,15 +15,15 @@ class Settings(BaseSettings):
     stake_api_token: str = ""
     stake_graphql_endpoint: str = "https://stake.com/_api/graphql"
     # Fetch Stake through a real browser (Playwright) to pass Cloudflare.
-    # Set STAKE_USE_BROWSER=false to disable Stake scraping entirely (no popup,
-    # falls back to ESPN/DraftKings model prices — ideal for cloud hosting).
-    stake_use_browser: bool = True
+    # Default off — cloud/datacenter IPs get 403 from stake.com/_api/graphql.
+    # Local dev: STAKE_USE_BROWSER=true in .env
+    stake_use_browser: bool = False
     # Run Chromium without a visible window (STAKE_BROWSER_HEADLESS=0 for headful).
     # Once the persistent profile has solved Cloudflare once, headless reuse works.
     stake_browser_headless: bool = True
     # Open Chromium on API startup. Default off — browser launches on first
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
-    stake_browser_warmup_on_startup: bool = True
+    stake_browser_warmup_on_startup: bool = False
 
     # Consensus weighting (how much to consider vs model — never blindly follow)
     consensus_weight_bettors: float = 0.12
@@ -62,3 +62,9 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def stake_network_enabled() -> bool:
+    """Stake GraphQL works only via Playwright (local) or an API token — not from cloud IPs."""
+    s = get_settings()
+    return bool(s.stake_use_browser or s.stake_api_token)

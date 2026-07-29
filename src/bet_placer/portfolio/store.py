@@ -488,12 +488,196 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _parse_fixture_sides(fixture_name: str | None) -> tuple[str, str]:
+    text = (fixture_name or "").strip()
+    for sep in (" vs ", " v ", " @ "):
+        if sep in text.lower():
+            # case-insensitive split
+            idx = text.lower().index(sep)
+            return text[:idx].strip(), text[idx + len(sep) :].strip()
+    return "", ""
+
+
+def _grade_portfolio_leg(sel: dict[str, Any], row: dict[str, Any]) -> bool | None:
+    from bet_placer.ml.rec_grading import grade_leg
+
+    market = str(sel.get("market") or sel.get("market_family") or "match_winner").lower()
+    if market in {"board", "manual", "multi", "other", ""}:
+        market = "match_winner"
+    return grade_leg(
+        {
+            "market": market,
+            "selection": sel.get("raw_selection") or sel.get("selection"),
+            "label": sel.get("label") or sel.get("selection") or sel.get("pick_label"),
+            "line": sel.get("line"),
+            "combo_parts": sel.get("combo_parts"),
+            "verified_stake": sel.get("verified_stake"),
+        },
+        home=row["home"],
+        away=row["away"],
+        hs=int(row["hs"]),
+        aws=int(row["aws"]),
+    )
+
+
+def settle_open_portfolio_bets() -> dict[str, Any]:
+    """Mark open journal bets won/lost once ESPN boards show a final score.
+
+    Also settles paper-book slip tickets so craft learns from every tracked rec.
+    """
+    from bet_placer.ml.paper_book import (
+        apply_paper_learning,
+        lookup_finished_score,
+        settle_open,
+        _board_score_index,
+    )
+
+    paper: dict[str, Any] = {}
+    try:
+        paper = settle_open()
+        if int(paper.get("settled") or 0) > 0:
+            try:
+                apply_paper_learning()
+            except Exception:
+                pass
+    except Exception as exc:
+        paper = {"error": str(exc)[:160]}
+
+    try:
+        by_id, by_pair = _board_score_index()
+    except Exception as exc:
+        return {"settled": 0, "paper": paper, "error": str(exc)[:160]}
+
+    settled = 0
+    with _LOCK:
+        state, _ = _ensure_privacy_defaults(_load_state())
+        bets = list((state.get("portfolio") or {}).get("bets") or [])
+        changed = False
+        for bet in bets:
+            if bet.get("result") != "open":
+                continue
+            selections = list(bet.get("selections") or [])
+            hits: list[bool | None] = []
+            if len(selections) > 1:
+                for sel in selections:
+                    home, away = _parse_fixture_sides(sel.get("fixture_name") or bet.get("fixture_name"))
+                    row = lookup_finished_score(
+                        match_id=sel.get("match_id") or bet.get("match_id"),
+                        home=home or bet.get("home_team"),
+                        away=away or bet.get("away_team"),
+                        by_id=by_id,
+                        by_pair=by_pair,
+                    )
+                    if not row:
+                        hits.append(None)
+                        continue
+                    hit = _grade_portfolio_leg(sel, row)
+                    hits.append(hit)
+                    if hit is True:
+                        sel["status"] = "won"
+                    elif hit is False:
+                        sel["status"] = "lost"
+            else:
+                home = bet.get("home_team") or ""
+                away = bet.get("away_team") or ""
+                if not home or not away:
+                    home, away = _parse_fixture_sides(bet.get("fixture_name"))
+                row = lookup_finished_score(
+                    match_id=bet.get("match_id") or bet.get("event_id"),
+                    home=home,
+                    away=away,
+                    by_id=by_id,
+                    by_pair=by_pair,
+                )
+                if not row:
+                    continue
+                sel0 = selections[0] if selections else {}
+                leg = {
+                    **sel0,
+                    "market": bet.get("market_family") or sel0.get("market") or "match_winner",
+                    "raw_selection": bet.get("raw_selection") or sel0.get("raw_selection") or sel0.get("selection"),
+                    "selection": bet.get("raw_selection") or sel0.get("raw_selection") or sel0.get("selection"),
+                    "line": bet.get("line") if bet.get("line") is not None else sel0.get("line"),
+                    "label": bet.get("pick_label") or sel0.get("selection") or sel0.get("label"),
+                    "pick_label": bet.get("pick_label"),
+                }
+                hit = _grade_portfolio_leg(leg, row)
+                hits = [hit]
+                if selections and hit is True:
+                    selections[0]["status"] = "won"
+                elif selections and hit is False:
+                    selections[0]["status"] = "lost"
+
+            if not hits or any(h is None for h in hits):
+                continue
+            won = all(bool(h) for h in hits)
+            stake = float(bet.get("stake_value") or bet.get("stake") or 0)
+            odds = float(bet.get("combined_odds") or 0)
+            result = "won" if won else "lost"
+            payout = round(stake * odds, 2) if won and odds > 1 else (stake if result == "push" else 0.0)
+            bet["result"] = result
+            bet["status"] = result
+            bet["active"] = False
+            bet["payout"] = payout
+            bet["payout_value"] = payout
+            bet["profit_value"] = round(payout - stake, 2)
+            bet["settled_at"] = _utc_now()
+            bet["settle_source"] = "espn_board"
+            settled += 1
+            changed = True
+
+        if changed:
+            summary = _summarize_bets(bets)
+            summary["model_audit"] = (state.get("portfolio") or {}).get("model_audit") or {
+                "available": False,
+                "message": "Auto-settled from finished matches.",
+            }
+            state["portfolio"] = summary
+            state["connection"]["last_sync_at"] = _utc_now()
+            state["connection"]["last_sync_status"] = "settled"
+            state["connection"]["last_sync_message"] = (
+                f"Auto-settled {settled} bet(s) from finished match scores."
+            )
+            _save_state(state)
+
+    return {"settled": settled, "paper": paper}
+
+
 def get_portfolio_state() -> dict[str, Any]:
     with _LOCK:
         state, changed = _ensure_privacy_defaults(_load_state())
         if changed:
             _save_state(state)
-        return _merged_status(state)
+        open_n = sum(
+            1
+            for b in ((state.get("portfolio") or {}).get("bets") or [])
+            if b.get("result") == "open"
+        )
+        out = _merged_status(state)
+    # Never block the portfolio HTTP path on ESPN scrapes.
+    if open_n:
+        Thread(target=_safe_full_settle, daemon=True).start()
+    else:
+        Thread(target=_safe_settle_paper_only, daemon=True).start()
+    return out
+
+
+def _safe_full_settle() -> None:
+    try:
+        settle_open_portfolio_bets()
+    except Exception:
+        pass
+
+
+def _safe_settle_paper_only() -> None:
+    try:
+        from bet_placer.ml.paper_book import apply_paper_learning, settle_open
+
+        out = settle_open()
+        if int(out.get("settled") or 0) > 0:
+            apply_paper_learning()
+    except Exception:
+        pass
 
 
 def get_portfolio_profile() -> dict[str, Any] | None:
@@ -540,9 +724,10 @@ def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
                         "Your journal is up to date from the last sync."
                         if has_bets
                         else (
-                            "Stake live login is not available on this host yet. "
-                            "Confirm bets from your slip, add past bets below, "
-                            "or set BROWSERBASE_API_KEY so Connect can open Stake."
+                            "This cloud host cannot open Stake Chrome. "
+                            "On your Mac run: PYTHONPATH=src python3 scripts/stake_login.py "
+                            "(logs you in locally and pushes history here). "
+                            "Or confirm slip bets below — they auto-settle when matches finish."
                         )
                     ),
                     "login_url": None,
@@ -826,6 +1011,11 @@ def _normalize_manual_bet(raw: dict[str, Any]) -> dict[str, Any]:
             "home_team": home or None,
             "away_team": away or None,
             "league": raw.get("league"),
+            "match_id": raw.get("match_id") or raw.get("event_id") or raw.get("eventId"),
+            "raw_selection": raw.get("raw_selection") or raw.get("selection"),
+            "pick_label": raw.get("pick_label") or selection,
+            "line": raw.get("line"),
+            "sport": raw.get("sport") or raw.get("sportKey"),
             "selection_count": len(selections),
             "bet_type": "parlay" if len(selections) > 1 else "single",
             "market_family": market,
@@ -875,6 +1065,10 @@ def confirm_slip_bets(
                     "selection": leg.get("label") or leg.get("selection") or "Pick",
                     "odds": float(leg.get("odds") or 0) or None,
                     "status": "pending",
+                    "match_id": leg.get("eventId") or leg.get("match_id"),
+                    "market": leg.get("marketName") or leg.get("market"),
+                    "raw_selection": leg.get("selection"),
+                    "line": leg.get("line"),
                 }
             )
         odds = float(multi_odds or 0)
@@ -916,11 +1110,35 @@ def confirm_slip_bets(
                         "stake": stake,
                         "result": leg.get("result") or "open",
                         "payout": leg.get("payout"),
+                        "match_id": leg.get("eventId") or leg.get("match_id"),
+                        "raw_selection": leg.get("selection"),
+                        "pick_label": leg.get("label") or leg.get("selection"),
+                        "line": leg.get("line"),
+                        "sport": leg.get("sport") or leg.get("sportKey"),
                     }
                 )
             )
     if not incoming:
         raise ValueError("Set an amount on at least one single (or a multi stake) before confirming.")
+
+    # Track the same legs in the paper book so craft auto-settles with ESPN scores.
+    try:
+        from bet_placer.ml.slip_learn import record_slip_tickets
+
+        record_slip_tickets(
+            [
+                {
+                    **leg,
+                    "stake": float(leg.get("stake") or multi_stake or 0) or 1.0,
+                    "id": leg.get("id") or f"slip-{leg.get('label')}",
+                    "gem_kind": "slip_confirm",
+                }
+                for leg in legs
+                if float(leg.get("odds") or 0) > 1
+            ]
+        )
+    except Exception:
+        pass
 
     with _LOCK:
         state, _ = _ensure_privacy_defaults(_load_state())

@@ -9,6 +9,7 @@ Ledger: ~/.bet_placer/paper_book.json
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -271,7 +272,22 @@ def _iter_board_events() -> list[dict[str, Any]]:
     return rows
 
 
+def _team_key(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+
+
+_BOARD_SCORE_CACHE: tuple[float, dict, dict] | None = None
+_BOARD_SCORE_TTL = 90.0
+
+
 def _board_score_index() -> tuple[dict[str, dict], dict[tuple[str, str], dict]]:
+    global _BOARD_SCORE_CACHE
+    import time as _time
+
+    now = _time.time()
+    if _BOARD_SCORE_CACHE and now - _BOARD_SCORE_CACHE[0] < _BOARD_SCORE_TTL:
+        return _BOARD_SCORE_CACHE[1], _BOARD_SCORE_CACHE[2]
+
     by_id: dict[str, dict] = {}
     by_pair: dict[tuple[str, str], dict] = {}
     for row in _iter_board_events():
@@ -279,7 +295,29 @@ def _board_score_index() -> tuple[dict[str, dict], dict[tuple[str, str], dict]]:
             continue
         by_id[row["id"]] = row
         by_pair[(row["home"], row["away"])] = row
+        by_pair[(_team_key(row["home"]), _team_key(row["away"]))] = row
+    _BOARD_SCORE_CACHE = (now, by_id, by_pair)
     return by_id, by_pair
+
+
+def lookup_finished_score(
+    *,
+    match_id: str | None = None,
+    home: str | None = None,
+    away: str | None = None,
+    by_id: dict | None = None,
+    by_pair: dict | None = None,
+) -> dict | None:
+    """Find a completed board row by match id or home/away (exact then normalized)."""
+    if by_id is None or by_pair is None:
+        by_id, by_pair = _board_score_index()
+    if match_id and match_id in by_id:
+        return by_id[match_id]
+    if home and away:
+        hit = by_pair.get((home, away)) or by_pair.get((_team_key(home), _team_key(away)))
+        if hit:
+            return hit
+    return None
 
 
 def settle_open(book: dict | None = None) -> dict[str, Any]:
@@ -291,7 +329,13 @@ def settle_open(book: dict | None = None) -> dict[str, Any]:
     for t in book.get("tickets") or []:
         if t.get("status") != "open":
             continue
-        row = by_id.get(t.get("match_id")) or by_pair.get((t.get("home"), t.get("away")))
+        row = lookup_finished_score(
+            match_id=t.get("match_id"),
+            home=t.get("home"),
+            away=t.get("away"),
+            by_id=by_id,
+            by_pair=by_pair,
+        )
         if not row:
             continue
         hs, aws = int(row["hs"]), int(row["aws"])

@@ -81,6 +81,14 @@ export default function PortfolioPage() {
           const refreshed = await refreshPortfolioSnapshot()
           if (mounted) setState(refreshed)
         }
+        // Background auto-settle may flip open → won/lost shortly after load.
+        const openN = (next?.portfolio?.bets || []).filter((b) => b.result === 'open').length
+        if (openN > 0) {
+          setTimeout(() => {
+            if (!mounted) return
+            fetchPortfolioState().then((fresh) => { if (mounted) setState(fresh) }).catch(() => {})
+          }, 8000)
+        }
       } catch (e) {
         if (mounted) setErr(fetchErrorMessage(e, 'Could not load portfolio state.'))
       } finally {
@@ -186,7 +194,7 @@ export default function PortfolioPage() {
           <span className="page-eyebrow">PORTFOLIO</span>
           <h1>Betting journal</h1>
           <p className="subtitle">
-            Stake imports plus bets you confirm from your slip. Strengths, leaks, and recent form.
+            Confirm placed slip bets here. Finished matches settle won or lost automatically. Stake history imports from your Mac login script when cloud Chrome is blocked.
           </p>
           {portfolio.profile?.summary && (
             <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
@@ -215,6 +223,16 @@ export default function PortfolioPage() {
           </button>
         </div>
       </header>
+
+      {(cloudStake && !stakeLive) && (
+        <div className="portfolio-alert">
+          Cloud cannot open Stake login (datacenter IP). On your Mac, from the repo run:
+          {' '}
+          <code>PYTHONPATH=src python3 scripts/stake_login.py</code>
+          {' '}
+          Sign in once in Chrome; it pushes your Stake journal here. Slip confirm still works without Stake.
+        </div>
+      )}
 
       {(showStatusError || statusBanner) && (
         <div className={`portfolio-alert ${showStatusError ? 'error' : ''}`}>
@@ -452,7 +470,7 @@ export default function PortfolioPage() {
           <div>
             <h2>Add a past bet</h2>
             <p className="muted">
-              Log a bet you already placed (any book). Use Confirm I placed this on the slip for live picks.
+              Log a finished bet from any book. For upcoming picks, use Confirm I placed this on the slip — results auto-fill when the match ends.
             </p>
           </div>
         </div>
@@ -531,7 +549,7 @@ export default function PortfolioPage() {
 
         {!portfolio.bets?.length ? (
           <p className="muted">
-            No bets yet. Confirm a slip with amounts, add a past bet above, or Connect Stake then Sync Stake.
+            No bets yet. Confirm a slip with amounts (auto-settles when the match finishes), add a past bet above, or import Stake via scripts/stake_login.py on your Mac.
           </p>
         ) : (
           <div className="portfolio-bets">
@@ -599,19 +617,22 @@ export default function PortfolioPage() {
                 )}
                 {bet.result === 'open' && (
                   <div className="portfolio-inline-actions">
+                    <span className="muted">
+                      Waiting for final score. Won/lost updates automatically when the match finishes.
+                    </span>
                     <button
                       type="button"
                       className="refresh-btn"
                       onClick={() => runAction('bet-won', () => updatePortfolioBetResult(bet.id, 'won'))}
                     >
-                      Mark won
+                      Override won
                     </button>
                     <button
                       type="button"
                       className="refresh-btn"
                       onClick={() => runAction('bet-lost', () => updatePortfolioBetResult(bet.id, 'lost'))}
                     >
-                      Mark lost
+                      Override lost
                     </button>
                   </div>
                 )}

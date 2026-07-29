@@ -22,10 +22,13 @@ def record_slip_tickets(legs: list[dict[str, Any]]) -> dict[str, Any]:
         tid = str(leg.get("id") or "").strip()
         if not tid or tid in existing:
             continue
-        stake = float(leg.get("stake") or 0)
         odds = float(leg.get("odds") or 0)
-        if stake < 1 or odds <= 1.0:
+        if odds <= 1.0:
             continue
+        # Unit-track recs even before the user types a stake (model learning).
+        stake = float(leg.get("stake") or 0)
+        if stake < 1:
+            stake = 1.0
         if stake > bank * 0.5 and bank > 0:
             stake = min(stake, max(10.0, bank * 0.05))
         ticket = {

@@ -1,0 +1,21 @@
+# https://render.com/docs/blueprint-spec
+# One-click: Dashboard → New → Blueprint → connect abhyvx/Gambit
+services:
+  - type: web
+    name: gambit
+    runtime: docker
+    plan: free
+    branch: main
+    healthCheckPath: /api/health
+    envVars:
+      - key: CRAFT_DISABLE
+        value: "1"
+      - key: STAKE_USE_BROWSER
+        value: "false"
+      - key: STAKE_BROWSER_WARMUP_ON_STARTUP
+        value: "false"
+      - key: GAMBIT_REPO
+        value: abhyvx/Gambit
+      - key: ODDS_API_KEY
+        sync: false
+    autoDeploy: true

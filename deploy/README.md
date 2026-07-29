@@ -1,30 +1,22 @@
-# Gambit deploy (free)
+# Cloud deploy (Render — free tier)
 
-## One-command production (laptop or VM)
+## One-click deploy
 
-```bash
-./scripts/run_production.sh
-# → http://0.0.0.0:8080  (app + API same origin)
-```
+1. Open **[Render Blueprint deploy](https://dashboard.render.com/select-repo?type=blueprint)** and connect **abhyvx/Gambit**.
+2. Render reads `render.yaml` and creates the **gambit** web service.
+3. Add optional env var `ODDS_API_KEY` in the Render dashboard.
+4. Your live URL will be `https://gambit-xxxx.onrender.com` (shown after deploy).
 
-Set `CRAFT_DISABLE=1` — training runs on GitHub Actions only.
+The container:
+- Serves app + API on one port (`CRAFT_DISABLE=1` — no training on the web host).
+- On boot, downloads the latest model from GitHub Release **`model-latest`** (published by the craft-train workflow).
 
-## GitHub Actions (daily cloud training)
+## Training (GitHub Actions — daily, free)
 
-Workflow: `.github/workflows/craft-train.yml`  
-Repo: https://github.com/abhyvx/gambit/actions
+- https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml
+- Manual run: Actions → **Craft training** → Run workflow.
+- After success, redeploy Render (or restart service) to pull the new `model-latest` release.
 
-Manual run: Actions → **Craft training** → Run workflow.
+## Do not use local terminal for production
 
-Sync artifact to this machine:
-
-```bash
-./scripts/sync_model_from_github.sh
-```
-
-## VM + nginx
-
-1. Clone to `/opt/gambit`, `pip install -e .`, build frontend.
-2. Copy `deploy/gambit-api.service` → `/etc/systemd/system/`
-3. Copy `deploy/nginx.conf` → `/etc/nginx/sites-available/gambit`
-4. Daily cron: `0 2 * * * /opt/gambit/scripts/sync_model_from_github.sh && systemctl restart gambit-api`
+Use Render URL only. Local `./scripts/run_production.sh` is for development.

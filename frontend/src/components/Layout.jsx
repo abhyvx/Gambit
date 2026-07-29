@@ -1,42 +1,28 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { checkHealth } from '../api/index'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import AgeGate from './AgeGate'
+import EntryScreen from './EntryScreen'
+import GambitLogo from './GambitLogo'
+import { NavIcon } from './Icons'
 import './Layout.css'
 
 const NAV = [
-  { to: '/app', label: 'Matches', icon: '⚡' },
-  { to: '/app/model', label: 'Model', icon: '🧠' },
-  { to: '/app/portfolio', label: 'Portfolio', icon: '🔒' },
-  { to: '/app/guide', label: 'How it works', icon: '📖' },
-  { to: '/app/settings', label: 'Bankroll', icon: '💰' },
+  { to: '/app', label: 'Home', icon: 'matches' },
+  { to: '/app/model', label: 'Model', icon: 'model' },
+  { to: '/app/portfolio', label: 'Portfolio', icon: 'portfolio' },
+  { to: '/app/guide', label: 'How it works', icon: 'guide' },
 ]
-
-const BRAND = 'GAMBIT'
-
-function Logo({ size = 30 }) {
-  return (
-    <span className="brand-logo" style={{ width: size, height: size }} aria-hidden>
-      <svg viewBox="0 0 32 32" width={size} height={size}>
-        <defs>
-          <linearGradient id="g-brand" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#eaffa0" />
-            <stop offset="45%" stopColor="#d4ff45" />
-            <stop offset="100%" stopColor="#e8b962" />
-          </linearGradient>
-        </defs>
-        <rect x="3" y="3" width="26" height="26" rx="7" fill="url(#g-brand)" />
-        <path d="M16 8.5l2.4 5 5.1.5-3.9 3.4 1.2 5-4.8-2.7-4.8 2.7 1.2-5L9.5 14l5.1-.5z" fill="#0c0c0d" opacity="0.92" />
-      </svg>
-    </span>
-  )
-}
 
 export default function Layout() {
   const [status, setStatus] = useState(null)
-  const { bankroll } = useBankroll()
-  const location = useLocation()
+  const {
+    clearSlip, legs, removeLeg, slipMode, slipOdds, slipPayout, slipSingles, slipMsg,
+    setLegStake, multiStake, setMultiStake, showMulti,
+    singlesStakeTotal, singlesPayoutTotal, totalStake, totalPayout,
+  } = useBankroll()
+  const online = status && status.status !== 'error'
 
   useEffect(() => {
     let cancelled = false
@@ -50,80 +36,189 @@ export default function Layout() {
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
-  const online = status && status.status !== 'error'
-
   return (
-    <div className="layout">
-      <AgeGate />
-      {/* ── Desktop sidebar ── */}
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <Logo size={34} />
-          <div className="sidebar-brand-text">
-            <strong className="wordmark">{BRAND}</strong>
-            <small>Your betting brain · INR</small>
+    <EntryScreen>
+      <div className="stake-shell">
+        <AgeGate />
+
+        <header className="top-dash">
+          <nav className="top-dash-nav">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/app'}
+                className={({ isActive }) => (isActive ? 'top-nav-link active' : 'top-nav-link')}
+              >
+                <NavIcon name={item.icon} />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
+
+          <Link to="/app" className="top-dash-brand" aria-label="GAMBIT home">
+            <GambitLogo size={44} showWord stacked={false} />
+          </Link>
+
+          <div className="top-dash-user">
+            <div className={`user-chip ${online ? 'is-on' : 'is-off'}`}>
+              <small>API</small>
+              <strong>{online ? 'Live' : 'Down'}</strong>
+            </div>
           </div>
+        </header>
+
+        <div className="stake-body">
+          <main className="stake-main">
+            <div className="route-view" key={location.pathname + location.search}>
+              <Outlet />
+            </div>
+          </main>
+
+          <aside className="slip-rail" aria-label="Bet slip">
+            <div className="slip-rail-head">
+              <strong>Bet slip</strong>
+              {legs?.length > 0 && (
+                <button type="button" className="slip-clear" onClick={clearSlip}>Clear</button>
+              )}
+            </div>
+
+            {slipMsg && <p className="slip-warn" role="status">{slipMsg}</p>}
+
+            {!legs?.length && (
+              <p className="muted slip-empty">
+                Add picks from a board. Each single is its own ticket; two or more also build a multi.
+              </p>
+            )}
+
+            {legs?.length > 0 && (
+              <div className="slip-body">
+                <div className="slip-section-label">Singles</div>
+                <div className="slip-ticket-stack">
+                  {(slipSingles || []).map((leg) => (
+                    <article key={leg.id} className="slip-ticket">
+                      <div className="slip-ticket-top">
+                        <span className="slip-ticket-kind">Single</span>
+                        <button type="button" className="slip-leg-x" onClick={() => removeLeg(leg.id)} aria-label="Remove">×</button>
+                      </div>
+                      {leg.marketName && <div className="slip-mkt">{leg.marketName}</div>}
+                      <strong className="slip-ticket-pick">{leg.label}</strong>
+                      <div className="muted slip-ticket-match">
+                        {leg.home}{leg.away ? ` vs ${leg.away}` : ''}
+                      </div>
+                      <div className="slip-ticket-odds">
+                        <span>{Number(leg.odds) > 1 ? `${Number(leg.odds).toFixed(2)}×` : '—'}</span>
+                      </div>
+                      <div className="slip-ticket-stake-row">
+                        <label className="slip-amount">
+                          <span className="slip-amount-label">Amount</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="₹"
+                            value={leg.stake ?? ''}
+                            onChange={(e) => setLegStake(leg.id, e.target.value.replace(/[^\d.]/g, ''))}
+                            aria-label={`Amount for ${leg.label}`}
+                          />
+                        </label>
+                        <div className="slip-ticket-payout">
+                          <span>Payout</span>
+                          <strong className="green">{leg.payout != null ? formatINR(leg.payout) : '—'}</strong>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                {showMulti && (
+                  <>
+                    <div className="slip-section-label">
+                      {slipMode === 'sgm' ? 'Same game multi' : 'Multi'}
+                    </div>
+                    <article className="slip-ticket slip-ticket--multi">
+                      <div className="slip-ticket-top">
+                        <span className="slip-ticket-kind">{slipMode === 'sgm' ? 'SGM' : 'Multi'}</span>
+                        <span className="green">{slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '—'}</span>
+                      </div>
+                      <ul className="slip-ticket-legs">
+                        {(slipSingles || []).map((leg) => (
+                          <li key={`m-${leg.id}`}>{leg.label}</li>
+                        ))}
+                      </ul>
+                      <div className="slip-ticket-stake-row">
+                        <label className="slip-amount">
+                          <span className="slip-amount-label">Amount</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="₹"
+                            value={multiStake}
+                            onChange={(e) => setMultiStake(e.target.value.replace(/[^\d.]/g, ''))}
+                            aria-label="Multi amount"
+                          />
+                        </label>
+                        <div className="slip-ticket-payout">
+                          <span>Payout</span>
+                          <strong className="green">{slipPayout != null ? formatINR(slipPayout) : '—'}</strong>
+                        </div>
+                      </div>
+                    </article>
+                  </>
+                )}
+
+                <div className="slip-summary">
+                  <div className="slip-summary-row">
+                    <span>Singles stake</span>
+                    <strong>{singlesStakeTotal > 0 ? formatINR(singlesStakeTotal) : '—'}</strong>
+                  </div>
+                  <div className="slip-summary-row">
+                    <span>Singles payout</span>
+                    <strong className="green">{singlesPayoutTotal > 0 ? formatINR(singlesPayoutTotal) : '—'}</strong>
+                  </div>
+                  {showMulti && (
+                    <>
+                      <div className="slip-summary-row">
+                        <span>Multi stake</span>
+                        <strong>{Number(multiStake) > 0 ? formatINR(Number(multiStake)) : '—'}</strong>
+                      </div>
+                      <div className="slip-summary-row">
+                        <span>Multi payout</span>
+                        <strong className="green">{slipPayout != null ? formatINR(slipPayout) : '—'}</strong>
+                      </div>
+                    </>
+                  )}
+                  <div className="slip-summary-row slip-summary-total">
+                    <span>Total stake</span>
+                    <strong>{totalStake > 0 ? formatINR(totalStake) : '—'}</strong>
+                  </div>
+                  <div className="slip-summary-row slip-summary-total">
+                    <span>Total payout</span>
+                    <strong className="green">{totalPayout > 0 ? formatINR(totalPayout) : '—'}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="slip-footer">
+              <p className="sidebar-disclaimer">18+ · Bet responsibly.</p>
+            </div>
+          </aside>
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="bottom-nav">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/app'}
-              className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
+              className={({ isActive }) => (isActive ? 'bottom-item active' : 'bottom-item')}
             >
-              <span className="nav-icon" aria-hidden>{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
+              <span className="nav-icon"><NavIcon name={item.icon} /></span>
+              <span>{item.label}</span>
             </NavLink>
           ))}
         </nav>
-
-        <div className="sidebar-budget">
-          <small>Per-match budget</small>
-          <strong>{formatINR(bankroll)}</strong>
-        </div>
-
-        <div className={`sidebar-status ${online ? 'is-online' : 'is-offline'}`}>
-          <span className={`dot ${online ? 'live' : 'cached'}`} />
-          <span>{online ? 'WC 2026 engine active' : 'Engine starting…'}</span>
-        </div>
-
-        <p className="sidebar-disclaimer">18+ · Bet only what you can afford to lose.</p>
-      </aside>
-
-      {/* ── Mobile top bar ── */}
-      <header className="mobile-topbar">
-        <div className="sidebar-brand">
-          <Logo size={26} />
-          <strong className="wordmark">{BRAND}</strong>
-        </div>
-        <div className="mobile-budget">
-          <small>Budget</small>
-          <strong>{formatINR(bankroll)}</strong>
-        </div>
-      </header>
-
-      <main className="main-content">
-        <div className="route-view" key={location.pathname}>
-          <Outlet />
-        </div>
-      </main>
-
-      {/* ── Mobile bottom nav ── */}
-      <nav className="bottom-nav">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/app'}
-            className={({ isActive }) => (isActive ? 'bottom-item active' : 'bottom-item')}
-          >
-            <span className="nav-icon" aria-hidden>{item.icon}</span>
-            <span>{item.label}</span>
-          </NavLink>
-        ))}
-      </nav>
-    </div>
+      </div>
+    </EntryScreen>
   )
 }

@@ -1,60 +1,709 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { formatINR, useBankroll } from '../context/BankrollContext'
-import { fetchStakeOdds } from '../api/index'
-import AnimatedNumber from './AnimatedNumber'
+import { fetchStakeOdds, connectStakeSession, fetchErrorMessage, fetchMatchSlipRefresh } from '../api/index'
 import BetBuilder from './BetBuilder'
+import HitTargetPanel from './HitTargetPanel'
 
-const LEGACY_STRATEGY_KEYS = [
-  { key: 'min_loss', label: 'Loss-minimizing', icon: '📉' },
-  { key: 'singles_focus', label: 'One best bet', icon: '🎯' },
-  { key: 'value', label: 'Value-for-money', icon: '💰' },
-  { key: 'smart_parlay', label: 'Parlays', icon: '🔗' },
+import { IconTarget, IconShield, IconSingle, IconValue, IconParlay } from './Icons'
+
+const STRATEGY_KEYS = [
+  { key: 'match_card', label: 'Target', Icon: IconTarget },
+  { key: 'min_loss', label: 'Loss-min', Icon: IconShield },
+  { key: 'singles_focus', label: 'Single', Icon: IconSingle },
+  { key: 'value', label: 'Value', Icon: IconValue },
+  { key: 'smart_parlay', label: 'Combos', Icon: IconParlay },
 ]
 
-const ROLE_META = {
-  main: { label: 'MAIN', icon: '🎯' },
-  support: { label: 'SUPPORT', icon: '🛡️' },
-  extra: { label: 'EXTRA', icon: '➕' },
-  parlay_leg: { label: 'LEG', icon: '🔗' },
-}
-
-const RISK_LABEL = { low: 'Low risk', medium: 'Medium', high: 'Higher risk' }
-
-const signedINR = (n) => `${n >= 0 ? '+' : ''}${formatINR(n)}`
-
 function normalizePlans(slip, strategyKey) {
+  const withLegs = (items) => (items || []).filter((s) => s?.legs?.length)
   const fromPlans = slip?.strategy_plans?.[strategyKey]
   if (Array.isArray(fromPlans) && fromPlans.length) {
-    return fromPlans.filter((s) => s.legs?.length)
+    return withLegs(fromPlans)
   }
+  const fromSlips = withLegs(
+    (slip?.bet_slips || []).filter((s) => (s.tab_id || s.id) === strategyKey),
+  )
+  if (fromSlips.length) return fromSlips
   const raw = slip?.strategies?.[strategyKey]
-  if (Array.isArray(raw)) return raw.filter((s) => s.legs?.length)
+  if (Array.isArray(raw)) return withLegs(raw)
   if (raw?.legs?.length) return [raw]
   return []
 }
 
-function ScenarioCard({ title, data }) {
-  if (!data) return null
-  const profit = data.profit_inr
-  const cls = profit > 0 ? 'scenario-good' : profit < 0 ? 'scenario-bad' : 'scenario-neutral'
+function clampPlanIndex(index, plans) {
+  if (!plans?.length) return 0
+  return Math.min(Math.max(0, index), plans.length - 1)
+}
+
+function planIsStakeSgm(plan) {
+  if (plan?.placement_mode === 'separate_singles' || plan?.slip_type === 'spread_card') {
+    return false
+  }
+  if (plan?.slip_type === 'stake_sgm' || plan?.plan_type === 'stake_combo') {
+    return true
+  }
+  const legs = plan?.legs || []
+  if (!legs.length) return false
+  const comboLegs = legs.filter(
+    (l) => l.role === 'stake_combo' || l.role === 'parlay_leg' || l.market === 'stake_combo',
+  )
+  if (comboLegs.length === legs.length) return true
+  if (comboLegs.length === 1 && legs.length === 1) return true
+  return plan?.tab_id === 'smart_parlay' && comboLegs.length > 0 && comboLegs.length === legs.length
+}
+
+function planActiveLegs(plan) {
+  const legs = plan?.legs || []
+  if (!legs.length) return []
+
+  const isSpread = (
+    plan?.placement_mode === 'separate_singles'
+    || plan?.slip_type === 'spread_card'
+    || (plan?.tab_id === 'match_card' && !planIsStakeSgm(plan))
+  )
+  if (isSpread) {
+    const withStake = legs.filter((l) => Number(l.stake_inr) > 0)
+    if (withStake.length) return withStake
+    return legs.filter((l) => l.label || l.market)
+  }
+
+  const isStakeSgm = planIsStakeSgm(plan)
+  const active = legs.filter((l) => {
+    const stake = Number(l.stake_inr) || 0
+    if (stake > 0) return true
+    if (l.role === 'parlay_leg' || l.role === 'stake_combo') return true
+    const ret = Number(l.return_inr) || 0
+    return ret > 0 && Boolean(l.label || l.market)
+  })
+  if (active.length) return active
+  if (isStakeSgm) return legs.slice(0, 1)
+  if (Number(plan.total_stake_inr) > 0) {
+    return legs.filter((l) => l.label || l.market || l.odds)
+  }
+  return active
+}
+
+function pathTicketCount(plan) {
+  if (!plan?.legs?.length) return 0
+  return planActiveLegs(plan).length || plan.legs.length
+}
+
+function planHitsTarget(plan, targetCashout, budgetInr) {
+  if (!plan?.legs?.length) return false
+  if ((plan.legs || []).some((l) => l?.hits_target)) return true
+  const targetReturn = Number(plan?.target_return_inr || plan?.target_cashout_inr || 0)
+  if (targetReturn > 0 && targetCashout > 0) return targetReturn >= targetCashout * 0.95
+  const targetProfit = Math.max(0, Number(targetCashout || 0) - Number(budgetInr || 0))
+  const statedProfit = Number(plan?.target_profit_inr || 0)
+  return statedProfit > 0 && statedProfit >= targetProfit * 0.95
+}
+
+const ROLE_META = {
+  anchor: { label: 'Insurance' },
+  support: { label: 'Insurance' },
+  swing: { label: 'Swing' },
+  lottery: { label: 'Longshot' },
+  target_lotto: { label: 'Profit route' },
+  stake_combo: { label: 'Stake combo' },
+  main: { label: 'Main' },
+  route: { label: 'Profit route' },
+  extra: { label: 'Support' },
+}
+
+const signedINR = (n) => `${n >= 0 ? '+' : ''}${formatINR(n)}`
+
+function comboSubPicks(legOrLabel, home = '', away = '') {
+  if (legOrLabel && typeof legOrLabel === 'object') {
+    if (Array.isArray(legOrLabel.combo_parts) && legOrLabel.combo_parts.length > 1) {
+      return legOrLabel.combo_parts
+    }
+    const raw = legOrLabel.selection || legOrLabel.label
+    return comboSubPicks(raw, home, away)
+  }
+  const label = String(legOrLabel || '')
+  if (!label) return []
+  return label.split(/\s*&\s*/).map((part) => {
+    const s = part.replace(/\s*@\s*[\d.]+x\s*$/i, '').trim()
+    const low = s.toLowerCase()
+    if (low === 'yes') return 'Both teams to score: Yes'
+    if (low === 'no') return 'Both teams to score: No'
+    if (home && low === home.toLowerCase()) return `${home} to win`
+    if (away && low === away.toLowerCase()) return `${away} to win`
+    if (low === 'draw') return 'Draw'
+    const ou = low.match(/^(over|under)\s+([\d.]+)$/)
+    if (ou) return `${ou[1].charAt(0).toUpperCase() + ou[1].slice(1)} ${ou[2]} goals`
+    return s
+  }).filter(Boolean)
+}
+
+function isSgmLeg(leg) {
+  return leg?.role === 'stake_combo' || leg?.market === 'stake_combo' || leg?.verified_stake
+}
+
+function planWinPct(plan, leg) {
+  if (plan?.win_probability_pct != null) return plan.win_probability_pct
+  if (plan?.hit_probability_pct != null) return plan.hit_probability_pct
+  if (plan?.combined_probability_pct != null) return plan.combined_probability_pct
+  if (plan?.hit_probability != null) return Math.round(plan.hit_probability * 1000) / 10
+  return leg?.our_probability_pct
+}
+
+function buildSlipTickets(strategy, activeLegs, isStakeSgm, home = '', away = '') {
+  if (isStakeSgm && activeLegs.length > 0) {
+    const leg = activeLegs[0]
+    const stake = strategy?.stake_inr || strategy?.total_stake_inr || leg?.stake_inr || 0
+    const odds = strategy?.combined_odds || leg?.odds
+    return [{
+      key: 'sgm-main',
+      type: 'stake_sgm',
+      label: leg?.label || strategy?.description,
+      stake, odds,
+      returnInr: leg?.return_inr || Math.round(stake * (odds || 1)),
+      payoutText: leg?.payout_text,
+      verified: true,
+      subPicks: comboSubPicks(leg, home, away),
+      hitsTarget: leg?.hits_target,
+      breaksEven: leg?.breaks_even,
+      soloOutcome: (leg?.hits_target || leg?.breaks_even) ? leg?.solo_outcome_label : '',
+      reason: leg?.reason,
+    }]
+  }
+  return activeLegs.map((leg, i) => {
+    const stake = Number(leg.stake_inr) || Number(strategy?.total_stake_inr) || 0
+    const odds = leg.odds || strategy?.combined_odds
+    return {
+      key: `leg-${i}`,
+      type: isSgmLeg(leg) ? 'stake_sgm' : 'single',
+      label: formatTicketLabel(leg, home, away),
+      stake,
+      odds,
+      returnInr: leg.return_inr || Math.round(stake * (odds || 1)),
+      payoutText: leg.payout_text,
+      verified: leg.odds_source === 'stake' || leg.live_odds || strategy?.verified_stake,
+      role: leg.role,
+      hitsTarget: leg.hits_target,
+      breaksEven: leg.breaks_even,
+      soloOutcome: (leg.hits_target || leg.breaks_even) ? leg.solo_outcome_label : '',
+      subPicks: isSgmLeg(leg) ? comboSubPicks(leg, home, away) : [],
+      reason: leg.reason,
+    }
+  })
+}
+
+function formatTicketLabel(leg, home, away) {
+  const raw = (leg?.label || '').trim()
+  if (raw && !/^handicap\b/i.test(raw) && !/^\s*handicap\b/i.test(raw)) {
+    return raw
+  }
+  const m = leg?.market || ''
+  const sel = (leg?.selection || '').toLowerCase()
+  if (m === 'btts' || /both teams to score/i.test(m)) {
+    return `Both teams to score: ${sel === 'no' ? 'No' : 'Yes'}`
+  }
+  if (m === 'over_under_goals' || sel === 'over' || sel === 'under') {
+    if (leg?.line != null) {
+      const side = sel === 'under' ? 'Under' : 'Over'
+      return `${side} ${leg.line} goals`
+    }
+  }
+  if (m === 'asian_handicap' && home && leg?.line != null) {
+    const team = sel === 'home' ? home : sel === 'away' ? away : ''
+    if (team) {
+      const sign = leg.line > 0 ? `+${leg.line}` : String(leg.line)
+      const base = `${team} handicap ${sign}`
+      return leg?.odds ? `${base} @ ${leg.odds}x` : base
+    }
+  }
+  return raw || 'Bet'
+}
+
+function StakeTicketCard({ ticket, index, total, pathMode, home, away }) {
+  const isSgm = ticket.type === 'stake_sgm'
+  const roleMeta = ticket.role ? ROLE_META[ticket.role] : null
+  const showRole = !pathMode && roleMeta && ticket.role !== 'route'
+  const hitsTarget = ticket.hitsTarget
+  const breaksEven = ticket.breaksEven
+  const roleBadge = hitsTarget
+    ? 'Profit route'
+    : breaksEven
+      ? 'Insurance'
+      : showRole
+        ? roleMeta.label
+        : null
+  const showSolo = ticket.soloOutcome && (hitsTarget || breaksEven)
   return (
-    <div className={`scenario-card ${cls}`}>
-      <strong className="scenario-title">{title || data.label}</strong>
-      <div className="scenario-profit">
-        <AnimatedNumber value={profit} format={signedINR} />
+    <div className={`stake-ticket-card ${isSgm ? 'is-sgm' : 'is-single'}${hitsTarget ? ' hits-target' : ''}`}>
+      <div className="stake-ticket-head">
+        <div className="stake-ticket-head-left">
+          <span className="stake-ticket-kind">
+            {isSgm ? 'Stake combo' : roleBadge || `Ticket ${index + 1}`}
+          </span>
+          {ticket.verified && <span className="stake-ticket-verified">Stake price</span>}
+        </div>
+        {!isSgm && total > 1 && (
+          <span className="stake-ticket-index">{index + 1}/{total}</span>
+        )}
       </div>
-      <p>{data.description}</p>
+      {ticket.subPicks?.length > 1 ? (
+        <ul className="stake-ticket-picks">
+          {ticket.subPicks.map((pick) => <li key={pick}>{pick}</li>)}
+        </ul>
+      ) : (
+        <p className="stake-ticket-bet">{formatTicketLabel(ticket, home, away) || ticket.label}</p>
+      )}
+      {showSolo && (
+        <p className="stake-ticket-solo muted">{ticket.soloOutcome}</p>
+      )}
+      {ticket.payoutText && (
+        <p className="stake-ticket-payout muted">{ticket.payoutText}</p>
+      )}
+      {/* ponytail: no AI narrative under tickets — stats only */}
+      <div className="stake-ticket-stats">
+        <div className="stake-ticket-stat"><span>Stake</span><strong>{formatINR(ticket.stake || 0)}</strong></div>
+        <div className="stake-ticket-stat"><span>Odds</span><strong>{ticket.odds}x</strong></div>
+        {ticket.returnInr > 0 && (
+          <div className="stake-ticket-stat"><span>Returns</span><strong className="green">{formatINR(ticket.returnInr)}</strong></div>
+        )}
+      </div>
     </div>
   )
 }
 
-export default function MatchSlipPanel({ slip, home, away, fanPrediction, status, score }) {
-  const { perMatchBudget } = useBankroll()
-  const [tab, setTab] = useState('slip')
-  const [strategyKey, setStrategyKey] = useState(slip?.recommended_strategy || 'min_loss')
+function pathLegLabels(opt) {
+  if (Array.isArray(opt?.path_legs) && opt.path_legs.length) return opt.path_legs
+  return (opt?.legs || []).map((l) => l.label).filter(Boolean)
+}
+
+function shortLegLabel(label) {
+  if (!label) return ''
+  return label
+    .replace(/Asian Handicap/gi, 'AH')
+    .replace(/Draw No Bet/gi, 'DNB')
+    .replace(/Half Time/gi, 'HT')
+    .replace(/Anytime Goalscorer/gi, 'GS')
+}
+
+function pathOptionTitle(opt, index) {
+  if (opt?.path_thesis === 'sgm' || opt?.plan_type === 'stake_combo') {
+    const pl = (opt?.path_label || '').replace(/^Stake SGM ·\s*/i, '').trim()
+    return pl ? `Stake SGM · ${pl}` : 'Stake SGM'
+  }
+  const pl = (opt?.path_label || '').replace(/^🎫\s*/, '').trim()
+  const legs = pathLegLabels(opt)
+  if (pl && / path$/i.test(pl)) return pl
+  if (pl && /\balt\b/i.test(pl) && !pl.includes('tickets ·')) return pl.split('·')[0].trim()
+  if (pl && !pl.includes('tickets ·') && !pl.includes('-leg spread ·') && !/^\d+ singles?$/.test(pl)) {
+    return pl.split('·')[0].trim()
+  }
+  if (pl && pl.includes('-leg spread ·')) {
+    return pl.split('·').slice(1).join('·').trim() || pl
+  }
+  if (legs.length) {
+    const preview = legs.slice(0, 2).map(shortLegLabel).join(', ')
+    const suffix = legs.length > 2 ? ` +${legs.length - 2}` : ''
+    return preview ? `${preview}${suffix}` : `Path ${index + 1}`
+  }
+  return opt?.pick_label || `Path ${index + 1}`
+}
+
+function pathPickerLabel(opt) {
+  return pathOptionTitle(opt, (opt?.option_index || 1) - 1)
+}
+
+function planUsesPathMode(plan) {
+  const pl = plan?.path_label || ''
+  return Boolean(
+    plan?.path_thesis
+    || pl.includes('tickets ·')
+    || pl.includes(' path')
+    || pl.toLowerCase().includes(' alt')
+    || (plan?.legs?.length >= 3 && !plan?.slip_type?.includes('sgm')),
+  )
+}
+
+function legSetKey(plan) {
+  return (plan?.legs || [])
+    .map((l) => `${l.market}|${l.selection}|${l.line}`)
+    .sort()
+    .join(';')
+}
+
+function rejectGarbageCombo(plan) {
+  const lbl = (plan?.path_headline || plan?.label || '').toLowerCase()
+  if (!lbl.includes('&') || !lbl.includes('to win')) return false
+  const parts = lbl.split('&').map((s) => s.replace(/\s+to\s+win/g, '').replace(/\s+goal/g, '').trim())
+  return parts.length >= 2 && new Set(parts).size === 1
+}
+
+function rejectAntiThesisPlan(plan, home, away) {
+  if (!home || !away || !plan) return false
+  const h = home.toLowerCase()
+  const a = away.toLowerCase()
+  const blob = JSON.stringify(plan).toLowerCase()
+  if (blob.includes(`draw or ${a}`) && !blob.includes(`draw or ${h}`)) return true
+  if (blob.includes('draw & no') && !blob.includes(h)) return true
+  if (blob.includes(`${h}/${a}`) || blob.includes(`${a}/${h}`)) return true
+  if (blob.includes(`${a} to win`) && !blob.includes(`${h} to win`)) return true
+  return false
+}
+
+function pathBucket(plan) {
+  const n = plan?.legs?.length || 0
+  if (plan?.plan_type === 'stake_combo' || plan?.slip_type === 'stake_sgm' || plan?.path_thesis === 'sgm') {
+    return 'sgm'
+  }
+  if (n <= 1) return 'single'
+  if (n <= 3) return 'compact'
+  if (n === 4) return 'spread'
+  return 'full'
+}
+
+function resolveCuratedPicks(slip, home = '', away = '') {
+  const curated = slip?.curated_picks
+  const targetPlans = normalizePlans(slip, 'match_card')
+  let picks = []
+
+  if (curated?.primary) {
+    picks = [
+      annotatePlan({ ...curated.primary, is_recommended_option: true }, 'Our pick', curated.primary.pick_type || 'Target path'),
+      ...(curated.alternatives || []).map((p, i) =>
+        annotatePlan(p, p.pick_label || `Alt ${i + 1}`, p.pick_type || 'Also consider'),
+      ),
+    ].filter(Boolean)
+  } else {
+    const recKey = slip?.recommended_strategy
+    const recId = slip?.recommended_slip_id
+    const plans = slip?.strategy_plans?.[recKey] || []
+    const match = plans.find((p) => p.option_id === recId) || plans[0]
+    if (match?.legs?.length) {
+      picks = [annotatePlan(match, 'Our pick', match.slip_type_label || recKey)]
+    } else if (slip?.active_strategy?.legs?.length) {
+      picks = [annotatePlan(slip.active_strategy, 'Our pick', 'Bet plan')]
+    }
+  }
+
+  const seen = new Set(picks.map((p) => legSetKey(p) || p.option_id))
+  for (const mc of targetPlans) {
+    const key = legSetKey(mc) || mc.option_id
+    if (seen.has(key)) continue
+    picks.push(annotatePlan(mc, pathPickerLabel(mc), 'Target path'))
+    seen.add(key)
+  }
+
+  const singles = normalizePlans(slip, 'singles_focus')
+  for (const s of singles.slice(0, 1)) {
+    const key = legSetKey(s) || s.option_id
+    if (seen.has(key)) continue
+    picks.push(annotatePlan(s, pathPickerLabel(s), 'Single bet'))
+    seen.add(key)
+  }
+
+  const sgms = normalizePlans(slip, 'smart_parlay')
+  for (const sgm of sgms) {
+    const key = legSetKey(sgm) || sgm.option_id
+    if (seen.has(key)) continue
+    picks.push(annotatePlan(sgm, pathPickerLabel(sgm), 'Stake SGM'))
+    seen.add(key)
+  }
+  return sortPathsForDropdown(
+    picks.filter(Boolean).filter((p) => !rejectAntiThesisPlan(p, home, away) && !rejectGarbageCombo(p)),
+  )
+}
+
+function annotatePlan(plan, label, typeLabel) {
+  if (!plan?.legs?.length) return null
+  const tab = plan.tab_id || plan.id || ''
+  const types = {
+    match_card: 'Match card',
+    singles_focus: 'Single bet',
+    min_loss: 'Loss-min spread',
+    value: 'Value play',
+    smart_parlay: 'Stake combo',
+  }
+  return {
+    ...plan,
+    pick_label: label,
+    pick_type: typeLabel || types[tab] || plan.slip_type_label || 'Bet plan',
+    pick_reason: plan.pick_reason || plan.why || '',
+  }
+}
+
+function PlanSlipView({
+  plan, slip, targetCashout, stakeLive, stakeLoading, showWhy, onToggleWhy, showTickets = true,
+  home = '', away = '',
+}) {
+  if (!plan?.legs?.length) {
+    return (
+      <div className="skip-note">
+        <strong>No plan here.</strong>
+        <p className="muted">Nothing cleared our bar for this approach on this match.</p>
+      </div>
+    )
+  }
+
+  const activeLegs = planActiveLegs(plan)
+  const isStakeSgm = planIsStakeSgm(plan)
+  const slipTickets = buildSlipTickets(plan, activeLegs, isStakeSgm, home, away)
+  const pathMode = planUsesPathMode(plan)
+  const scenarios = plan.scenarios || slip.payout_scenarios || {}
+  const likelyProfit = Number(scenarios?.likely_case?.profit_inr || 0)
+  const targetGoal = Number(plan.target_cashout_inr || plan.target_return_inr || targetCashout || 0)
+  const targetProfit = Math.max(0, targetGoal - (slip.budget_inr || 0))
+  const profitRoute = activeLegs.find((l) => l.hits_target)
+
+  return (
+    <>
+      <div className="pick-hero">
+        <div className="pick-hero-head">
+          <span className="pick-type-badge">{plan.pick_type}</span>
+          {plan.is_recommended_option && <span className="pick-rec-badge">Recommended</span>}
+        </div>
+        <h4 className="pick-hero-title">{pathOptionTitle(plan, (plan?.option_index || 1) - 1)}</h4>
+        {plan.worth_label && (
+          <p className="pick-hero-meta muted">{plan.worth_label}</p>
+        )}
+        {targetGoal > 0 && (
+          <p className="pick-hero-target muted">
+            Target profit: {formatINR(Math.max(0, targetGoal - (slip.budget_inr || 0)))}
+            {activeLegs.some((l) => l.hits_target)
+              ? ' · profit route + insurance'
+              : activeLegs.some((l) => l.breaks_even)
+                ? ' · break-even insurance'
+                : activeLegs.length >= 2
+                  ? ' · singles + combo mix'
+                  : ''}
+          </p>
+        )}
+        {plan.why && (
+          <button type="button" className="pick-why-toggle" onClick={onToggleWhy}>
+            {showWhy ? 'Hide math' : 'Ticket math'}
+          </button>
+        )}
+        {showWhy && plan.why && <p className="pick-why-text muted">{plan.why}</p>}
+      </div>
+
+      <div className={`odds-origin-banner ${stakeLive ? 'origin-stake' : 'origin-book'}`}>
+        <span className="origin-dot" aria-hidden />
+        {stakeLive ? 'Stake payouts loaded' : stakeLoading ? 'Loading Stake...' : 'Book estimate, verify on Stake'}
+      </div>
+
+      <div className="slip-budget-row">
+        <div className="budget-tile"><span className="bt-label">Budget</span><strong>{formatINR(slip.budget_inr)}</strong></div>
+        <div className="budget-tile"><span className="bt-label">Betting</span><strong>{formatINR(plan.total_stake_inr || 0)}</strong></div>
+        <div className="budget-tile keep">
+          <span className="bt-label">Kept</span>
+          <strong className="green">{formatINR(plan.reserve_inr ?? slip.keep_unbet_inr)}</strong>
+        </div>
+      </div>
+
+      {profitRoute && targetGoal > 0 && (
+        <div className="slip-payout-summary">
+          <strong>Profit route hits</strong>
+          <span>
+            {formatINR(profitRoute.return_inr || profitRoute.stake_inr * profitRoute.odds)} back
+            · {formatINR(targetProfit)} profit on {formatINR(slip.budget_inr)} budget
+          </span>
+        </div>
+      )}
+
+      {plan.tab_id === 'min_loss' && plan.reserve_inr != null && (
+        <div className="loss-min-banner">
+          <strong>Capital preservation</strong>
+          <span>
+            {formatINR(plan.reserve_inr)} kept ({Math.round((plan.reserve_inr / slip.budget_inr) * 100)}%)
+            · {formatINR(plan.total_stake_inr)} across {activeLegs.length} bets
+          </span>
+        </div>
+      )}
+
+      {showTickets && (
+        <>
+          <h5 className="slip-tickets-head">Tickets ({slipTickets.length})</h5>
+          <div className="slip-tickets">
+            {slipTickets.map((ticket, i) => (
+              <StakeTicketCard
+                key={ticket.key}
+                ticket={ticket}
+                index={i}
+                total={slipTickets.length}
+                pathMode={pathMode}
+                home={home}
+                away={away}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {scenarios?.likely_case && (
+        <p className="pick-outcome-line muted">
+          Typical outcome: {signedINR(likelyProfit)}
+          {scenarios.best_case?.profit_inr != null && (
+            <> · best case: {signedINR(scenarios.best_case.profit_inr)}</>
+          )}
+        </p>
+      )}
+    </>
+  )
+}
+
+function PathOptionContent({ opt, index, compact = false }) {
+  const legs = pathLegLabels(opt)
+  const title = pathOptionTitle(opt, index)
+  const n = pathTicketCount(opt)
+  const hp = opt.win_probability_pct ?? opt.hit_probability_pct
+  const wl = (opt.worth_label || '').split(' · ')[0]
+  return (
+    <>
+      <div className="path-option-head">
+        <span className="path-option-title">
+          {(opt.is_recommended_option || opt.pick_label === 'Our pick') && '★ '}
+          {title}
+        </span>
+        <div className="path-option-badges">
+          {wl && <span className="path-option-meta muted">{wl}</span>}
+        </div>
+      </div>
+      {!compact && legs.length > 0 && (
+        <div className="path-option-legs">
+          {legs.slice(0, 4).map((l) => (
+            <span key={l} className="path-leg-pill">{shortLegLabel(l)}</span>
+          ))}
+          {legs.length > 4 && (
+            <span className="path-leg-pill path-leg-more">+{legs.length - 4}</span>
+          )}
+        </div>
+      )}
+      <div className="path-option-foot">
+        {n > 0 && <span className="path-option-stat">{n} ticket{n !== 1 ? 's' : ''}</span>}
+        {hp != null && <span className="path-option-stat muted">{hp}% any hit</span>}
+      </div>
+    </>
+  )
+}
+
+function PathPicker({ plans, index, onSelect, label, id }) {
+  const safeIndex = clampPlanIndex(index, plans || [])
+
+  if (!plans?.length) return null
+
+  return (
+    <div className="path-picker-inline" id={id}>
+      <span className="path-dropdown-label">{label || 'Choose a path'}</span>
+      <div className="path-option-list" role="listbox" aria-label={label || 'Paths'}>
+        {plans.map((opt, i) => (
+          <button
+            key={opt.option_id || `path-${i}`}
+            type="button"
+            role="option"
+            aria-selected={i === safeIndex}
+            className={`path-option-card${i === safeIndex ? ' active' : ''}`}
+            onClick={() => onSelect(i)}
+          >
+            <PathOptionContent opt={opt} index={i} />
+          </button>
+        ))}
+      </div>
+      <p className="muted path-dropdown-hint">Pick a path to see the tickets below.</p>
+    </div>
+  )
+}
+
+function sortPathsForDropdown(plans) {
+  const bucketOrder = { compact: 4, spread: 3, sgm: 2, single: 1, full: 0 }
+  return [...plans].sort((a, b) => {
+    const rank = (p) => {
+      const hp = p.hit_probability ?? (p.hit_probability_pct != null ? p.hit_probability_pct / 100 : 0)
+      const wl = (p.worth_label || '').toLowerCase()
+      const swing = wl.includes('swing') ? 0 : 1
+      const top = p.is_recommended_option || p.pick_label === 'Our pick' ? 3 : 0
+      const n = p.legs?.length || 0
+      const sizeBonus = n >= 2 && n <= 4 ? 1 : 0
+      const bucket = bucketOrder[pathBucket(p)] ?? 0
+      return top * 100 + swing * 10 + sizeBonus * 5 + bucket * 2 + hp
+    }
+    return rank(b) - rank(a)
+  })
+}
+
+function PathDropdown({ plans, index, onSelect, label, id }) {
+  return (
+    <PathPicker plans={plans} index={index} onSelect={onSelect} label={label} id={id} />
+  )
+}
+
+function OptionPicker({ plans, index, onSelect, heading, id = 'path-select' }) {
+  return (
+    <PathDropdown
+      plans={plans}
+      index={index}
+      onSelect={onSelect}
+      label={heading || `${plans.length} paths`}
+      id={id}
+    />
+  )
+}
+
+export default function MatchSlipPanel({ slip, home, away, fanPrediction, status, score, sport }) {
+  const { perMatchBudget, updatePerMatchBudget, targetCashout, updateTargetCashout, bettorStyle } = useBankroll()
+  const [budgetDraft, setBudgetDraft] = useState(String(perMatchBudget))
+  const [targetDraft, setTargetDraft] = useState(String(targetCashout))
+
+  useEffect(() => { setBudgetDraft(String(perMatchBudget)) }, [perMatchBudget])
+  useEffect(() => { setTargetDraft(String(targetCashout)) }, [targetCashout])
+
+  const [tab, setTab] = useState('recs')
+  const [pickIndex, setPickIndex] = useState(0)
+  const [targetIndex, setTargetIndex] = useState(0)
+  const [strategyKey, setStrategyKey] = useState('match_card')
   const [optionIndex, setOptionIndex] = useState(0)
   const [stake, setStake] = useState(null)
   const [stakeLoading, setStakeLoading] = useState(false)
+  const [stakeConnecting, setStakeConnecting] = useState(false)
+  const [showWhy, setShowWhy] = useState(false)
+  const [liveSlip, setLiveSlip] = useState(null)
+  const [slipRefreshing, setSlipRefreshing] = useState(false)
+  const [slipLoadError, setSlipLoadError] = useState(null)
+  const matchGenRef = useRef(0)
+  const loadSeqRef = useRef(0)
+  const stakeSyncedRef = useRef(false)
+  const targetStakeSyncedRef = useRef(false)
+  const retryRef = useRef(false)
+
+  const loadMatchSlip = useCallback(({ refreshStake = false, isRetry = false } = {}) => {
+    if (!home || !away || status === 'completed') return undefined
+    const matchGen = matchGenRef.current
+    const seq = ++loadSeqRef.current
+    setSlipRefreshing(true)
+    if (!refreshStake && !isRetry) setSlipLoadError(null)
+    return fetchMatchSlipRefresh({
+      home, away, budgetInr: perMatchBudget, targetCashoutInr: targetCashout, refreshStake, sport,
+      goal: bettorStyle?.goal, risk: bettorStyle?.risk, structure: bettorStyle?.structure,
+    })
+      .then((data) => {
+        if (matchGen !== matchGenRef.current || seq !== loadSeqRef.current) return data
+        setLiveSlip(data)
+        setSlipLoadError(null)
+        retryRef.current = false
+        return data
+      })
+      .catch((err) => {
+        if (matchGen !== matchGenRef.current || seq !== loadSeqRef.current) return
+        if (!refreshStake) {
+          if (!retryRef.current) {
+            retryRef.current = true
+            loadMatchSlip({ refreshStake: false, isRetry: true })
+            return
+          }
+          setSlipLoadError(fetchErrorMessage(err, 'Could not load bet plans for this match.'))
+        }
+      })
+      .finally(() => {
+        if (matchGen === matchGenRef.current && seq === loadSeqRef.current) {
+          setSlipRefreshing(false)
+        }
+      })
+  }, [home, away, status, perMatchBudget, targetCashout, sport, bettorStyle])
 
   const loadStake = () => {
     if (!home || !away || status === 'completed') return
@@ -62,117 +711,198 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     setStake(null)
     fetchStakeOdds({ home, away, budgetInr: perMatchBudget })
       .then(setStake)
-      .catch(() => setStake({ available: false, reason: 'Stake not connected yet.', categories: [] }))
+      .catch((err) => setStake({
+        available: false,
+        reason: fetchErrorMessage(err, 'Stake not connected yet.'),
+        categories: [],
+      }))
       .finally(() => setStakeLoading(false))
   }
 
-  useEffect(() => {
-    loadStake()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [home, away, perMatchBudget, status])
+  const connectStake = () => {
+    setStakeConnecting(true)
+    connectStakeSession()
+      .then(() => loadStake())
+      .catch((err) => setStake({
+        available: false,
+        reason: fetchErrorMessage(err, 'Could not open Stake browser.'),
+        categories: [],
+      }))
+      .finally(() => setStakeConnecting(false))
+  }
 
   useEffect(() => {
-    if (slip?.recommended_strategy) setStrategyKey(slip.recommended_strategy)
+    matchGenRef.current += 1
+    stakeSyncedRef.current = false
+    targetStakeSyncedRef.current = false
+    retryRef.current = false
+    setLiveSlip(null)
+    setSlipLoadError(null)
+  }, [home, away])
+
+  useEffect(() => {
+    if (!home || !away || status === 'completed') return
+    if (slip?.strategy_plans || slip?.curated_picks) {
+      setLiveSlip(slip)
+      return
+    }
+    loadMatchSlip({ refreshStake: false })
+  }, [home, away, status, slip?.match_id, slip?.strategy_plans, slip?.curated_picks, loadMatchSlip])
+
+  useEffect(() => { loadStake() }, [home, away, perMatchBudget, status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!home || !away || status === 'completed' || tab !== 'target') return
+    if (!liveSlip || targetStakeSyncedRef.current) return
+    targetStakeSyncedRef.current = true
+    loadMatchSlip({ refreshStake: true })
+  }, [home, away, status, tab, targetCashout, perMatchBudget, liveSlip, loadMatchSlip])
+
+  // Re-price with Stake only after the fast slip load succeeds so the first request stays visible.
+  useEffect(() => {
+    if (!stake?.available || tab !== 'recs' || status === 'completed' || !liveSlip || stakeSyncedRef.current) {
+      return
+    }
+    stakeSyncedRef.current = true
+    loadMatchSlip({ refreshStake: true })
+  }, [stake?.available, tab, home, away, status, liveSlip, loadMatchSlip])
+
+  useEffect(() => { setTargetDraft(String(targetCashout)) }, [targetCashout])
+
+  useEffect(() => {
+    setPickIndex(0)
+    setTargetIndex(0)
     setOptionIndex(0)
-  }, [slip?.match_id, slip?.recommended_strategy])
+    setShowWhy(false)
+    if (slip?.recommended_strategy) setStrategyKey(slip.recommended_strategy)
+  }, [slip?.match_id, slip?.recommended_slip_id, targetCashout])
 
-  const categories = slip?.options_by_category || {}
+  useEffect(() => {
+    setPickIndex((i) => clampPlanIndex(i, resolveCuratedPicks(liveSlip || slip, home, away)))
+    setTargetIndex((i) => clampPlanIndex(i, normalizePlans(liveSlip || slip, 'match_card')))
+    setOptionIndex((i) => clampPlanIndex(i, normalizePlans(liveSlip || slip, strategyKey)))
+  }, [liveSlip, slip, strategyKey])
 
-  const stakeLive = Boolean(
-    slip?.stake_priced || (stake?.available && (stake?.categories?.length > 0)),
-  )
+  const activeSlip = liveSlip || slip || null
+  const categories = activeSlip?.options_by_category || {}
+  const stakeCached = Boolean(activeSlip?.stake_from_cache)
+  const stakeLive = Boolean(activeSlip?.stake_priced || (stake?.available && stake?.categories?.length > 0))
 
-  if (!slip && status === 'completed') {
+  if (!activeSlip && status === 'completed') {
     return (
       <div className="slip-panel">
-        <div className="result-banner">
-          <span className="result-label">FINAL</span>
-          <strong>{score}</strong>
-        </div>
-        <p className="muted">Game over — no bets.</p>
+        <div className="result-banner"><span className="result-label">FINAL</span><strong>{score}</strong></div>
+        <p className="muted">Game over. No bets.</p>
       </div>
     )
   }
+  if (!activeSlip && status !== 'completed') {
+    const failed = Boolean(slipLoadError) && !slipRefreshing
+    return (
+      <div className="slip-panel">
+        <p className="muted">
+          {failed ? (slipLoadError || 'Plans unavailable — use Build for Stake-style markets.') : 'Loading picks...'}
+        </p>
+        {failed && (
+          <>
+            <button
+              type="button"
+              className="stake-open-btn secondary"
+              onClick={() => loadMatchSlip({ refreshStake: false })}
+            >
+              Retry plans
+            </button>
+            <BetBuilder home={home} away={away} budget={perMatchBudget} sport={sport} />
+          </>
+        )}
+      </div>
+    )
+  }
+  if (!activeSlip) return null
 
-  if (!slip) return null
+  const picks = resolveCuratedPicks(activeSlip, home, away)
+  const pickIdx = clampPlanIndex(pickIndex, picks)
+  const activePick = picks[pickIdx]
 
-  const planOptions = normalizePlans(slip, strategyKey)
-  const strategy = planOptions[optionIndex] || planOptions[0] || slip.active_strategy || {}
-  const isSkip = slip.verdict === 'SKIP_MATCH' || slip.recommended_strategy === 'skip'
-  const showSkipBanner = isSkip || slip.skip_recommended
-  const gameProfile = slip.game_profile || {}
-  const scenarios = strategy?.scenarios || slip.payout_scenarios || {}
-  const factors = slip.factor_analysis || {}
-  const activeLegs = (strategy?.legs || []).filter((l) => l.stake_inr > 0 || l.role === 'parlay_leg')
-  const isParlay = strategy?.slip_type === 'parlay' || strategyKey === 'smart_parlay'
+  const planOptions = normalizePlans(activeSlip, strategyKey)
+  const planIdx = clampPlanIndex(optionIndex, planOptions)
+  const activePlan = planOptions[planIdx]
+
+  const isSkip = activeSlip.verdict === 'SKIP_MATCH' && !activeSlip.recommended_singles?.length
+  const showSkipBanner = isSkip || activeSlip.skip_recommended
+  const gameProfile = activeSlip.game_profile || {}
+  const factors = activeSlip.factor_analysis || {}
+
+  const commitTarget = () => {
+    const n = Math.max(100, Math.min(100000, Number(targetDraft) || targetCashout))
+    updateTargetCashout(n)
+    setTargetDraft(String(n))
+    if (status !== 'completed') {
+      loadMatchSlip({ refreshStake: tab === 'target' || Boolean(stake?.available) })
+    }
+  }
+
+  const commitBudget = () => {
+    const n = Math.max(1, Math.min(100000, Number(budgetDraft) || perMatchBudget))
+    setBudgetDraft(String(n))
+    updatePerMatchBudget(n)
+    if (status !== 'completed') {
+      loadMatchSlip({ refreshStake: Boolean(stake?.available) })
+    }
+  }
 
   const TABS = [
-    { id: 'slip', label: 'Bet slips' },
-    { id: 'build', label: '🎯 Build slip' },
-    { id: 'stake', label: '💸 Stake odds', badge: stakeLoading ? '…' : stake?.available ? '🟢' : null },
-    { id: 'factors', label: 'Analysis' },
-    { id: 'players', label: 'Scorers' },
-    { id: 'all', label: 'All markets' },
+    { id: 'recs', label: 'Recs' },
+    { id: 'target', label: 'Target' },
+    { id: 'plans', label: 'All plans' },
+    { id: 'build', label: 'Build' },
+    { id: 'stake', label: 'Odds', live: stake?.available },
+    { id: 'more', label: 'More' },
   ]
 
   return (
     <div className="slip-panel">
-      {gameProfile.narrative && (
-        <div className="profile-box">
-          <h5><span className="profile-chip">{(gameProfile.style || 'game').replace(/_/g, ' ')}</span> game profile</h5>
-          <p>{gameProfile.narrative}</p>
-          <p className="muted">Loss-min = spread only (2–3 small bets, 72%+ kept) · Singles live under One best bet</p>
-        </div>
-      )}
+      <div className="slip-budget-bar">
+        <label className="slip-budget-field">
+          <span>Avg budget / match</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={budgetDraft}
+            onChange={(e) => setBudgetDraft(e.target.value.replace(/[^\d.]/g, ''))}
+            onBlur={commitBudget}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur() } }}
+            aria-label="Average match budget"
+          />
+        </label>
+        <p className="muted slip-budget-hint">One number — every plan and stake sizes to this.</p>
+      </div>
 
-      {fanPrediction && (
-        <div className="fan-take-box">
-          <h5>🗣️ Fan read</h5>
-          <p>{fanPrediction}</p>
-        </div>
-      )}
-
-      {(slip?.easy_money?.length > 0 || slip?.situational_picks?.length > 0) && (
-        <div className="easy-money-box">
-          <h5>💎 Situation picks — {home} vs {away}</h5>
-          <p className="muted situational-sub">
-            Each bet ties to a story about this game — scorers, form, grudges, must-win pressure, not generic templates.
-          </p>
-          <ul className="easy-money-list">
-            {(slip.situational_picks || slip.easy_money || []).map((p, i) => (
-              <li key={i}>
-                <span className="easy-tag">{p.tag}</span>
-                <strong>{p.label}</strong>
-                {p.odds && <span className="easy-odds"> @ {p.odds}</span>}
-                {p.our_probability_pct != null && (
-                  <span className="easy-prob"> · ~{p.our_probability_pct}%</span>
-                )}
-                <p className="muted">{p.why || p.reason}</p>
-              </li>
-            ))}
-          </ul>
-          {slip.parlay_suggestion?.legs?.length >= 2 && (
-            <p className="muted parlay-hint">
-              Parlay idea ({slip.parlay_suggestion.combined_odds}x, ~{slip.parlay_suggestion.combined_probability_pct}% combined):{' '}
-              {slip.parlay_suggestion.legs.map((l) => l.label).join(' + ')}
-            </p>
-          )}
-        </div>
-      )}
-
-      {factors.factors_analyzed > 0 && (
-        <div className="factor-banner">
-          <strong><AnimatedNumber value={factors.factors_analyzed} format={(n) => Math.round(n).toLocaleString()} /> factor checks</strong>
-          <span> — {factors.summary}</span>
-        </div>
-      )}
-
-      {showSkipBanner && (
+      {showSkipBanner && tab !== 'target' && (
         <div className={`skip-banner ${isSkip ? 'skip-hard' : 'skip-caution'}`}>
-          <strong>{isSkip ? '⛔ SKIP THIS MATCH' : '⚠️ CAUTION — THIN EDGE'}</strong>
-          <p>{slip.skip_reason || (isSkip
-            ? `Keep all ${formatINR(slip.budget_inr)}. We couldn't find a bet where you're likely to come out ahead.`
-            : 'Most betting combinations still lean toward a loss on the most-likely outcome. Only bet if you accept that risk.')}</p>
+          <strong>{isSkip ? 'Skip this match' : 'Thin edge'}</strong>
+          <p>{activeSlip.skip_reason || (isSkip
+            ? `Keep all ${formatINR(activeSlip.budget_inr)}. Nothing clears our bar.`
+            : 'Edges are soft — size down, or use Target / Build for another path.')}</p>
+        </div>
+      )}
+
+      {stakeCached && tab !== 'stake' && (
+        <div className="skip-banner skip-caution stake-verify-banner stake-cache-banner">
+          <strong>Cached Stake lines</strong>
+          <p>Showing last known Stake prices for this match. Open the Odds tab to refresh live lines.</p>
+        </div>
+      )}
+
+      {!stakeLive && !stakeCached && tab !== 'stake' && (
+        <div className="skip-banner skip-caution stake-verify-banner">
+          <strong>{picks.length ? 'Model odds' : 'Verify on Stake'}</strong>
+          <p>
+            {activeSlip.odds_note ||
+              (picks.length
+                ? 'Plans use model prices. Connect Stake on the Odds tab to verify lines before betting.'
+                : 'No Stake lines loaded yet. Open the Odds tab to connect, then refresh recs.')}
+          </p>
         </div>
       )}
 
@@ -185,342 +915,198 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
             role="tab"
             aria-selected={tab === t.id}
           >
-            {t.label}{t.badge ? ` ${t.badge}` : ''}
+            {t.label}
+            {t.live && <span className="tab-live-dot" aria-label="Live"> ●</span>}
           </button>
         ))}
       </div>
 
-      {tab === 'slip' && (
-        <div className="slip-content slip-tab-content" key="slip">
+      {tab === 'recs' && (
+        <div className="slip-content slip-tab-content">
+          {activeSlip.easy_money?.length > 0 && (
+            <div className="easy-money-box is-lock-tier">
+              <h5>High probability</h5>
+              <p className="muted situational-sub">p ≥ 62% on core markets · label / odds / chance only.</p>
+              <ul className="easy-money-list">
+                {activeSlip.easy_money.map((p, i) => (
+                  <li key={`easy-${i}`}>
+                    <span className="easy-tag">{p.tag || 'High p'}</span>
+                    <strong>{p.label}</strong>
+                    {p.odds && <span className="easy-odds"> @ {p.odds}</span>}
+                    {p.our_probability_pct != null && (
+                      <span className="easy-prob"> · {p.our_probability_pct}%</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!activeSlip.easy_money?.length && activeSlip.easy_money_note && (
+            <p className="muted recs-empty-note">{activeSlip.easy_money_note}</p>
+          )}
+
+          <h5 className="recs-section-head">Our pick</h5>
+
+          {activePick ? (
+            <>
+              <OptionPicker
+                plans={picks}
+                index={pickIdx}
+                onSelect={(i) => { setPickIndex(i); setShowWhy(false) }}
+                heading="Target paths"
+                id="recs-path-select"
+              />
+              <PlanSlipView
+                plan={activePick}
+                slip={activeSlip}
+                targetCashout={targetCashout}
+                stakeLive={stakeLive}
+                stakeLoading={stakeLoading}
+                showWhy={showWhy}
+                onToggleWhy={() => setShowWhy(!showWhy)}
+                home={home}
+                away={away}
+              />
+            </>
+          ) : (
+            <div className="skip-note skip-note-hard">
+              <strong>No clean edge yet.</strong>
+              <p>{activeSlip.skip_reason || `Using estimates for now. Check Target or All plans for the best cached or model routes.`}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'target' && (
+        <div className="slip-content slip-tab-content">
+          {slipRefreshing && (
+            <p className="muted recs-empty-note">Loading Stake lines and SGMs...</p>
+          )}
+          <HitTargetPanel home={home} away={away} status={status} autoLoad sport={sport} />
+        </div>
+      )}
+
+      {tab === 'plans' && (
+        <div className="slip-content slip-tab-content">
           <div className="strategy-picker">
-            {LEGACY_STRATEGY_KEYS.map((s) => {
-              const count = normalizePlans(slip, s.key).length
+            {STRATEGY_KEYS.map((s) => {
+              const count = normalizePlans(activeSlip, s.key).length
+              const TabIcon = s.Icon
               return (
                 <button
                   key={s.key}
+                  type="button"
                   className={strategyKey === s.key ? 'strategy-btn active' : 'strategy-btn'}
                   onClick={() => { setStrategyKey(s.key); setOptionIndex(0) }}
                 >
-                  <span className="strategy-icon" aria-hidden>{s.icon}</span>
+                  <span className="strategy-icon" aria-hidden><TabIcon width={14} height={14} /></span>
                   <span className="strategy-label">{s.label}</span>
-                  {count > 1 && <span className="strategy-tag">{count} options</span>}
+                  {count > 0 && <span className="strategy-tag">{count}</span>}
                 </button>
               )
             })}
           </div>
-
-          {planOptions.length > 0 && (
-            <div className="slip-options-list">
-              <h5 className="options-list-head">
-                {planOptions.length} betting slip{planOptions.length > 1 ? 's' : ''} — pick one
-              </h5>
-              <div className="strategy-picker option-picker">
-                {planOptions.map((opt, i) => {
-                  const likely = opt.scenarios?.likely_case?.profit_inr
-                  return (
-                    <button
-                      key={opt.option_id || `${strategyKey}-${i}`}
-                      className={optionIndex === i ? 'strategy-btn active option-btn' : 'strategy-btn option-btn'}
-                      onClick={() => setOptionIndex(i)}
-                    >
-                      <span className="strategy-label">{opt.option_label || `Option ${i + 1}`}</span>
-                      <span className="strategy-tag slip-type-tag">
-                        {opt.slip_type_label || (opt.leg_count === 1 ? 'Single bet' : `${opt.leg_count}-leg`)}
-                      </span>
-                      {opt.is_recommended_option && <span className="strategy-tag rec">Top pick</span>}
-                      {opt.option_summary && <span className="option-summary">{opt.option_summary}</span>}
-                      {opt.win_probability_pct != null && (
-                        <span className="option-likely likely-good">
-                          Win chance: {opt.win_probability_pct}%
-                          {opt.confidence_label ? ` · ${opt.confidence_label}` : ''}
-                        </span>
-                      )}
-                      {likely != null && (
-                        <span className={`option-likely ${likely >= 0 ? 'likely-good' : 'likely-bad'}`}>
-                          Most likely: {signedINR(likely)}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {planOptions.length === 0 && strategyKey === 'min_loss' && (
-            <div className="skip-note">
-              <strong>No loss-minimizing plan for this match.</strong>
-              Nothing clears our spread/safety bar (62%+ per leg, 72%+ kept in pocket).
-              Singles need 68%+ confidence — otherwise skip.
-            </div>
-          )}
-
-          {planOptions.length === 0 && strategyKey === 'smart_parlay' && (
-            <div className="skip-note">
-              <strong>No +EV parlay for this match.</strong>
-              Legs didn&apos;t combine into a parlay worth the risk at Stake&apos;s prices.
-            </div>
-          )}
-
-          {planOptions.length === 0 && strategyKey !== 'min_loss' && strategyKey !== 'smart_parlay' && !isSkip && (
-            <div className="skip-note">
-              <strong>No plans in this tab.</strong> Try another strategy or skip this match.
-            </div>
-          )}
-
-          <div className={`odds-origin-banner ${stakeLive ? 'origin-stake' : 'origin-book'}`}>
-            <span className="origin-dot" aria-hidden />
-            {stakeLive
-              ? `Stake payouts${slip?.stake_repriced_count ? ` — ${slip.stake_repriced_count} markets matched` : ''}`
-              : stakeLoading
-                ? 'Connecting to Stake… leave the Chrome window open if it appears'
-                : 'Live-book estimate — open match to load Stake payouts'}
-          </div>
-
-          {strategyKey === 'min_loss' && strategy?.reserve_inr != null && (
-            <div className="loss-min-banner">
-              <strong>Capital preservation plan</strong>
-              <span>
-                {formatINR(strategy.reserve_inr)} kept ({Math.round((strategy.reserve_inr / slip.budget_inr) * 100)}%)
-                · {formatINR(strategy.total_stake_inr)} across {activeLegs.length} bets
-              </span>
-            </div>
-          )}
-
-          <div className={`slip-verdict slip-${slip.verdict?.toLowerCase()}`}>
-            <div className="slip-verdict-head">
-              <h4>{strategy?.name || slip.headline}</h4>
-              {strategy?.slip_type_label && (
-                <span className={`slip-type-badge slip-type-${strategy.slip_type || 'single'}`}>
-                  {strategy.slip_type_label}
-                </span>
-              )}
-            </div>
-            <p className="plain-slip">{strategy?.description || slip.plain_english}</p>
-            {strategy?.why && <p className="strategy-why">{strategy.why}</p>}
-            {strategy?.risk && <p className="muted slip-risk-line">{RISK_LABEL[strategy.risk] || strategy.risk}</p>}
-          </div>
-
-          {planOptions.length > 1 && (
-            <p className="muted slip-hint">
-              Each option is a different combination of bets — don&apos;t stack them all on one match.
-            </p>
-          )}
-
-          <div className="slip-budget-row">
-            <div className="budget-tile">
-              <span className="bt-label">Budget</span>
-              <strong>{formatINR(slip.budget_inr)}</strong>
-            </div>
-            <div className="budget-tile">
-              <span className="bt-label">Betting</span>
-              <strong>{formatINR(strategy?.total_stake_inr || strategy?.stake_inr || 0)}</strong>
-            </div>
-            <div className="budget-tile keep">
-              <span className="bt-label">In your pocket</span>
-              <strong className="green">{formatINR(strategy?.reserve_inr ?? slip.keep_unbet_inr)}</strong>
-            </div>
-          </div>
-
-          {activeLegs.length > 0 ? (
-            <div className="slip-legs">
-              {activeLegs.map((leg, i) => (
-                <div key={i} className={`leg-card role-${leg.role}`}>
-                  <div className="leg-top">
-                    <span className="leg-role-pill">
-                      {(ROLE_META[leg.role] || ROLE_META.parlay_leg).icon}{' '}
-                      {(ROLE_META[leg.role] || ROLE_META.parlay_leg).label}
-                    </span>
-                    <span className="leg-type-pill">
-                      {isParlay ? `Parlay leg ${i + 1}` : activeLegs.length === 1 ? 'Single bet' : `Leg ${i + 1} of ${activeLegs.length}`}
-                    </span>
-                    <span className="leg-winpct">{leg.our_probability_pct}% <small>win chance</small></span>
-                  </div>
-                  <div className="leg-main">
-                    <strong className="leg-label">{leg.label}</strong>
-                    <span className={`odds-pill ${leg.odds_source === 'stake' ? 'is-stake' : 'is-est'}`}>
-                      {leg.odds}x {leg.odds_source === 'stake' ? '🟢 Stake' : 'est.'}
-                    </span>
-                  </div>
-                  {leg.stake_inr > 0 && (
-                    <div className="leg-meta">
-                      <span>Stake <strong>{formatINR(leg.stake_inr)}</strong></span>
-                      {leg.payout_text && <span className="leg-payout">{leg.payout_text}</span>}
-                      {leg.return_inr != null && <span>Returns <strong className="green">{formatINR(leg.return_inr)}</strong></span>}
-                    </div>
-                  )}
-                  {leg.reason && <p className="leg-reason">{leg.reason}</p>}
-                </div>
-              ))}
-            </div>
-          ) : isSkip ? (
-            <div className="skip-note skip-note-hard">
-              <strong>Skip this game.</strong> {slip.skip_reason || `Keep all ${formatINR(slip.budget_inr)}.`}
-            </div>
+          {planOptions.length > 0 ? (
+            <>
+              <OptionPicker plans={planOptions} index={planIdx} onSelect={setOptionIndex} id="plans-path-select" />
+              <PlanSlipView
+                plan={activePlan}
+                slip={activeSlip}
+                targetCashout={targetCashout}
+                stakeLive={stakeLive}
+                stakeLoading={stakeLoading}
+                showWhy={showWhy}
+                onToggleWhy={() => setShowWhy(!showWhy)}
+                home={home}
+                away={away}
+              />
+            </>
           ) : (
             <div className="skip-note">
-              <strong>No bets in this option.</strong> Pick another slip above or try a different tab.
+              <strong>No {STRATEGY_KEYS.find((s) => s.key === strategyKey)?.label || 'plan'} options.</strong>
+              <p className="muted">Try another tab. Target combos change when you update cashout goal.</p>
             </div>
           )}
-
-          {isParlay && strategy?.combined_odds && activeLegs.length > 0 && (
-            <div className="parlay-odds">
-              <span>Combined stake</span>
-              <strong>{formatINR(strategy.stake_inr || strategy.total_stake_inr)}</strong>
-              <span>Combined payout</span>
-              <strong>{strategy.combined_odds}x</strong>
-              <span className="parlay-prob">{strategy.combined_probability_pct}% chance all {activeLegs.length} hit</span>
-            </div>
-          )}
-
-          <div className="scenarios-block">
-            <h5 className="scenarios-head">Your payout scenarios</h5>
-            <div className="scenarios-grid">
-              <ScenarioCard title="😬 Worst case" data={scenarios.worst_case} />
-              <ScenarioCard title="📊 Most likely" data={scenarios.likely_case} />
-              <ScenarioCard title="🎉 Best case" data={scenarios.best_case} />
-              {(scenarios.expected_value_inr != null || strategy?.expected_value_inr != null) && (
-                <div className="scenario-card scenario-neutral">
-                  <strong className="scenario-title">📈 Long-run average</strong>
-                  <div className="scenario-profit">
-                    <AnimatedNumber value={scenarios.expected_value_inr ?? strategy?.expected_value_inr} format={formatINR} />
-                  </div>
-                  <p>Negative = you&apos;d lose money on average. We skip slips that fail this check.</p>
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
 
       {tab === 'build' && (
         status === 'completed'
-          ? <p className="muted empty-inline">Game over — no bets to build.</p>
-          : <BetBuilder home={home} away={away} budget={perMatchBudget} />
+          ? <p className="muted empty-inline">Game over.</p>
+          : <BetBuilder home={home} away={away} budget={perMatchBudget} sport={sport} />
       )}
 
       {tab === 'stake' && (
-        <div className="stake-tab slip-tab-content" key="stake">
+        <div className="stake-tab slip-tab-content">
           {stakeLoading && (
             <div className="stake-skeleton">
-              <div className="stake-skel-head">
-                <div className="spinner small" />
-                <p>Pulling exact payouts from Stake…</p>
-              </div>
-              <div className="skeleton sk-line" />
-              <div className="skeleton sk-line short" />
-              <div className="skeleton sk-block" />
+              <div className="stake-skel-head"><div className="spinner small" /><p>Pulling Stake payouts...</p></div>
             </div>
           )}
           {!stakeLoading && stake && !stake.available && (
             <div className="stake-fallback">
-              <span className="fallback-icon" aria-hidden>🔒</span>
-              <h5>Live Stake payouts unavailable</h5>
-              <p>{stake.reason || "We couldn't reach Stake from this network for this game. Your plan above still uses our best available pricing."}</p>
-              <button type="button" className="stake-open-btn" onClick={loadStake} disabled={stakeLoading}>
-                {stakeLoading ? 'Loading…' : 'Retry Stake'}
+              <h5>Stake payouts unavailable</h5>
+              <p>{stake.reason || "Couldn't reach Stake for this game."} Cached prices and model estimates still power the plans above.</p>
+              <button type="button" className="stake-open-btn" onClick={connectStake} disabled={stakeConnecting}>
+                {stakeConnecting ? 'Opening...' : 'Open / Reconnect Stake'}
               </button>
-              <a className="stake-open-btn secondary" href="https://stake.com/sports/soccer" target="_blank" rel="noreferrer">
-                Open Stake →
-              </a>
+              <button type="button" className="stake-open-btn secondary" onClick={loadStake}>Retry</button>
             </div>
           )}
           {!stakeLoading && stake?.available && (
             <div className="stake-live">
-              <div className="stake-live-head">
-                <span className="live-pill stake-live-pill">🟢 LIVE FROM STAKE</span>
-              </div>
-              <div className="stake-matched">
-                Matched on Stake: <strong>{stake.matched_name}</strong>
-                <span className="muted"> · {stake.tournament}{stake.status ? ` · ${stake.status}` : ''}</span>
-                <div className="muted">
-                  Check this is your game before betting.
-                  {stake.total_bets > 0 && ` ${stake.total_bets.toLocaleString()} bets · $${stake.total_bet_value_usd?.toLocaleString()} staked.`}
-                </div>
-              </div>
-              <p className="muted">Exact payouts if you put {formatINR(perMatchBudget)} on each:</p>
+              <span className="live-pill stake-live-pill">Live from Stake</span>
+              <p className="muted">Exact payouts at {formatINR(perMatchBudget)} stake:</p>
               {stake.categories.map((cat) => (
                 <div key={cat.category} className="options-category">
                   <h5>{cat.category}</h5>
                   <div className="table-wrap">
                     <table className="options-table">
-                      <thead><tr><th>Bet</th><th>Payout</th><th>If it wins</th></tr></thead>
+                      <thead><tr><th>Bet</th><th>Odds</th><th>Payout</th></tr></thead>
                       <tbody>
                         {cat.options.map((o, i) => (
-                          <tr key={i}>
-                            <td>{o.label}</td>
-                            <td className="odds-cell">{o.odds}x</td>
-                            <td className="green">{formatINR(o.return_inr)}</td>
-                          </tr>
+                          <tr key={i}><td>{o.label}</td><td className="odds-cell">{o.odds}x</td><td className="green">{formatINR(o.return_inr)}</td></tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 </div>
               ))}
-              <a className="stake-open-btn" href={stake.stake_url} target="_blank" rel="noreferrer">
-                Place on Stake →
-              </a>
+              <a className="stake-open-btn" href={stake.stake_url} target="_blank" rel="noreferrer">Open on Stake →</a>
             </div>
           )}
         </div>
       )}
 
-      {tab === 'factors' && (
-        <div className="factors-tab slip-tab-content" key="factors">
-          <p className="factors-summary">{factors.summary}</p>
-          <ul className="factor-list">
-            {factors.top_factors?.map((f, i) => (
-              <li key={i}>
-                <span className="factor-cat">{f.category}</span>
-                <span className="factor-body"><strong>{f.name}</strong> — {f.value}</span>
-                <span className="factor-impact">{f.impact}</span>
-              </li>
-            ))}
-          </ul>
-          {factors.cross_checks != null && (
-            <p className="muted">{factors.cross_checks.toLocaleString()} cross-checks against every market option.</p>
-          )}
-        </div>
-      )}
-
-      {tab === 'players' && (
-        <div className="slip-tab-content" key="players">
-          <div className="table-wrap">
-            <table className="options-table">
-              <thead><tr><th>Player</th><th>Payout</th><th>Chance</th><th>Pick?</th></tr></thead>
-              <tbody>
-                {(categories['Player Props'] || []).map((o, i) => (
-                  <tr key={i}><td>{o.label}</td><td className="odds-cell">{o.odds}x</td><td>{o.plain_chance}</td><td>{o.plain_verdict}</td></tr>
+      {tab === 'more' && (
+        <div className="slip-tab-content more-tab">
+          {factors.factors_analyzed > 0 && (
+            <div className="factors-tab">
+              <ul className="factor-list">
+                {factors.top_factors?.slice(0, 8).map((f, i) => (
+                  <li key={i}>
+                    <span className="factor-cat">{f.category}</span>
+                    <span className="factor-body"><strong>{f.name}</strong>: {f.value}</span>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-          {!(categories['Player Props'] || []).length && (
-            <p className="muted empty-inline">No goalscorer markets for this game.</p>
+              </ul>
+            </div>
           )}
-        </div>
-      )}
-
-      {tab === 'all' && (
-        <div className="all-options slip-tab-content" key="all">
-          {Object.entries(categories).map(([cat, opts]) => (
-            <div key={cat} className="options-category">
-              <h5>{cat}</h5>
+          {(categories['Player Props'] || []).length > 0 && (
+            <div className="options-category">
+              <h5>Scorers</h5>
               <div className="table-wrap">
                 <table className="options-table">
-                  <thead><tr><th>Bet</th><th>Payout</th><th>Pick?</th></tr></thead>
+                  <thead><tr><th>Player</th><th>Odds</th><th>Chance</th></tr></thead>
                   <tbody>
-                    {opts.map((o, i) => (
-                      <tr key={i}><td>{o.label}</td><td className="odds-cell">{o.odds}x</td><td>{o.plain_verdict}</td></tr>
+                    {(categories['Player Props'] || []).slice(0, 12).map((o, i) => (
+                      <tr key={i}><td>{o.label}</td><td>{o.odds}x</td><td>{o.plain_chance}</td></tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          ))}
-          {!Object.keys(categories).length && (
-            <p className="muted empty-inline">No market breakdown available for this game.</p>
           )}
         </div>
       )}

@@ -5,7 +5,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 
 from bet_placer.config import get_settings
@@ -77,7 +77,7 @@ def _audit_bets_against_model(bets: list[dict[str, Any]]) -> dict[str, Any]:
     skip_flags = 0
     for (home, away), fixture_bets in by_fixture.items():
         try:
-            menu = build_bet_menu(home, away, budget_inr=300)
+            menu = build_bet_menu(home, away, budget_inr=200)
         except Exception:
             continue
         flat = _flatten_menu(menu.get("categories") or [])
@@ -175,6 +175,54 @@ def _default_state() -> dict[str, Any]:
     }
 
 
+def _migrate_legacy_bet(bet: dict[str, Any]) -> dict[str, Any]:
+    out = deepcopy(bet)
+    if out.get("stake_value") is not None and out.get("result"):
+        return out
+
+    currency = (out.get("currency") or "USD").upper()
+    display_currency = out.get("display_currency") or currency
+    stake = float(out.get("stake") or out.get("stake_value") or 0)
+    payout = float(out.get("payout") or out.get("payout_value") or 0)
+    raw_status = str(out.get("status") or "").lower()
+    active = bool(out.get("active"))
+    selections = out.get("selections") or []
+    outcome_statuses = {str(s.get("status") or "").lower() for s in selections}
+
+    if active or raw_status in {"open", "pending"}:
+        result = "open"
+        status = "open"
+    elif raw_status == "cashout":
+        result = "cashed_out"
+        status = "cashout"
+    elif raw_status in {"cancelled", "canceled", "void"} or "voided" in outcome_statuses:
+        result = "push"
+        status = "void"
+    elif "won" in outcome_statuses or payout > stake:
+        result = "won"
+        status = "won"
+    elif "lost" in outcome_statuses or payout == 0:
+        result = "lost"
+        status = "lost"
+    elif payout == stake and stake > 0:
+        result = "push"
+        status = "void"
+    elif payout > 0:
+        result = "cashed_out"
+        status = "cashout"
+    else:
+        result = "unknown"
+        status = raw_status or "unknown"
+
+    out["display_currency"] = display_currency
+    out["stake_value"] = round(stake, 2)
+    out["payout_value"] = round(payout, 2)
+    out["profit_value"] = round((payout - stake) if result != "open" else 0.0, 2)
+    out["result"] = result
+    out["status"] = status
+    return out
+
+
 def _load_state() -> dict[str, Any]:
     path = _store_path()
     if not path.exists():
@@ -187,6 +235,12 @@ def _load_state() -> dict[str, Any]:
     for key in ("privacy", "connection", "portfolio"):
         if isinstance(data.get(key), dict):
             state[key].update(data[key])
+    bets = state.get("portfolio", {}).get("bets") or []
+    if bets:
+        migrated = [_migrate_legacy_bet(b) for b in bets]
+        summary = _summarize_bets(migrated)
+        summary["model_audit"] = _audit_bets_against_model(summary["bets"])
+        state["portfolio"] = summary
     return state
 
 
@@ -223,6 +277,14 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     roi_pct = round((profit / total_staked) * 100, 2) if total_staked else 0.0
     singles = sum(1 for b in bets if (b.get("selection_count") or 0) <= 1)
     parlays = sum(1 for b in bets if (b.get("selection_count") or 0) > 1)
+    fixture_bet_counts: dict[str, int] = {}
+    for b in bets:
+        fixture = b.get("fixture_name") or "Unknown"
+        fixture_bet_counts[fixture] = fixture_bet_counts.get(fixture, 0) + 1
+    n_fixtures = len(fixture_bet_counts) or 1
+    avg_bets_per_fixture = round(len(bets) / n_fixtures, 2)
+    multi_bet_fixtures = sum(1 for c in fixture_bet_counts.values() if c >= 2)
+    prefers_spread_singles = avg_bets_per_fixture >= 2.0 or multi_bet_fixtures >= max(1, n_fixtures // 2)
     avg_odds_values = [float(b.get("combined_odds") or 0) for b in bets if float(b.get("combined_odds") or 0) > 1]
     avg_odds = round(sum(avg_odds_values) / len(avg_odds_values), 2) if avg_odds_values else None
     market_breakdown: dict[str, dict[str, Any]] = {}
@@ -273,15 +335,30 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         1,
     ) if recent else None
 
+    longshot_losses = sum(1 for b in bets if float(b.get("combined_odds") or 0) >= 3 and b.get("result") == "lost")
     recommended_focus = [m["market"] for m in ranked_markets[:2] if m["profit_value"] > 0]
     caution_markets = [m["market"] for m in ranked_markets[-2:] if m["profit_value"] < 0]
     avoid_parlays = parlays >= singles and (sum(float(b.get("profit_value") or 0) for b in bets if b.get("bet_type") == "parlay") < 0)
     max_odds = 2.2 if longshot_losses >= 3 else 3.0
+    avg_stake = round(sum(float(b.get("stake_value") or 0) for b in bets) / max(1, len(bets)), 2)
+    max_stake = round(max((float(b.get("stake_value") or 0) for b in bets), default=0.0), 2)
+    intuitive_bets = sum(
+        1
+        for b in bets
+        if b.get("bet_type") == "parlay"
+        or b.get("market_family") in {"scorers", "other"}
+        or float(b.get("combined_odds") or 0) >= 3
+    )
+    intuition_rate = round((intuitive_bets / max(1, len(bets))) * 100, 1)
+    fixture_exposure: dict[str, float] = {}
+    for b in bets:
+        fixture = b.get("fixture_name") or "Unknown"
+        fixture_exposure[fixture] = fixture_exposure.get(fixture, 0.0) + float(b.get("stake_value") or 0)
+    top_fixture = max(fixture_exposure.items(), key=lambda kv: kv[1], default=(None, 0.0))
 
     insights: list[str] = []
     if parlays >= max(3, singles):
         insights.append("You are leaning heavily into parlays. That usually adds variance faster than it adds edge.")
-    longshot_losses = sum(1 for b in bets if float(b.get("combined_odds") or 0) >= 3 and b.get("result") == "lost")
     if longshot_losses >= 3:
         insights.append("A lot of the damage is coming from long-odds bets. Trim stake size on 3.0+ prices unless the edge is clear.")
     if losses > wins and total_staked >= 100:
@@ -289,20 +366,75 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     if sum(1 for b in bets if b.get("result") == "open") >= 5:
         insights.append("You have a large number of open bets. Watch for correlated exposure across the same teams or match narratives.")
 
+    next_actions: list[str] = []
+    if avg_stake > 0:
+        next_actions.append(
+            f"Keep standard singles around {display_currency} {round(avg_stake):,} and only scale above that when the model edge is clearly positive."
+        )
+    if avoid_parlays:
+        next_actions.append("Parlays are hurting your sample. Use them as low-stake sidecars, not the core of your card.")
+    if recommended_focus:
+        next_actions.append(f"Your best recent bet families are {', '.join(recommended_focus)}. Let those lead the next slate.")
+    if caution_markets:
+        next_actions.append(f"Trim exposure on {', '.join(caution_markets)} until your hit rate improves there.")
+    if intuition_rate >= 45:
+        next_actions.append("A big part of your action is intuition-driven. Keep those bets smaller unless they also show a real model edge.")
+    if top_fixture and top_fixture[1] >= avg_stake * 2:
+        next_actions.append(
+            f"You tend to concentrate on certain matches. Cap single-game exposure below {display_currency} {round(top_fixture[1]):,} unless you intentionally want a high-conviction spot."
+        )
+
     profile = {
         "confidence": "high" if len(bets) >= 25 else "medium" if len(bets) >= 10 else "low",
         "focus_markets": recommended_focus,
         "caution_markets": caution_markets,
         "avoid_parlays": avoid_parlays,
+        "prefers_spread_singles": prefers_spread_singles,
+        "avg_bets_per_fixture": avg_bets_per_fixture,
+        "multi_bet_fixture_rate": round(multi_bet_fixtures / n_fixtures, 2),
+        "singles_count": singles,
+        "parlays_count": parlays,
         "max_preferred_odds": max_odds,
         "top_market": top_market,
         "leak_market": leak_market,
         "recent_profit_value": recent_profit,
         "recent_hit_rate_pct": recent_hit_rate,
+        "avg_stake_value": avg_stake,
+        "max_stake_value": max_stake,
+        "intuition_rate_pct": intuition_rate,
+        "top_fixture_exposure": {
+            "fixture": top_fixture[0],
+            "stake_value": round(top_fixture[1], 2),
+        } if top_fixture[0] else None,
         "summary": (
-            f"Lean into {', '.join(recommended_focus) if recommended_focus else 'disciplined singles'}; "
-            f"be careful with {', '.join(caution_markets) if caution_markets else 'overextended longshots'}."
+            (
+                f"You usually spread {avg_bets_per_fixture:.0f} separate bets per match — "
+                f"we'll prioritise multi-single routes over one big parlay."
+                if prefers_spread_singles else
+                f"Lean into {', '.join(recommended_focus) if recommended_focus else 'disciplined singles'}; "
+                f"be careful with {', '.join(caution_markets) if caution_markets else 'overextended longshots'}."
+            )
         ),
+    }
+
+    overview = {
+        "win_loss_text": (
+            f"{wins} wins, {losses} losses, {pushes} pushes, {cashouts} cashouts."
+            if bets
+            else "No settled bets imported yet."
+        ),
+        "roi_text": (
+            f"ROI is {roi_pct}% because you staked {display_currency} {round(total_staked):,} and netted {display_currency} {round(profit):,}."
+            if total_staked
+            else "ROI needs settled stake volume before it means anything."
+        ),
+        "curve_text": (
+            "The performance curve is your running bankroll path bet by bet. Rising means your process is compounding; falling means your sizing or bet selection is dragging."
+        ),
+        "market_text": (
+            "Strengths and leaks ranks the bet families that are helping or hurting most, so your next card can lean into what is actually working."
+        ),
+        "recommendations": next_actions[:5],
     }
 
     return {
@@ -324,6 +456,7 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "ranked_markets": ranked_markets,
         "cumulative_profit": cumulative,
         "insights": insights,
+        "overview": overview,
         "profile": profile,
         "bets": bets,
         "last_imported_at": _utc_now(),
@@ -364,10 +497,12 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
 
 
 def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
+    # Warmup can take minutes while the user clears Cloudflare — don't hold the
+    # portfolio lock for the whole wait or other API calls appear hung.
+    ok = warmup_visible(timeout=timeout)
+    browser = browser_status()
     with _LOCK:
         state = _load_state()
-        ok = warmup_visible(timeout=timeout)
-        browser = browser_status()
         if ok or browser.get("ready"):
             state["connection"].update(
                 {
@@ -454,7 +589,16 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
             return _merged_status(_save_state(state))
 
         summary = _summarize_bets(bets)
-        summary["model_audit"] = _audit_bets_against_model(summary["bets"])
+        summary["model_audit"] = {
+            "available": False,
+            "audited_legs": 0,
+            "aligned_legs": 0,
+            "against_legs": 0,
+            "strong_edges": 0,
+            "skip_flags": 0,
+            "message": "Model audit running in the background…",
+            "pending": True,
+        }
         state["portfolio"] = summary
         state["connection"].update(
             {
@@ -465,4 +609,23 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
                 "last_sync_message": f"Imported {len(bets)} bets from your Stake account history.",
             }
         )
-        return _merged_status(_save_state(state))
+        result = _merged_status(_save_state(state))
+
+    def _audit_in_background() -> None:
+        try:
+            with _LOCK:
+                bg_state = _load_state()
+                bg_bets = list(bg_state.get("portfolio", {}).get("bets") or [])
+            if not bg_bets:
+                return
+            audit = _audit_bets_against_model(bg_bets)
+            with _LOCK:
+                bg_state = _load_state()
+                bg_state["portfolio"]["bets"] = bg_bets
+                bg_state["portfolio"]["model_audit"] = audit
+                _save_state(bg_state)
+        except Exception:
+            pass
+
+    Thread(target=_audit_in_background, daemon=True, name="portfolio-audit").start()
+    return result

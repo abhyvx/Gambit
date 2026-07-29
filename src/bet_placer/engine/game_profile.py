@@ -32,6 +32,49 @@ def profile_match(
     chaotic = ctx.get("home_must_win") or ctx.get("away_must_win")
     fade_public = ctx.get("fade_public")
     trending = ctx.get("trending_on")
+    is_knockout = bool(ctx.get("is_knockout"))
+    status = ctx.get("status") or "upcoming"
+    status_detail = ctx.get("status_detail") or ""
+    home_score = ctx.get("home_score")
+    away_score = ctx.get("away_score")
+    stake_stats = ctx.get("stake_stats") or {}
+    analysis_checks = 0
+    analysis_checks += len(probabilities)
+    analysis_checks += len(ctx.get("morale") or {})
+    analysis_checks += len((ctx.get("stake_overlay") or {}).get("odds") or {})
+    analysis_checks += len(stake_stats or {})
+    analysis_checks += len(ctx.get("group_stakes", "") or "")
+    analysis_checks += 20
+
+    live_betting = None
+    if status == "live" and home_score is not None and away_score is not None:
+        diff = home_score - away_score
+        if diff == 0:
+            momentum_read = "Level game. Live variance is still open, so cheap price jumps can create cashout windows."
+            live_tag = "swing_state"
+        elif abs(diff) == 1:
+            leader = home if diff > 0 else away
+            trailer = away if diff > 0 else home
+            momentum_read = (
+                f"{leader} lead by one. If {trailer} are pushing, small-stake comeback or next-goal angles can still create a cashout path."
+            )
+            live_tag = "one_goal_game"
+        else:
+            leader = home if diff > 0 else away
+            momentum_read = (
+                f"{leader} already have scoreboard control. Chasing miracle outrights is worse than targeting a short-lived live swing."
+            )
+            live_tag = "scoreboard_control"
+        live_betting = {
+            "enabled": True,
+            "tag": live_tag,
+            "scoreline": f"{home_score}-{away_score}",
+            "clock": status_detail,
+            "summary": momentum_read,
+            "cheap_longshot_note": (
+                "Use tiny stakes only for live longshots you plan to cash out, not for hold-to-settlement hero bets."
+            ),
+        }
 
     if draw_live and rating_gap < 14:
         style = "tight"
@@ -75,6 +118,17 @@ def profile_match(
         "fade_public": fade_public,
         "trending_on": trending,
         "fan_take": ctx.get("fan_take"),
+        "is_knockout": is_knockout,
+        "settlement_scope": (
+            "Recommendations are graded on 90-minute markets first. In knockout matches we deliberately prefer draw-no-bet, double chance, and other safer 90-minute structures when extra time is live."
+            if is_knockout
+            else "Recommendations are built for normal 90-minute settlement unless a market explicitly says otherwise."
+        ),
+        "analysis_checks_estimate": analysis_checks,
+        "analysis_summary": (
+            "Holistic pass combining model probabilities, game script, team strength gap, morale, must-win pressure, public sentiment, available Stake prices, and knockout risk."
+        ),
+        "live_betting": live_betting,
         "min_bet_probability": 0.58,
         "parlay_min_leg_probability": 0.58,
         "parlay_min_combined": 0.32,
@@ -107,6 +161,11 @@ def game_fit_score(opt, profile: dict, home: str, away: str) -> float:
             score += 25
         if opt.market == "over_under_goals" and opt.selection == "over" and opt.line == 2.5:
             score += 10
+        fan = (profile.get("fan_take") or "").lower()
+        if fan and fav.lower() in fan and fav.lower() in (opt.label or "").lower():
+            score += 12
+        if profile.get("chaotic") or profile.get("is_knockout"):
+            score += 6
     elif style == "high_scoring":
         if opt.market == "over_under_goals" and opt.selection == "over" and opt.line in (2.5, 3.5):
             score += 20

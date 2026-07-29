@@ -47,3 +47,21 @@ jobs:
             ~/.bet_placer/model_params.json
             ~/.bet_placer/craft_nn.joblib
           retention-days: 14
+
+      - name: Stage model files
+        run: |
+          mkdir -p model-out
+          for f in craft.db model_params.json craft_nn.joblib; do
+            [ -f "$HOME/.bet_placer/$f" ] && cp "$HOME/.bet_placer/$f" "model-out/$f"
+          done
+          ls -la model-out || true
+
+      - name: Publish model release (cloud deploy pulls this)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: model-latest
+          name: Gambit model state
+          body: Auto-published by craft-train workflow
+          files: model-out/*
+          make_latest: true
+          overwrite_files: true

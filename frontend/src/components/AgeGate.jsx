@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { GambitMark } from './GambitLogo'
 
 const KEY = 'gambit_age_ack_v1'
 
@@ -19,16 +20,15 @@ export default function AgeGate() {
   return (
     <div className="agegate-overlay" role="dialog" aria-modal="true" aria-label="Age verification">
       <div className="agegate-card">
-        <div className="agegate-logo" aria-hidden>⚡</div>
-        <h2>Before you continue</h2>
+        <div className="agegate-logo" aria-hidden><GambitMark size={48} /></div>
+        <h2>Age check</h2>
         <p>
-          GAMBIT is an <strong>analytics tool</strong> for football betting markets — it is not a
-          bookmaker and does not take bets or hold money. Predictions and "value" calls are
-          informational opinions, <strong>not financial advice or a guarantee of any outcome</strong>.
+          GAMBIT is analytics software, not a bookmaker. Outputs are informational,
+          not financial advice or a guarantee.
         </p>
         <ul className="agegate-points">
           <li>You are <strong>18 or older</strong> (or the legal age where you live).</li>
-          <li>Betting carries real risk — only ever stake what you can afford to lose.</li>
+          <li>Betting carries real risk. Only ever stake what you can afford to lose.</li>
           <li>Gambling is restricted or illegal in some places; you're responsible for your local laws.</li>
         </ul>
         <button className="agegate-accept" onClick={accept}>I'm 18+ and I understand</button>

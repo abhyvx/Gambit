@@ -173,6 +173,7 @@ class Match:
     market_odds: list[MarketOdds] = field(default_factory=list)
     sentiment_score_home: float = 0.0  # -1 to 1
     sentiment_score_away: float = 0.0
+    sport_key: str = ""  # e.g. basketball_nba — drives sport adapters / labels
 
 
 @dataclass

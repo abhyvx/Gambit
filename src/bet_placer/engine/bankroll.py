@@ -133,6 +133,80 @@ def recommend_match_stake(
     )
 
 
+def allocate_match_budget(
+    picks: list[dict],
+    match_budget_inr: float,
+    *,
+    spend_pct: float | None = None,
+    style: object | None = None,
+) -> list[dict]:
+    """Split one match budget across picks. Never assign the full budget to each row.
+
+    Returns the same pick dicts with stake_recommendation.recommended_stake filled so
+    the stakes sum to roughly spend_pct * budget (rounded to ₹10).
+    """
+    if not picks:
+        return picks
+    if spend_pct is None:
+        if style is not None:
+            from bet_placer.engine.bettor_style import spend_pct_for_style
+            spend_pct = spend_pct_for_style(style)
+        else:
+            spend_pct = 0.85
+    budget = max(50.0, float(match_budget_inr or 200))
+    pool = max(20.0, budget * float(spend_pct))
+    # Style risk: shrink or stretch weights (shared once — all callers benefit)
+    risk_mult = 1.0
+    goal = None
+    if style is not None:
+        from bet_placer.engine.bettor_style import BettorStyle
+        st = style if isinstance(style, BettorStyle) else BettorStyle.from_dict(style)  # type: ignore[arg-type]
+        goal = st.goal
+        if st.risk == "low":
+            risk_mult = 0.85
+        elif st.risk == "high":
+            risk_mult = 1.1
+    weights: list[float] = []
+    for p in picks:
+        prob = float(p.get("true_probability") or p.get("our_probability") or 0.45)
+        w = max(0.05, prob) * risk_mult
+        if p.get("is_lean"):
+            w *= 0.55
+        ev = float(p.get("expected_value") or 0)
+        if ev > 0:
+            w *= 1.0 + min(ev, 0.2) * 2
+        if goal == "hit_target":
+            odds = float(p.get("decimal_odds") or p.get("odds") or 1)
+            if 1.4 <= odds <= 6.0:
+                w *= 1.15
+        elif goal == "preserve":
+            w *= max(0.5, prob)
+        weights.append(w)
+    total_w = sum(weights) or 1.0
+    remaining = pool
+    out: list[dict] = []
+    for i, p in enumerate(picks):
+        raw = pool * (weights[i] / total_w)
+        # last pick takes leftover so we don't overshoot
+        if i == len(picks) - 1:
+            stake = remaining
+        else:
+            stake = min(remaining, round(raw / 10) * 10)
+            stake = max(10.0, stake)
+        stake = min(remaining, max(10.0, round(stake / 10) * 10))
+        remaining = max(0.0, remaining - stake)
+        rec = dict(p.get("stake_recommendation") or {})
+        rec["recommended_stake"] = stake
+        rec["recommended_pct"] = round(100.0 * stake / budget, 1)
+        rec["match_budget_inr"] = budget
+        rec["plain_english"] = (
+            f"₹{stake:.0f} of your ₹{budget:.0f} match budget"
+            + (" (lean — keep it small)." if p.get("is_lean") else ".")
+        )
+        out.append({**p, "stake_recommendation": rec, "stake_inr": stake})
+    return out
+
+
 def _plain_english(
     stake, bankroll, profit, loss, break_even, true_prob, odds, risk, pct,
 ) -> str:
@@ -143,14 +217,43 @@ def _plain_english(
         )
     if risk == "high":
         return (
-            f"If you bet ${stake:.0f} ({pct:.1f}% of your ${bankroll:.0f} bankroll), "
-            f"you could win ${stake * (odds - 1):.0f} or lose ${loss:.0f}. "
-            f"This is a HIGH RISK bet — models disagree or confidence is low. "
-            f"Consider skipping or betting half this amount."
+            f"If you bet ₹{stake:.0f} ({pct:.1f}% of your ₹{bankroll:.0f} budget), "
+            f"you could win ₹{stake * (odds - 1):.0f} or lose ₹{loss:.0f}. "
+            f"High risk — models disagree or confidence is low. "
+            f"Consider skipping or betting half."
         )
     return (
-        f"Bet ${stake:.0f} ({pct:.1f}% of bankroll). "
-        f"If correct, profit ~${stake * (odds - 1):.0f}. If wrong, lose ${loss:.0f}. "
-        f"Our model says {true_prob:.0%} chance vs {break_even:.0%} needed to break even. "
-        f"Long-term expected profit on this bet: ~${profit:.2f}."
+        f"Bet ₹{stake:.0f} ({pct:.1f}% of budget). "
+        f"If correct, profit ~₹{stake * (odds - 1):.0f}. If wrong, lose ₹{loss:.0f}. "
+        f"Model chance {true_prob:.0%} vs {break_even:.0%} break-even."
     )
+
+
+# ponytail: fails if allocation ever spends more than the match budget
+if __name__ == "__main__":
+    from bet_placer.engine.bettor_style import BettorStyle
+
+    demo = allocate_match_budget(
+        [
+            {"true_probability": 0.6, "label": "A"},
+            {"true_probability": 0.55, "is_lean": True, "label": "B"},
+            {"true_probability": 0.5, "label": "C"},
+        ],
+        200,
+    )
+    total = sum(p["stake_inr"] for p in demo)
+    assert total <= 200 + 1e-6, total
+    assert all(p["stake_inr"] > 0 for p in demo)
+
+    preserve = allocate_match_budget(
+        [{"true_probability": 0.6, "label": "A", "decimal_odds": 1.8}],
+        200,
+        style=BettorStyle(goal="preserve", risk="low", structure="singles"),
+    )
+    hit = allocate_match_budget(
+        [{"true_probability": 0.55, "label": "A", "decimal_odds": 2.2}],
+        200,
+        style=BettorStyle(goal="hit_target", risk="medium", structure="spread"),
+    )
+    assert preserve[0]["stake_inr"] < hit[0]["stake_inr"], (preserve[0]["stake_inr"], hit[0]["stake_inr"])
+    print("ok", [p["stake_inr"] for p in demo], "sum", total, "preserve", preserve[0]["stake_inr"], "hit", hit[0]["stake_inr"])

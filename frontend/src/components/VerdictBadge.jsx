@@ -13,17 +13,17 @@ const LABELS = {
 }
 
 const ICONS = {
-  bet: '✓',
+  bet: '+',
   caution: '!',
-  skip: '–',
-  skip_match: '–',
+  skip: 'x',
+  skip_match: 'x',
 }
 
 export default function VerdictBadge({ verdict }) {
   const v = (verdict || 'skip').toLowerCase()
   return (
     <span className={`verdict-badge ${STYLES[v] || 'verdict-skip'}`}>
-      <span className="verdict-dot" aria-hidden>{ICONS[v] || '–'}</span>
+      <span className="verdict-dot" aria-hidden>{ICONS[v] || 'x'}</span>
       {LABELS[v] || v.toUpperCase()}
     </span>
   )

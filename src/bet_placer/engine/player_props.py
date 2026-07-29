@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 import unicodedata
 
-from bet_placer.data.team_stars import get_attackers
+from bet_placer.data.team_stars import get_attackers, _names_same_player, _strip
 
 # Fraction of a team's goals that come from its listed front-line attackers
 # (the rest: defenders on set pieces, deep midfielders, own goals).
@@ -66,8 +66,8 @@ class PlayerModel:
         self.home = home
         self.away = away
         self.total = max(0.1, float(mm.hl) + float(mm.al))
-        # surname -> (lambda, team, full_name)
-        self._by_surname: dict[str, tuple[float, str, str]] = {}
+        # full normalized name -> (lambda, team, canonical name)
+        self._by_name: dict[str, tuple[float, str, str]] = {}
         self._build(home, float(mm.hl))
         self._build(away, float(mm.al))
 
@@ -78,12 +78,19 @@ class PlayerModel:
         for i, player in enumerate(squad):
             share = (weights[i] / wsum) * _COVERED_SHARE
             lam = max(0.0, team_xg * share)
-            sn = _surname(player)
-            if sn and sn not in self._by_surname:
-                self._by_surname[sn] = (lam, team, player)
+            key = _strip(player).lower()
+            if key and key not in self._by_name:
+                self._by_name[key] = (lam, team, player)
 
     def _lookup(self, name: str) -> tuple[float, str, str] | None:
-        return self._by_surname.get(_surname(name))
+        key = _strip(name).lower()
+        if key in self._by_name:
+            return self._by_name[key]
+        for team in (self.home, self.away):
+            for player in get_attackers(team, 8):
+                if _names_same_player(name, player):
+                    return self._by_name.get(_strip(player).lower())
+        return None
 
     def rate(self, market_name: str, outcome_name: str) -> float | None:
         """Probability for a goalscorer outcome, or None if we can't place him."""

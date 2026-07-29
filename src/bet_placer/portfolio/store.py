@@ -497,6 +497,26 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
 
 
 def connect_browser_session(timeout: int = 180) -> dict[str, Any]:
+    from bet_placer.config import stake_network_enabled
+
+    # Cloud / STAKE_USE_BROWSER=false: never hang on Playwright
+    if not stake_network_enabled():
+        with _LOCK:
+            state = _load_state()
+            state["connection"].update(
+                {
+                    "status": "cloud",
+                    "connected": False,
+                    "last_sync_message": (
+                        "Cloud mode cannot open Stake Chrome. "
+                        "Portfolio sync needs a laptop with STAKE_USE_BROWSER=true "
+                        "(Settings Connect / ./scripts/start_stake_relay.sh), "
+                        "or import bets from a local session."
+                    ),
+                }
+            )
+            return _merged_status(_save_state(state))
+
     # Warmup can take minutes while the user clears Cloudflare — don't hold the
     # portfolio lock for the whole wait or other API calls appear hung.
     ok = warmup_visible(timeout=timeout)

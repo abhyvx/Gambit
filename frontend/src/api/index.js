@@ -29,10 +29,26 @@ export async function fetchSports(category = null, featured = false) {
   return r.json()
 }
 
-export async function fetchMarketTop(limit = 8) {
+const _marketTopCache = new Map()
+const MARKET_TOP_TTL_MS = 90_000
+
+export function peekMarketTop(limit = 8) {
+  const hit = _marketTopCache.get(String(limit))
+  if (hit && Date.now() - hit.ts <= MARKET_TOP_TTL_MS) return hit.data
+  return null
+}
+
+export async function fetchMarketTop(limit = 8, { force = false } = {}) {
+  const key = String(limit)
+  if (!force) {
+    const hit = _marketTopCache.get(key)
+    if (hit && Date.now() - hit.ts < MARKET_TOP_TTL_MS) return hit.data
+  }
   const r = await fetch(`${API}/market/top?limit=${limit}`, { signal: AbortSignal.timeout(45000) })
   if (!r.ok) throw new Error(`Market top failed (${r.status})`)
-  return r.json()
+  const data = await r.json()
+  _marketTopCache.set(key, { ts: Date.now(), data })
+  return data
 }
 
 const _eventsCache = new Map()
@@ -295,16 +311,45 @@ export async function fetchPaperBook() {
   return r.json()
 }
 
+const _insightsCache = { ts: 0, data: null }
+const INSIGHTS_CLIENT_TTL_MS = 120_000
+const INSIGHTS_DISK_KEY = 'gambit_insights_v1'
+
+export function peekModelInsights() {
+  if (_insightsCache.data && Date.now() - _insightsCache.ts <= INSIGHTS_CLIENT_TTL_MS) {
+    return _insightsCache.data
+  }
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(INSIGHTS_DISK_KEY) || 'null')
+    if (raw?.data && Date.now() - raw.ts <= INSIGHTS_CLIENT_TTL_MS) {
+      _insightsCache.ts = raw.ts
+      _insightsCache.data = raw.data
+      return raw.data
+    }
+  } catch { /* private mode */ }
+  return null
+}
+
 export async function fetchCraftProgress() {
   const r = await fetch(`${API}/model/craft`, { signal: AbortSignal.timeout(15000) })
   if (!r.ok) throw new Error(`Craft progress failed (${r.status})`)
   return r.json()
 }
 
-export async function fetchModelInsights() {
+export async function fetchModelInsights({ force = false } = {}) {
+  if (!force) {
+    const hit = peekModelInsights()
+    if (hit) return hit
+  }
   const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
-  return r.json()
+  const data = await r.json()
+  _insightsCache.ts = Date.now()
+  _insightsCache.data = data
+  try {
+    sessionStorage.setItem(INSIGHTS_DISK_KEY, JSON.stringify({ ts: _insightsCache.ts, data }))
+  } catch { /* quota */ }
+  return data
 }
 
 export async function runPaperCycle({

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage, fetchMarketTop, peekEventsCache,
+  fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage, fetchMarketTop, peekEventsCache, peekMarketTop,
 } from '../api'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import MatchSlipPanel from '../components/MatchSlipPanel'
@@ -275,9 +275,20 @@ export default function SportPage() {
       : group.leagues[0].key
     setSport(next)
     setVisible(PAGE)
-    setExpanded(null)
-    setAnalysis(null)
-    setRows([])
+    // Keep focus expand when deep-linking into this sport
+    if (!params.get('focus')) {
+      setExpanded(null)
+      setAnalysis(null)
+    }
+    const fetchKey = fetchSportKey(next)
+    const cached = peekEventsCache(fetchKey)
+    if (cached?.events) {
+      applyLeagueRows(cached.events, next, cached.source, cached.message)
+      setLoading(false)
+    } else {
+      setRows([])
+      setLoading(true)
+    }
   }, [group.id])
 
   useEffect(() => {
@@ -395,7 +406,15 @@ export default function SportPage() {
       return undefined
     }
     let cancelled = false
-    setPicksLoading(true)
+    const warm = peekMarketTop(12)
+    if (warm?.bets?.length) {
+      const prefix = group.id === 'basketball' ? 'basket' : group.id === 'cricket' ? 'cricket' : 'soccer'
+      const sportBets = (warm.bets || []).filter((b) => String(b.sport_key || '').startsWith(prefix))
+      setTopPicks(sportBets.length ? sportBets.slice(0, 6) : marketPicksFromRows(liveUpcoming, 4))
+      setPicksLoading(false)
+    } else {
+      setPicksLoading(true)
+    }
     const prefix = group.id === 'basketball' ? 'basket' : group.id === 'cricket' ? 'cricket' : 'soccer'
     fetchMarketTop(12)
       .then((r) => {
@@ -426,11 +445,18 @@ export default function SportPage() {
       return false
     })
     if (!ev) return
+    // Ensure the focused row is in the painted page (not below Load more)
+    const boardIdx = board.findIndex((r) => String(r.id) === String(ev.id))
+    if (boardIdx >= 0 && boardIdx >= visible) {
+      setVisible(boardIdx + 1)
+    }
     setExpanded(ev.id)
     // Scroll the focused fixture into view once boards paint
-    requestAnimationFrame(() => {
+    const scroll = () => {
       document.getElementById(`fixture-${ev.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
+    }
+    requestAnimationFrame(scroll)
+    setTimeout(scroll, 120)
     if (ev._wc) {
       setAnalysis(ev)
       setAnalyzing(false)
@@ -452,7 +478,7 @@ export default function SportPage() {
         setAnalyzing(false)
       })
       .catch(() => setAnalyzing(false))
-  }, [focusId, loading, rows, apiSport, perMatchBudget, targetCashout, bettorStyle, params])
+  }, [focusId, loading, rows, board, visible, apiSport, perMatchBudget, targetCashout, bettorStyle, params])
 
   // If focus points at another league, switch tab so the fixture exists in `rows`
   useEffect(() => {
@@ -460,7 +486,8 @@ export default function SportPage() {
     if (!league || league === sport) return
     if (!group.leagues.some((l) => l.key === league)) return
     setSport(league)
-    setVisible(PAGE)
+    // Don't reset visible when focusing a deep-linked match
+    if (!params.get('focus')) setVisible(PAGE)
   }, [group.id, params, sport])
 
   const parkAnalysis = (ev, a) => {
@@ -552,9 +579,10 @@ export default function SportPage() {
 
   const openMatch = (ev) => {
     // Top bet / featured → deep-link so league + focus survive remounts
-    if (ev?.event_id && !rows.some((r) => String(r.id) === String(ev.event_id || ev.id))) {
-      const q = new URLSearchParams({ focus: String(ev.event_id || ev.id) })
-      const league = leagueTabForEvent(ev) || ev.sport_key
+    const eid = String(ev.event_id || ev.id || '')
+    if (eid && !rows.some((r) => String(r.id) === eid)) {
+      const q = new URLSearchParams({ focus: eid })
+      const league = leagueTabForEvent(ev) || ev.league_key || ev.sport_key
       if (league) q.set('league', String(league))
       if (ev.home_team) q.set('home', String(ev.home_team))
       if (ev.away_team) q.set('away', String(ev.away_team))
@@ -625,11 +653,11 @@ export default function SportPage() {
 
       <section className="featured-rail">
         <div className="section-label">Top matches</div>
-        {loading && <BoardBuffer rows={4} label="Loading fixtures…" />}
+        {loading && !featured.length && <BoardBuffer rows={4} label="Loading fixtures…" />}
         {!loading && !featured.length && (
           <p className="muted">{emptyBoardMessage(rows, activeLeague?.name) || 'No live or upcoming fixtures in this league.'}</p>
         )}
-        {!loading && (
+        {!!featured.length && (
           <div className="featured-track featured-track--four">
             {featured.slice(0, 4).map((ev) => (
               <FeaturedCard
@@ -662,7 +690,7 @@ export default function SportPage() {
       <section className="top-picks-block">
         <div className="section-label">Top bets</div>
         <p className="section-sub">Popular singles and combos. Amount optional.</p>
-        {picksLoading && <BoardBuffer rows={3} label="Loading market…" />}
+        {picksLoading && !topPicks.length && <BoardBuffer rows={3} label="Loading market…" />}
         {!picksLoading && !topPicks.length && (
           <p className="muted">No priced favorites on this board yet.</p>
         )}

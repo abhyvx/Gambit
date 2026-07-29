@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchModelInsights, fetchModelReport, fetchCraftProgress, runPaperCycle } from '../api'
+import { fetchModelInsights, fetchModelReport, fetchCraftProgress, runPaperCycle, peekModelInsights } from '../api'
 import { IconRefresh } from '../components/Icons'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
@@ -557,9 +557,10 @@ function InsightContainer({ c, curves, sportKeys }) {
 }
 
 export default function ModelPage() {
-  const [ins, setIns] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [deskLoading, setDeskLoading] = useState(true)
+  const cached = peekModelInsights()
+  const [ins, setIns] = useState(cached)
+  const [loading, setLoading] = useState(!cached)
+  const [deskLoading, setDeskLoading] = useState(!cached)
   const [retraining, setRetraining] = useState(false)
   const [paperBusy, setPaperBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -604,14 +605,17 @@ export default function ModelPage() {
 
   const load = (retrain = false) => {
     if (retrain) setRetraining(true)
-    else {
+    else if (!ins) {
       setLoading(true)
+      setDeskLoading(true)
+    } else {
+      // Soft refresh — keep painted desk, only banner spinner
       setDeskLoading(true)
     }
     setErr(null)
 
     // Fast path: craft snapshot (~ms) so the page isn't a blank hang
-    if (!retrain) {
+    if (!retrain && !ins) {
       fetchCraftProgress()
         .then((craft) => {
           setIns((prev) => prev?.containers?.length ? prev : craftFromSnap(craft))
@@ -621,8 +625,8 @@ export default function ModelPage() {
     }
 
     const job = retrain
-      ? fetchModelReport({ retrain: true }).then(() => fetchModelInsights())
-      : fetchModelInsights().catch(async (e) => {
+      ? fetchModelReport({ retrain: true }).then(() => fetchModelInsights({ force: true }))
+      : fetchModelInsights({ force: retrain }).catch(async (e) => {
           const [rep, craft] = await Promise.all([
             fetchModelReport({ retrain: false }).catch(() => null),
             fetchCraftProgress().catch(() => null),

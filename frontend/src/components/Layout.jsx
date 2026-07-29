@@ -84,7 +84,8 @@ export default function Layout() {
           style={{ '--slip-width': `${slipWidth}px` }}
         >
           <main className="stake-main">
-            <div className="route-view" key={typeof location !== 'undefined' ? location.pathname + location.search : 'main'}>
+            {/* Pathname only — query (?league=&focus=) must not remount and wipe boards */}
+            <div className="route-view" key={typeof location !== 'undefined' ? location.pathname : 'main'}>
               <Outlet />
             </div>
           </main>

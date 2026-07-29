@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchEvents, fetchErrorMessage, fetchMarketTop, peekEventsCache } from '../api'
+import { fetchEvents, fetchErrorMessage, fetchMarketTop, peekEventsCache, peekMarketTop } from '../api'
 import { SPORT_GROUPS, leagueTabForEvent } from '../data/sportBoard'
 import {
   FeaturedCard, SportBanner, pickFeatured,
@@ -57,9 +57,9 @@ export default function HomePage() {
   const navigate = useNavigate()
   const { addLeg, setSlipOpen } = useBankroll()
   const [pool, setPool] = useState(() => poolFromCaches())
-  const [marketBets, setMarketBets] = useState([])
+  const [marketBets, setMarketBets] = useState(() => peekMarketTop(8)?.bets || [])
   const [featuredLoading, setFeaturedLoading] = useState(() => poolFromCaches().length === 0)
-  const [marketLoading, setMarketLoading] = useState(true)
+  const [marketLoading, setMarketLoading] = useState(() => !(peekMarketTop(8)?.bets?.length))
   const [err, setErr] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
   useEntryReady(!featuredLoading)
@@ -73,7 +73,13 @@ export default function HomePage() {
     } else {
       setFeaturedLoading(true)
     }
-    setMarketLoading(true)
+    const warmMarket = peekMarketTop(8)
+    if (warmMarket?.bets?.length) {
+      setMarketBets(warmMarket.bets)
+      setMarketLoading(false)
+    } else {
+      setMarketLoading(true)
+    }
     setErr(null)
 
     fetchEvents('soccer_epl')
@@ -147,10 +153,10 @@ export default function HomePage() {
       if (ev.sport_key?.startsWith('cricket')) return g.id === 'cricket'
       return g.id === 'soccer'
     }) || SPORT_GROUPS[0]
-    const league = leagueTabForEvent(ev) || ev.sport_key
-    const q = new URLSearchParams({
-      focus: String(ev.event_id || ev.id || ''),
-    })
+    const league = leagueTabForEvent(ev) || ev.league_key || ev.sport_key
+    const focus = String(ev.event_id || ev.id || '')
+    const q = new URLSearchParams()
+    if (focus) q.set('focus', focus)
     if (league) q.set('league', String(league))
     if (ev.home_team) q.set('home', String(ev.home_team))
     if (ev.away_team) q.set('away', String(ev.away_team))

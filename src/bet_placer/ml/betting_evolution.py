@@ -104,6 +104,13 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
             step = len(games) / 40_000
             games = [games[int(i * step)] for i in range(40_000)]
         for g in games:
+            raw_date = str(g.get("date") or "")
+            try:
+                y = int(raw_date[:4]) if len(raw_date) >= 4 else 0
+            except ValueError:
+                y = 0
+            if y < 1990 or y > 2030:
+                continue
             probs = _predict(ratings, canon_team(g["home"]), canon_team(g["away"]), "soccer") if ratings else {
                 "home": 0.4, "draw": 0.28, "away": 0.32,
             }
@@ -112,7 +119,7 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
                 continue
             side = "home" if float(probs.get("home") or 0) >= float(probs.get("away") or 0) else "away"
             mp = float(probs.get(side) or 0)
-            if mp < 0.58:
+            if mp < 0.64:
                 continue
             odds = 1.91  # even-money paper — evolution = skill, same as BB/CK
             imp = _implied(odds)
@@ -232,7 +239,14 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
            GROUP BY sport, ym, market"""
     )
     for sport, ym, market, n, hits, pnl, avg_edge in cur.fetchall():
-        if not ym:
+        if not ym or len(ym) < 7:
+            continue
+        try:
+            year = int(ym[:4])
+        except ValueError:
+            continue
+        # Drop garbage dates (club CSV typos → 209x months that wreck the chart)
+        if year < 1990 or year > 2030:
             continue
         con.execute(
             """INSERT OR REPLACE INTO monthly
@@ -273,6 +287,12 @@ def snapshot(con: sqlite3.Connection | None = None) -> dict[str, Any]:
            ORDER BY sport, ym ASC"""
     ):
         sport, ym, n, hits, pnl, avg_edge = row
+        try:
+            year = int(str(ym)[:4])
+        except ValueError:
+            continue
+        if year < 1990 or year > 2030:
+            continue
         per_sport_months[sport].append({
             "sport": sport,
             "ym": ym,
@@ -324,7 +344,7 @@ def snapshot(con: sqlite3.Connection | None = None) -> dict[str, Any]:
         "n_years": len({r["year"] for r in yearly_out}),
         "total_paired": total_n,
         "updated_at": _now(),
-        "note": "Soccer = B365/Avg closes. Basketball/cricket = model-fair paper pairs on history (not live book handle).",
+        "note": "All three sports = model-fair even-money paper pairs on history (skill signal, not live book handle).",
     }
 
 

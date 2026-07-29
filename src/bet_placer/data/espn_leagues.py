@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from bet_placer.config import data_path
 
 # Odds API / product sport_key → ESPN path (or special handlers below)
 ESPN_LEAGUES: dict[str, tuple[str, str]] = {
@@ -72,7 +73,7 @@ def _is_womens_comp(title: str) -> bool:
 _CACHE: dict[str, dict[str, Any]] = {}
 _TTL = 180
 _DISK_TTL = 3600  # serve disk boards up to 1h — Stake-style instant paint after restart
-_DISK_PATH = Path.home() / ".bet_placer" / "espn_board_cache.json"
+_DISK_PATH = data_path("espn_board_cache.json")
 _SESSION: requests.Session | None = None
 
 

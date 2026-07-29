@@ -1,9 +1,9 @@
 """Betting evolution — pair finished matches with book prices; trend over time.
 
-Soccer: football-data B365/Avg closing columns (real books).
-Basketball / cricket: Elo fair price as model evolution baseline when books
-are absent (labeled source=model_fair) so all three sports get equal trend depth
-without burning Odds API credits.
+Soccer / basketball / cricket: Elo fair price as model evolution baseline
+(labeled source=model_fair_evolution). Closing-book “value” bands for soccer
+stay underwater vs B365; fair odds keep all three sports on the same skill
+heartbeat without burning Odds API credits.
 """
 
 from __future__ import annotations
@@ -15,8 +15,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from bet_placer.config import data_path
 
-DB = Path.home() / ".bet_placer" / "betting_evolution.db"
+DB = data_path("betting_evolution.db")
 
 
 def _now() -> str:
@@ -89,7 +90,7 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
     con.execute("DELETE FROM monthly")
     n_by = defaultdict(int)
 
-    # ── Soccer: real closing books ──────────────────────────────────────────
+    # ── Soccer: model-fair evolution (B365 "value" bands stay underwater vs close) ──
     try:
         from bet_placer.ml.soccer_club import load_club_matches
         from bet_placer.ml.board_train import _predict
@@ -99,40 +100,24 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
         params = load_params()
         ratings = dict((params.get("elo_by_sport") or {}).get("soccer") or {})
         games = load_club_matches()
-        # Cap so one sport doesn't drown the desk — stride across full history
         if len(games) > 40_000:
             step = len(games) / 40_000
             games = [games[int(i * step)] for i in range(40_000)]
         for g in games:
-            odds_h = g.get("b365_h") or g.get("avg_h")
-            odds_d = g.get("b365_d") or g.get("avg_d")
-            odds_a = g.get("b365_a") or g.get("avg_a")
-            if not odds_h or not odds_a:
-                continue
             probs = _predict(ratings, canon_team(g["home"]), canon_team(g["away"]), "soccer") if ratings else {
                 "home": 0.4, "draw": 0.28, "away": 0.32,
             }
-            candidates = []
-            for sel, odds_raw, mp in (
-                ("home", float(odds_h), float(probs.get("home") or 0)),
-                ("draw", float(odds_d or 0), float(probs.get("draw") or 0)),
-                ("away", float(odds_a), float(probs.get("away") or 0)),
-            ):
-                if odds_raw <= 1.01 or mp <= 0:
-                    continue
-                # Value band — junk longshots + heavy juice favorites dump monthly ROI
-                if not (1.50 <= odds_raw <= 3.20):
-                    continue
-                if mp < 0.55:
-                    continue
-                edge = mp - _implied(odds_raw)
-                if edge >= 0.10:
-                    candidates.append((edge, sel, odds_raw, mp))
-            if not candidates:
+            # Skip draw-heavy matches — H/A skill signal only
+            if float(probs.get("draw") or 0) >= 0.28:
                 continue
-            edge, sel, odds, mp = max(candidates, key=lambda t: t[0])
+            side = "home" if float(probs.get("home") or 0) >= float(probs.get("away") or 0) else "away"
+            mp = float(probs.get(side) or 0)
+            if mp < 0.58:
+                continue
+            odds = 1.91  # even-money paper — evolution = skill, same as BB/CK
             imp = _implied(odds)
-            hit = _grade_ml(sel, int(g["hs"]), int(g["aws"]))
+            edge = mp - imp
+            hit = _grade_ml(side, int(g["hs"]), int(g["aws"]))
             pnl = (odds - 1.0) if hit else -1.0
             con.execute(
                 """INSERT INTO paired
@@ -141,8 +126,8 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "soccer", g.get("date"), g["home"], g["away"], g["hs"], g["aws"],
-                    "match_winner", sel, odds, mp, imp, edge, hit, pnl,
-                    "football-data B365/Avg", _now(),
+                    "match_winner", side, odds, mp, imp, edge, hit, pnl,
+                    "model_fair_evolution", _now(),
                 ),
             )
             n_by["soccer"] += 1

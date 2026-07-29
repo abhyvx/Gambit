@@ -27,9 +27,10 @@ import numpy as np
 from scipy.stats import poisson
 
 from bet_placer.data.team_names import canon_team
+from bet_placer.config import data_path
 
 DATA_URL = "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
-CACHE = Path.home() / ".bet_placer" / "intl_results.csv"
+CACHE = data_path("intl_results.csv")
 CACHE_TTL_DAYS = 7
 
 # Elo replay defaults (the search tunes K0 + HOME_ADV around these).

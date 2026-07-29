@@ -5,8 +5,19 @@ DEST="${BET_PLACER_HOME:-$HOME/.bet_placer}"
 REPO="${GAMBIT_REPO:-abhyvx/Gambit}"
 TAG="${GAMBIT_MODEL_TAG:-model-latest}"
 mkdir -p "$DEST"
+# Compat: any leftover Path.home()/.bet_placer callers still hit DEST
+if [ -n "${HOME:-}" ] && [ "$DEST" != "$HOME/.bet_placer" ]; then
+  ln -sfn "$DEST" "$HOME/.bet_placer" 2>/dev/null || true
+fi
 
-if [ -f "$DEST/craft.db" ] && [ -f "$DEST/model_params.json" ] && [ -f "$DEST/craft_nn.joblib" ]; then
+NEED_REFRESH=0
+for name in craft.db model_params.json craft_nn.joblib; do
+  [ -f "$DEST/$name" ] || NEED_REFRESH=1
+done
+# Always refresh betting snapshot when missing (monthly charts)
+[ -f "$DEST/betting_evolution.db" ] || NEED_REFRESH=1
+
+if [ "$NEED_REFRESH" = "0" ]; then
   echo "model: using cached state in $DEST"
   exit 0
 fi
@@ -19,7 +30,7 @@ if [ -z "$JSON" ] || echo "$JSON" | grep -q '"message"'; then
   exit 0
 fi
 
-for name in craft.db model_params.json craft_nn.joblib; do
+for name in craft.db model_params.json craft_nn.joblib betting_evolution.db; do
   URL=$(echo "$JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

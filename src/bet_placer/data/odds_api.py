@@ -18,7 +18,7 @@ from typing import Any
 
 import requests
 
-from bet_placer.config import get_settings
+from bet_placer.config import data_path, get_settings
 from bet_placer.data.catalog import SPORT_CATALOG
 from bet_placer.markets.odds import decimal_to_implied
 from bet_placer.models.enums import MarketType
@@ -27,7 +27,7 @@ from bet_placer.models.types import LeagueProfile, MarketOdds, Match, TacticalPr
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.the-odds-api.com/v4"
-CACHE_DIR = Path.home() / ".bet_placer" / "odds_api_cache"
+CACHE_DIR = data_path("odds_api_cache")
 # ponytail: 6h disk TTL — upgrade to shorter only when credits are plentiful
 DEFAULT_TTL_S = 6 * 3600
 

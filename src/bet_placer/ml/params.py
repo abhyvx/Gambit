@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from bet_placer.config import data_path
 
-PARAMS_PATH = Path.home() / ".bet_placer" / "model_params.json"
+PARAMS_PATH = data_path("model_params.json")
 
 DEFAULT_PARAMS: dict = {
     "version": 0,

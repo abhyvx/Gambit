@@ -10,8 +10,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from bet_placer.config import data_path
 
-STORE = Path.home() / ".bet_placer" / "factor_store.json"
+STORE = data_path("factor_store.json")
 
 # Market families we actually price per sport
 _MARKETS = {

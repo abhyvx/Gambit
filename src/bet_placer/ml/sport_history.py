@@ -23,8 +23,9 @@ from urllib.request import Request, urlopen
 
 from bet_placer.data.team_names import canon_team
 from bet_placer.ml.board_train import BASE, HOME_ADV, K, _pick, _predict, _update
+from bet_placer.config import data_path
 
-CACHE = Path.home() / ".bet_placer" / "sport_history"
+CACHE = data_path("sport_history")
 TTL_DAYS = 7
 
 NBA_ELO_URL = (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -19,6 +20,16 @@ def _json_key(k):
     return str(k)
 
 
+def _safe_float(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
 def to_json(obj):
     if obj is None:
         return None
@@ -26,13 +37,16 @@ def to_json(obj):
     t = type(obj)
     tname = t.__name__
     if t.__module__.startswith("numpy") and hasattr(obj, "item"):
-        return obj.item()
+        item = obj.item()
+        return _safe_float(item) if isinstance(item, float) else to_json(item)
     if tname in ("bool_", "bool8", "bool"):
         return bool(obj)
     if tname.startswith(("int", "uint")) and hasattr(obj, "item"):
         return int(obj)
     if tname.startswith(("float", "Float")) and hasattr(obj, "item"):
-        return float(obj)
+        return _safe_float(obj.item())
+    if isinstance(obj, float):
+        return _safe_float(obj)
     if isinstance(obj, Enum):
         return obj.value
     if isinstance(obj, datetime):

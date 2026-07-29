@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from bet_placer.config import data_path
 from bet_placer.data.stake_scraper import StakeScraper
 from bet_placer.models.stake_types import StakeFixture, StakeMarket
 
@@ -865,7 +866,7 @@ _overlay_disk_overlays: dict[str, dict] = {}
 
 
 def _stake_disk_path() -> Path:
-    return Path.home() / ".bet_placer" / "stake_overlay_cache.json"
+    return data_path("stake_overlay_cache.json")
 
 
 def _serialize_fixture(fx: StakeFixture) -> dict:
@@ -1202,7 +1203,13 @@ def get_stake_overlay_map(
     """
     global _overlay_cache, _overlay_cache_ts, _overlay_fail_ts, _overlay_fetching, _overlay_fetch_started
 
+    from bet_placer.config import stake_network_enabled
+
     warm_stake_cache_from_disk()
+    # Cloud / STAKE_USE_BROWSER=false: never attempt scrape — relay/disk only
+    if launch_browser and not stake_network_enabled():
+        with _overlay_cache_lock:
+            return dict(_overlay_cache)
     now = time.monotonic()
     with _overlay_cache_lock:
         _reset_stale_overlay_fetch()

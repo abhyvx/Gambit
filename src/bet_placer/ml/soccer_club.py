@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from bet_placer.config import data_path
 
-CACHE_DIR = Path.home() / ".bet_placer" / "club_soccer"
+CACHE_DIR = data_path("club_soccer")
 CACHE_TTL = 7 * 24 * 3600
 
 # Major + second tiers × deep seasons (football-data.co.uk codes)

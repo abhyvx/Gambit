@@ -42,6 +42,7 @@ jobs:
           FLAGS="--epochs ${{ inputs.epochs || 15 }}"
           if [ "${{ inputs.full_model }}" = "true" ]; then FLAGS="$FLAGS --full-model"; fi
           PYTHONPATH=src python3 scripts/run_craft_worker.py $FLAGS
+          PYTHONPATH=src python3 -c "from bet_placer.ml.betting_evolution import rebuild_from_corpora; print(rebuild_from_corpora(verbose=True))"
 
       - name: Upload model state
         if: always()
@@ -52,13 +53,14 @@ jobs:
             ~/.bet_placer/craft.db
             ~/.bet_placer/model_params.json
             ~/.bet_placer/craft_nn.joblib
+            ~/.bet_placer/betting_evolution.db
           retention-days: 14
 
       - name: Stage model files
         if: always()
         run: |
           mkdir -p model-out
-          for f in craft.db model_params.json craft_nn.joblib; do
+          for f in craft.db model_params.json craft_nn.joblib betting_evolution.db; do
             [ -f "$HOME/.bet_placer/$f" ] && cp "$HOME/.bet_placer/$f" "model-out/$f"
           done
           ls -la model-out || true

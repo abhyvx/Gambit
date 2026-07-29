@@ -13,13 +13,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from bet_placer.config import data_path
 from bet_placer.ml.gem_craft import (
     MAX_GEMS_PER_MATCH,
     spot_match_gems,
     update_craft_weights_from_tickets,
 )
 
-BOOK_PATH = Path.home() / ".bet_placer" / "paper_book.json"
+BOOK_PATH = data_path("paper_book.json")
 DEFAULT_BANKROLL = 10_000.0
 DEFAULT_MATCH_BUDGET = 200.0
 BOARD_KEYS = ("soccer_all", "basketball_all", "cricket_all")

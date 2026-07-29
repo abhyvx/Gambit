@@ -337,6 +337,38 @@ def events(sport: str = Query(default="soccer_epl"), match: str | None = None):
     def _build() -> dict:
         result = _provider.fetch_events(sport, match_filter=match)
         info = get_sport(sport)
+        # *_all boards mix in finished games — drop them so Render/FE stay under memory
+        open_only = sport.endswith("_all")
+        events = []
+        for e in result.events:
+            if open_only and e.status not in ("live", "upcoming"):
+                continue
+            events.append({
+                "id": e.id,
+                "home_team": e.home_team,
+                "away_team": e.away_team,
+                "league": e.league,
+                "kickoff": e.kickoff,
+                "source": e.source,
+                "bookmaker_count": e.bookmaker_count,
+                "label": f"{e.home_team} vs {e.away_team}",
+                "home_logo": e.home_logo,
+                "away_logo": e.away_logo,
+                "status": e.status,
+                "home_score": e.home_score,
+                "away_score": e.away_score,
+                "home_score_display": e.home_score_display,
+                "away_score_display": e.away_score_display,
+                "score": e.score,
+                "status_detail": e.status_detail,
+                "odds": {
+                    "home": e.home_odds,
+                    "draw": e.draw_odds,
+                    "away": e.away_odds,
+                },
+                "odds_source": (e.extra or {}).get("odds_source") or e.source,
+                "sport_key": e.sport_key,
+            })
         return {
             "sport": sport,
             "sport_name": info.name if info else sport,
@@ -344,35 +376,7 @@ def events(sport: str = Query(default="soccer_epl"), match: str | None = None):
             "source": result.source,
             "live": result.live,
             "message": result.message,
-            "events": [
-                {
-                    "id": e.id,
-                    "home_team": e.home_team,
-                    "away_team": e.away_team,
-                    "league": e.league,
-                    "kickoff": e.kickoff,
-                    "source": e.source,
-                    "bookmaker_count": e.bookmaker_count,
-                    "label": f"{e.home_team} vs {e.away_team}",
-                    "home_logo": e.home_logo,
-                    "away_logo": e.away_logo,
-                    "status": e.status,
-                    "home_score": e.home_score,
-                    "away_score": e.away_score,
-                    "home_score_display": e.home_score_display,
-                    "away_score_display": e.away_score_display,
-                    "score": e.score,
-                    "status_detail": e.status_detail,
-                    "odds": {
-                        "home": e.home_odds,
-                        "draw": e.draw_odds,
-                        "away": e.away_odds,
-                    },
-                    "odds_source": (e.extra or {}).get("odds_source") or e.source,
-                    "sport_key": e.sport_key,
-                }
-                for e in result.events
-            ],
+            "events": events,
         }
 
     # Stale-while-revalidate: serve last good board while refresh runs
@@ -615,13 +619,23 @@ def worldcup_match_slip(
 ):
     """Rebuild match slip with live Stake lines and SGMs for one fixture."""
     from bet_placer.api.serializers import to_json
+    from bet_placer.config import stake_network_enabled
     from bet_placer.engine.worldcup_pipeline import rebuild_match_slip_for_teams
 
     home, away = home.strip(), away.strip()
-    slip = rebuild_match_slip_for_teams(
-        home, away, budget_inr, target_cashout_inr, launch_stake=refresh_stake, sport=sport,
-        goal=goal, risk=risk, structure=structure,
-    )
+    # Cloud: never try Playwright — ESPN/model prices still build recs
+    launch = bool(refresh_stake) and stake_network_enabled()
+    try:
+        slip = rebuild_match_slip_for_teams(
+            home, away, budget_inr, target_cashout_inr, launch_stake=launch, sport=sport,
+            goal=goal, risk=risk, structure=structure,
+        )
+    except Exception as exc:
+        logger.warning("match-slip failed for %s vs %s: %s", home, away, exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Match slip temporarily unavailable ({type(exc).__name__}). Retry in a moment.",
+        ) from exc
     if not slip:
         raise HTTPException(status_code=404, detail=f"No active fixture for {home} vs {away}")
     return to_json(slip)
@@ -785,20 +799,32 @@ def model_craft():
     return progress_snapshot()
 
 
+_INSIGHTS_CACHE: tuple[float, dict] | None = None
+_INSIGHTS_TTL = 120.0
+
+
 @app.get("/api/model/insights")
 def model_insights():
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
+    import time as _time
     from bet_placer.ml.model_insights import build_model_insights
 
+    global _INSIGHTS_CACHE
+    now = _time.time()
+    if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
+        return _INSIGHTS_CACHE[1]
+
     try:
-        return build_model_insights()
+        payload = build_model_insights()
+        _INSIGHTS_CACHE = (now, payload)
+        return payload
     except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("model insights failed: %s", exc)
+        logger.warning("model insights failed: %s", exc)
         try:
-            from bet_placer.ml.model_insights import build_model_insights
             from bet_placer.ml.params import load_params
-            return build_model_insights(params=load_params(force=False))
+            payload = build_model_insights(params=load_params(force=False))
+            _INSIGHTS_CACHE = (now, payload)
+            return payload
         except Exception:
             from bet_placer.ml.craft_store import progress_snapshot
             craft = progress_snapshot()

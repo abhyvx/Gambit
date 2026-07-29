@@ -1,4 +1,4 @@
-/** Loading buffer — pulse blocks while boards scrape. Never retriggers intro. */
+/** Loading buffer - pulse blocks while boards scrape. Never retriggers intro. */
 export default function BoardBuffer({ rows = 4, label = 'Loading boards…' }) {
   return (
     <div className="board-buffer" role="status" aria-live="polite" aria-busy="true">

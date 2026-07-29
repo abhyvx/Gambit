@@ -8,7 +8,7 @@ export default function GuidePage() {
       <header className="page-header">
         <h1>How it works</h1>
         <p className="subtitle">
-          Pipeline, data bounds, and pricing math — no marketing copy.
+          Pipeline, data bounds, and pricing math - no marketing copy.
         </p>
       </header>
 
@@ -30,7 +30,7 @@ export default function GuidePage() {
               <strong>Strength models</strong>
               {' '}Walk-forward Elo by sport. Soccer: club CSVs (football-data ~1993→) + internationals +
               StatsBomb open lineups for player Elo. Basketball: FiveThirtyEight <code>nbaallelo</code>
-              (1946–2015 franchises) + 2010–2024 box scores. Cricket: Cricsheet Tests/ODI/T20I + leagues.
+              (1946-2015 franchises) + 2010-2024 box scores. Cricket: Cricsheet Tests/ODI/T20I + leagues.
             </div>
           </li>
           <li>
@@ -46,7 +46,7 @@ export default function GuidePage() {
             <div>
               <strong>De-vig / edge</strong>
               {' '}Implied = 1/odds after removing book margin. Edge = model_p − fair_p. Tickets show
-              p%, market, odds, stake math — not narrative prose.
+              p%, market, odds, stake math - not narrative prose.
             </div>
           </li>
           <li>
@@ -81,17 +81,17 @@ export default function GuidePage() {
           <dt>Cricket sides</dt>
           <dd>100+ international/franchise sides across formats in Cricsheet zips (multi-decade).</dd>
           <dt>Live boards</dt>
-          <dd>Separate from history: finished ESPN fixtures used for board Elo / craft — volume depends on what’s cached.</dd>
+          <dd>Separate from history: finished ESPN fixtures used for board Elo / craft - volume depends on what’s cached.</dd>
         </dl>
       </section>
 
       <section className="guide-section">
         <h2>Reading a ticket</h2>
         <ul>
-          <li><strong>p</strong> — calibrated model probability.</li>
-          <li><strong>odds</strong> — decimal from book or labeled estimate.</li>
-          <li><strong>edge</strong> — model_p − de-vigged implied.</li>
-          <li><strong>solo net</strong> — P&amp;L if that ticket is the only winner on the card.</li>
+          <li><strong>p</strong> - calibrated model probability.</li>
+          <li><strong>odds</strong> - decimal from book or labeled estimate.</li>
+          <li><strong>edge</strong> - model_p − de-vigged implied.</li>
+          <li><strong>solo net</strong> - P&amp;L if that ticket is the only winner on the card.</li>
         </ul>
       </section>
 
@@ -99,7 +99,7 @@ export default function GuidePage() {
         <h2>Rules</h2>
         <ul>
           <li>18+. Paper unless you place yourself.</li>
-          <li>Model-fair / synthetic prices are labeled — do not treat them as CLV.</li>
+          <li>Model-fair / synthetic prices are labeled - do not treat them as CLV.</li>
           <li>Past paper ROI ≠ live bankroll.</li>
         </ul>
       </section>

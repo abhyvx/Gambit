@@ -170,7 +170,7 @@ export default function HomePage() {
 
       <section className="top-picks-block">
         <div className="section-label">Top bets</div>
-        <p className="section-sub">Open matches only. Ranked by handle / books — tap a ticket for payout.</p>
+        <p className="section-sub">Open matches only. Ranked by handle / books - tap a ticket for payout.</p>
         {marketLoading && !marketBets.length && <BoardBuffer rows={3} label="Loading market…" />}
         {!marketLoading && !marketBets.length && (
           <p className="muted">No open priced markets with volume right now.</p>

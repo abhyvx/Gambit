@@ -117,7 +117,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
       .then((d) => {
         if (cancelled) return
         setData(d)
-        // Stake shows everything expanded — no dropdowns. Open every market.
+        // Stake shows everything expanded - no dropdowns. Open every market.
         const open = {}
         ;(d.categories || []).forEach((c) => c.markets.forEach((m) => { open[m.market_label] = true }))
         setOpenMarkets(open)
@@ -278,7 +278,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
         className={`sk-out ${extra} ${toneCls} ${selected ? 'sel' : ''} ${blocked ? 'blocked' : ''} ${rec ? 'rec' : ''}`}
         onClick={() => toggle(eo)}
         disabled={blocked}
-        title={blocked ? "Conflicts with a bet already in your slip — can't combine these." : (v.blurb || o.label || '')}
+        title={blocked ? "Conflicts with a bet already in your slip - can't combine these." : (v.blurb || o.label || '')}
       >
         {!oddsOnly && (
           <span className="sk-out-main">
@@ -394,7 +394,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
 
           {/* Total odds bar (Stake-style) */}
           <div className="sk-totalbar">
-            <span className="sk-totalbar-label">Total Odds: <strong className="green">{picks.length ? combinedOdds.toFixed(2) : '—'}</strong></span>
+            <span className="sk-totalbar-label">Total Odds: <strong className="green">{picks.length ? combinedOdds.toFixed(2) : 'n/a'}</strong></span>
             <div className="sk-totalbar-actions">
               <button className="sk-clear" disabled={!picks.length} onClick={() => { setPicksMap({}); setSingleStakes({}) }}>Clear All</button>
               <span className="sk-addbet">{picks.length} selected</span>
@@ -403,7 +403,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
 
           {data.source !== 'stake' && (
             <div className="builder-warn" style={{ margin: '0 0 12px' }}>
-              ⚠️ Stake hasn't opened the full live board for this game yet — these are our estimated prices.
+              ⚠️ Stake hasn't opened the full live board for this game yet - these are our estimated prices.
             </div>
           )}
 
@@ -441,7 +441,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
             )}
           </div>
 
-          {/* Market tags + addable picks — no narrative prose */}
+          {/* Market tags + addable picks - no narrative prose */}
           {(read?.tags?.length > 0 || recommended.length > 0) && (
             <div className="analyst">
               {read?.tags?.length > 0 && (
@@ -463,7 +463,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
               )}
               {recommended.length > 0 ? (
                 <>
-                  <div className="analyst-picks-label">Picks — tap to add</div>
+                  <div className="analyst-picks-label">Picks - tap to add</div>
                   <div className="analyst-picks">
                     {recommended.map((p) => {
                       const sel = !!picksMap[keyOf(p)]
@@ -568,7 +568,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
                     </div>
                     <div className="slip-totals">
                       <div><span>Combined odds</span><strong>{combinedOdds.toFixed(2)}x</strong></div>
-                      <div><span>Chance all {picks.length} win</span><strong>{combinedChance != null ? `${Math.round(combinedChance * 100)}%` : '—'}</strong></div>
+                      <div><span>Chance all {picks.length} win</span><strong>{combinedChance != null ? `${Math.round(combinedChance * 100)}%` : 'n/a'}</strong></div>
                       <div><span>Back if it hits</span><strong className="green">{formatINR(Math.round(multiReturn))}</strong></div>
                     </div>
                     <p className="slip-multi-note">All {picks.length} legs must win or you lose the whole bet.</p>

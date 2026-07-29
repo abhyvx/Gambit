@@ -95,7 +95,7 @@ function nearestSeat(pt, seats) {
 }
 
 function KgMark({ runId, reduced }) {
-  // King's Gambit geometry on the G (equal file/rank): e4–e5 vertical, e4–f4 horizontal
+  // King's Gambit geometry on the G (equal file/rank): e4-e5 vertical, e4-f4 horizontal
   // Spur bar [28,32]→[50,32]; body top y=10. Δ = 22 both ways.
   const e4 = [28, 32] // left end of spur
   const f4 = [50, 32] // right end of spur

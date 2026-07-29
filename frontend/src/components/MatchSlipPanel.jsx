@@ -257,7 +257,7 @@ function StakeTicketCard({ ticket, index, total, pathMode, home, away }) {
       {ticket.payoutText && (
         <p className="stake-ticket-payout muted">{ticket.payoutText}</p>
       )}
-      {/* ponytail: no AI narrative under tickets — stats only */}
+      {/* ponytail: no AI narrative under tickets - stats only */}
       <div className="stake-ticket-stats">
         <div className="stake-ticket-stat"><span>Stake</span><strong>{formatINR(ticket.stake || 0)}</strong></div>
         <div className="stake-ticket-stat"><span>Odds</span><strong>{ticket.odds}x</strong></div>
@@ -801,7 +801,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     return (
       <div className="slip-panel">
         <p className="muted">
-          {failed ? (slipLoadError || 'Plans unavailable — use Build for Stake-style markets.') : 'Loading picks...'}
+          {failed ? (slipLoadError || 'Plans unavailable - use Build for Stake-style markets.') : 'Loading picks...'}
         </p>
         {failed && (
           <>
@@ -875,7 +875,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
             aria-label="Average match budget"
           />
         </label>
-        <p className="muted slip-budget-hint">One number — every plan and stake sizes to this.</p>
+        <p className="muted slip-budget-hint">One number - every plan and stake sizes to this.</p>
       </div>
 
       {showSkipBanner && tab !== 'target' && (
@@ -883,7 +883,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
           <strong>{isSkip ? 'Skip this match' : 'Thin edge'}</strong>
           <p>{activeSlip.skip_reason || (isSkip
             ? `Keep all ${formatINR(activeSlip.budget_inr)}. Nothing clears our bar.`
-            : 'Edges are soft — size down, or use Target / Build for another path.')}</p>
+            : 'Edges are soft - size down, or use Target / Build for another path.')}</p>
         </div>
       )}
 

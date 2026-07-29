@@ -1038,6 +1038,34 @@ def _save_disk_cache() -> None:
         logger.warning("Stake disk cache save failed: %s", exc)
 
 
+def ingest_stake_relay(payload: dict) -> dict:
+    """Merge fixtures pushed from local stake_relay.py (laptop browser -> cloud)."""
+    global _overlay_cache_ts, _overlay_fail_ts
+    warm_stake_cache_from_disk()
+    ingested = 0
+    with _overlay_cache_lock:
+        for key, fx_data in (payload.get("fixtures") or {}).items():
+            fx = _deserialize_fixture(fx_data)
+            if fx and fx.markets:
+                _overlay_cache[key] = fx
+                ingested += 1
+        if ingested:
+            _overlay_cache_ts = time.monotonic()
+            _overlay_fail_ts = 0.0
+            _save_disk_cache()
+    logger.info("Stake relay ingested %d fixtures", ingested)
+    return {"ingested": ingested, "status": stake_overlay_status()}
+
+
+def export_stake_overlay_payload() -> dict:
+    """Serialize current overlay for stake_relay push."""
+    warm_stake_cache_from_disk()
+    with _overlay_cache_lock:
+        return {
+            "fixtures": {_k: _serialize_fixture(fx) for _k, fx in _overlay_cache.items() if fx.markets},
+        }
+
+
 def persist_match_stake_data(
     home: str, away: str, fixture: StakeFixture | None, overlay: dict | None,
 ) -> None:

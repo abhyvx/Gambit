@@ -1,64 +1,64 @@
 # GAMBIT
 
-Sports betting analysis: calibrated probabilities → style-filtered picks → book prices.
+Sports betting analysis: calibrated probabilities, style-filtered picks, book prices.
 
-Not a market dump. Not a chatty “AI buddy.” Skip when there is no edge.
+Not a market dump. Not a chatty AI buddy. Skip when there is no edge.
 
-## Architecture (target)
+## Deploy (Render, free)
 
-1. **Factor graph** (`ml/factor_graph.py`) — teams, players, managers, refs, venues, weather, schedule, playstyle ideology. Hierarchical Bayesian borrow-strength for lower leagues.
-2. **Sport adapters** — soccer (Poisson/Elo today), basketball (possessions/spreads), cricket (next).
-3. **Pricing** — Odds API for discovery; Stake browser for placeable lines.
-4. **Decision policy** — user utility (goal/risk/structure) × calibrated probs × Kelly → few bets.
-5. **Learning objective** — closing-line value (CLV) + settled P&L, not raw accuracy theater.
+1. Open https://dashboard.render.com/ → **New +** → **Blueprint**
+2. Connect **abhyvx/Gambit** → **Apply**
+3. Add env vars in Render:
+   - `STAKE_RELAY_SECRET` = long random string (for Stake relay, below)
+   - `ODDS_API_KEY` = optional
+4. Wait until **Live** → open `https://YOUR-APP.onrender.com/app`
 
-Training corpora (planned): top flight, lower leagues, internationals, club world, friendlies.
+Full steps: [DEPLOY.md](DEPLOY.md)
 
-## Run
+## Stake on cloud (relay workaround)
+
+Stake blocks datacenter IPs (403). Cloud app uses **ESPN + model prices** by default.
+
+For **live Stake lines** on the deployed app:
+
+1. Set the same `STAKE_RELAY_SECRET` on Render and in local `.env`
+2. Local `.env`:
+   ```
+   STAKE_USE_BROWSER=true
+   STAKE_RELAY_SECRET=your-secret
+   GAMBIT_CLOUD_URL=https://YOUR-APP.onrender.com
+   ```
+3. On your laptop (keep running):
+   ```bash
+   PYTHONPATH=src python3 scripts/stake_relay.py
+   ```
+   Opens Chrome locally, pushes odds to cloud every 5 minutes.
+
+## Training (GitHub Actions, daily)
+
+- Workflow: `.github/workflows/craft-train.yml`
+- Manual run: https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml
+- Model artifact: https://github.com/abhyvx/Gambit/releases/tag/model-latest
+- After a green run: Render → **Manual Deploy** (pulls fresh model on boot)
+
+Local laptop: `CRAFT_DISABLE=1` (training stays in the cloud).
+
+## Run locally (dev)
 
 ```bash
 ./scripts/run.sh
-# App http://127.0.0.1:5173  ·  API http://127.0.0.1:8000
+# http://127.0.0.1:5173  ·  API http://127.0.0.1:8000
 ```
 
-Production (one port):
+Stake locally: `STAKE_USE_BROWSER=true` in `.env`, then use **Connect Stake** in the app.
 
-```bash
-./scripts/run_production.sh
-# http://0.0.0.0:8080
-```
-
-Set `ODDS_API_KEY` in `.env` for live leagues.
-
-## Deploy (craft trains in the cloud)
-
-Local laptop should **not** run craft epochs. Set in `.env`:
-
-```bash
-CRAFT_DISABLE=1
-```
-
-Training runs on **GitHub Actions** (free tier: ~2000 min/month):
-
-1. Push repo — workflow `.github/workflows/craft-train.yml` runs daily (or manually: Actions → Craft training).
-2. Download artifact `bet-placer-model-state` after a run, or run `./scripts/sync_model_from_github.sh`.
-3. Copy into deploy host data dir (default `~/.bet_placer/`):
-   - `craft.db`
-   - `model_params.json`
-   - `craft_nn.joblib`
-
-See `deploy/README.md` for VM + nginx setup.
-
-**Retrain** on Model page runs the **full** pipeline (`tracker.train()` — history, boards, market replay), not per-team patches. Holdout craft eval uses the same frozen match IDs every epoch.
-
-## App
+## App routes
 
 | Route | What |
 |-------|------|
-| `/app` | Matches — one UI for all leagues including World Cup |
-| `/app/settings` | Style + bankroll |
-| `/app/model` | Calibration / train report |
-| `/app/portfolio` | Private Stake portfolio |
+| `/app` | Matches |
+| `/app/model` | Calibration / training report |
+| `/app/portfolio` | Stake portfolio |
 | `/app/guide` | Method notes |
 
 ## Disclaimer

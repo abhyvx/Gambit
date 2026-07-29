@@ -1,4 +1,4 @@
-/** Team crest / national flag — ESPN first, then flagcdn, then sports DB, then shield. */
+/** Team crest / national flag - ESPN first, then flagcdn, then sports DB, then shield. */
 import { useEffect, useState } from 'react'
 import { flagUrl, countryIso } from '../data/flags'
 
@@ -19,7 +19,7 @@ function crestFallbacks(name, sport = '') {
     : sport.startsWith('cricket') ? 'cricket'
       : 'soccer'
   out.push(`https://a.espncdn.com/combiner/i?img=/i/teamlogos/${espnSport}/500/${slug}.png&w=100&h=100`)
-  // TheSportsDB free search thumb (works without Stake) — slug guess only
+  // TheSportsDB free search thumb (works without Stake) - slug guess only
   out.push(`https://www.thesportsdb.com/images/media/team/badge/${slug}.png`)
   out.push(`https://r2.thesportsdb.com/images/media/team/badge/${slug}.png`)
   return out

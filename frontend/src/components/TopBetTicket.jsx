@@ -81,7 +81,7 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
         </label>
         <div className="bet-ticket-v-payout">
           <span>Payout</span>
-          <strong>{payout != null ? formatINR(payout) : '—'}</strong>
+          <strong>{payout != null ? formatINR(payout) : 'n/a'}</strong>
         </div>
       </div>
 

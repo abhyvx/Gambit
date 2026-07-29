@@ -107,7 +107,7 @@ export default function Layout() {
                         {leg.home}{leg.away ? ` vs ${leg.away}` : ''}
                       </div>
                       <div className="slip-ticket-odds">
-                        <span>{Number(leg.odds) > 1 ? `${Number(leg.odds).toFixed(2)}×` : '—'}</span>
+                        <span>{Number(leg.odds) > 1 ? `${Number(leg.odds).toFixed(2)}×` : 'n/a'}</span>
                       </div>
                       <div className="slip-ticket-stake-row">
                         <label className="slip-amount">
@@ -123,7 +123,7 @@ export default function Layout() {
                         </label>
                         <div className="slip-ticket-payout">
                           <span>Payout</span>
-                          <strong className="green">{leg.payout != null ? formatINR(leg.payout) : '—'}</strong>
+                          <strong className="green">{leg.payout != null ? formatINR(leg.payout) : 'n/a'}</strong>
                         </div>
                       </div>
                     </article>
@@ -138,7 +138,7 @@ export default function Layout() {
                     <article className="slip-ticket slip-ticket--multi">
                       <div className="slip-ticket-top">
                         <span className="slip-ticket-kind">{slipMode === 'sgm' ? 'SGM' : 'Multi'}</span>
-                        <span className="green">{slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '—'}</span>
+                        <span className="green">{slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : 'n/a'}</span>
                       </div>
                       <ul className="slip-ticket-legs">
                         {(slipSingles || []).map((leg) => (
@@ -159,7 +159,7 @@ export default function Layout() {
                         </label>
                         <div className="slip-ticket-payout">
                           <span>Payout</span>
-                          <strong className="green">{slipPayout != null ? formatINR(slipPayout) : '—'}</strong>
+                          <strong className="green">{slipPayout != null ? formatINR(slipPayout) : 'n/a'}</strong>
                         </div>
                       </div>
                     </article>
@@ -169,31 +169,31 @@ export default function Layout() {
                 <div className="slip-summary">
                   <div className="slip-summary-row">
                     <span>Singles stake</span>
-                    <strong>{singlesStakeTotal > 0 ? formatINR(singlesStakeTotal) : '—'}</strong>
+                    <strong>{singlesStakeTotal > 0 ? formatINR(singlesStakeTotal) : 'n/a'}</strong>
                   </div>
                   <div className="slip-summary-row">
                     <span>Singles payout</span>
-                    <strong className="green">{singlesPayoutTotal > 0 ? formatINR(singlesPayoutTotal) : '—'}</strong>
+                    <strong className="green">{singlesPayoutTotal > 0 ? formatINR(singlesPayoutTotal) : 'n/a'}</strong>
                   </div>
                   {showMulti && (
                     <>
                       <div className="slip-summary-row">
                         <span>Multi stake</span>
-                        <strong>{Number(multiStake) > 0 ? formatINR(Number(multiStake)) : '—'}</strong>
+                        <strong>{Number(multiStake) > 0 ? formatINR(Number(multiStake)) : 'n/a'}</strong>
                       </div>
                       <div className="slip-summary-row">
                         <span>Multi payout</span>
-                        <strong className="green">{slipPayout != null ? formatINR(slipPayout) : '—'}</strong>
+                        <strong className="green">{slipPayout != null ? formatINR(slipPayout) : 'n/a'}</strong>
                       </div>
                     </>
                   )}
                   <div className="slip-summary-row slip-summary-total">
                     <span>Total stake</span>
-                    <strong>{totalStake > 0 ? formatINR(totalStake) : '—'}</strong>
+                    <strong>{totalStake > 0 ? formatINR(totalStake) : 'n/a'}</strong>
                   </div>
                   <div className="slip-summary-row slip-summary-total">
                     <span>Total payout</span>
-                    <strong className="green">{totalPayout > 0 ? formatINR(totalPayout) : '—'}</strong>
+                    <strong className="green">{totalPayout > 0 ? formatINR(totalPayout) : 'n/a'}</strong>
                   </div>
                 </div>
               </div>

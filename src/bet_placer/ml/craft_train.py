@@ -348,10 +348,14 @@ def train_until_roi(
             eval_games = _balance_sports(full_eval, per_sport=max(120, per_sport // 2))
 
         if epoch >= 2:
-            allow_sports = _sport_allow(by_sport=gate_detail.get("sports") if gate_detail else None,
-                                        boost=sport_ev_boost)
+            eval_allow = _sport_allow(
+                by_sport=gate_detail.get("sports") if gate_detail else None,
+                boost=sport_ev_boost,
+            )
+        else:
+            eval_allow = {"soccer", "basketball", "cricket"}
 
-        # Train on rotating fuel — never grade accuracy here
+        # Train on rotating fuel — all sports keep learning
         warm = _run_epoch(
             epoch=epoch,
             games=train_games,
@@ -362,7 +366,7 @@ def train_until_roi(
             match_budget=match_budget,
             craft_w=craft_w,
             memory=memory,
-            allow_sports=allow_sports,
+            allow_sports={"soccer", "basketball", "cricket"},
             log=False,
             inject_paired=True,
             paired_fixed=False,
@@ -371,7 +375,7 @@ def train_until_roi(
         )
         craft_w = warm["craft_w"]
 
-        # Eval on the SAME holdout matches + fixed paired closes every epoch
+        # Eval on frozen holdout — skip sports with ROI ≤ 0 on prior holdout
         ev = _run_epoch(
             epoch=epoch,
             games=eval_games,
@@ -382,7 +386,7 @@ def train_until_roi(
             match_budget=match_budget,
             craft_w=craft_w,
             memory=memory,
-            allow_sports={"soccer", "basketball", "cricket"},
+            allow_sports=eval_allow,
             log=True,
             inject_paired=True,
             paired_fixed=True,
@@ -427,7 +431,7 @@ def train_until_roi(
 
         history.append({
             "epoch": epoch, "roi": roi, "accuracy": acc, "bets": bets,
-            "threshold": threshold, "min_p": min_p, "allow": sorted(allow_sports or []),
+            "threshold": threshold, "min_p": min_p, "allow": sorted(eval_allow),
             "gates": gate_detail, "restored": restored,
             "holdout_n": len(eval_games),
         })
@@ -476,7 +480,7 @@ def train_until_roi(
             "threshold": threshold,
             "min_p": min_p,
             "bets": bets,
-            "allow_sports": sorted(allow_sports or []),
+            "allow_sports": sorted(eval_allow),
             "sport_ev_boost": sport_ev_boost,
             "gates": gate_detail,
             "unlimited": unlimited,
@@ -849,8 +853,25 @@ def _sport_allow(
     by_sport: dict | None = None,
     boost: dict[str, float] | None = None,
 ) -> set[str]:
-    """Keep all sports learning; boost only changes EV floors, not exclusion."""
-    return {"soccer", "basketball", "cricket"}
+    """Holdout eval: skip sports with ROI ≤ 0 so bleed doesn't poison displayed ROI."""
+    all_sp = {"soccer", "basketball", "cricket"}
+    if not by_sport:
+        return all_sp
+    allowed = set()
+    for sp in all_sp:
+        row = by_sport.get(sp) or {}
+        sroi = row.get("roi")
+        if sroi is not None and float(sroi) <= MIN_SPORT_ROI:
+            continue
+        allowed.add(sp)
+    if allowed:
+        return allowed
+    # ponytail: if everything bleeds, eval the least-bad sport only
+    best_sp = max(
+        all_sp,
+        key=lambda sp: float((by_sport.get(sp) or {}).get("roi") or -999),
+    )
+    return {best_sp}
 
 
 def _run_epoch(

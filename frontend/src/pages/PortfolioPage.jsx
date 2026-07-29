@@ -21,7 +21,7 @@ function fmtTs(ts) {
 }
 
 function fmtMoney(n, currency = 'USD') {
-  if (n == null) return '—'
+  if (n == null) return 'n/a'
   const symbol = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : `${currency} `
   return `${symbol}${Math.round(Number(n)).toLocaleString(undefined)}`
 }
@@ -89,7 +89,7 @@ export default function PortfolioPage() {
     { label: 'Win-loss-push', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}-${portfolio.pushes ?? 0}` },
     { label: 'Singles', value: portfolio.singles_count ?? 0 },
     { label: 'Parlays', value: portfolio.parlays_count ?? 0 },
-    { label: 'Avg odds', value: portfolio.avg_odds ?? '—' },
+    { label: 'Avg odds', value: portfolio.avg_odds ?? 'n/a' },
   ]), [portfolio])
 
   const curve = portfolio.cumulative_profit || []
@@ -348,7 +348,7 @@ export default function PortfolioPage() {
           <h3>Why accuracy is not jumping fast</h3>
           <p className="muted">
             The model report card now grades the actual bets it recommends (loss-minimize, best single,
-            value, parlay) — not just who wins the match. Portfolio sync audits your Stake history against
+            value, parlay) - not just who wins the match. Portfolio sync audits your Stake history against
             that same board.
           </p>
         </div>
@@ -392,7 +392,7 @@ export default function PortfolioPage() {
         {audit.message && <p className="muted">{audit.message}</p>}
         {syncMessage && (
           <p className={`muted ${syncFailed ? 'sync-status-warn' : ''}`}>
-            Sync status: <strong>{syncStatus}</strong> — {syncMessage}
+            Sync status: <strong>{syncStatus}</strong> - {syncMessage}
           </p>
         )}
       </section>
@@ -445,11 +445,11 @@ export default function PortfolioPage() {
                   </div>
                   <div>
                     <span>Payout</span>
-                    <strong>{bet.payout ? `${Math.round(bet.payout)} ${bet.currency}` : '—'}</strong>
+                    <strong>{bet.payout ? `${Math.round(bet.payout)} ${bet.currency}` : 'n/a'}</strong>
                   </div>
                   <div>
                     <span>Odds</span>
-                    <strong>{bet.combined_odds || bet.potential_multiplier || '—'}</strong>
+                    <strong>{bet.combined_odds || bet.potential_multiplier || 'n/a'}</strong>
                   </div>
                   <div>
                     <span>P/L</span>
@@ -461,7 +461,7 @@ export default function PortfolioPage() {
                   {(bet.selections || []).map((sel, idx) => (
                     <div key={`${bet.id}-${idx}`} className="portfolio-selection">
                       <span>{sel.selection || 'Selection'}</span>
-                      <small>{sel.fixture_name || bet.fixture_name} · {sel.odds || '—'}</small>
+                      <small>{sel.fixture_name || bet.fixture_name} · {sel.odds || 'n/a'}</small>
                     </div>
                   ))}
                 </div>

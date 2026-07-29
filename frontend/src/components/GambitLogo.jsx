@@ -1,4 +1,4 @@
-/** Orthodox angular G — classic open C + mid spur. Shared by logo + intro. */
+/** Orthodox angular G - classic open C + mid spur. Shared by logo + intro. */
 
 /** Letterform C (gap on the right), readable as a G once the spur lands. */
 export const G_RING = [

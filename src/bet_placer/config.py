@@ -2,6 +2,9 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Built-in relay token (Render + laptop share this; no manual secret setup)
+DEFAULT_STAKE_RELAY_SECRET = "gambit-relay-v1-abhyvx"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -24,11 +27,12 @@ class Settings(BaseSettings):
     # Open Chromium on API startup. Default off — browser launches on first
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
     stake_browser_warmup_on_startup: bool = False
-    stake_relay_secret: str = ""  # same secret on laptop scripts/stake_relay.py
+    stake_relay_secret: str = DEFAULT_STAKE_RELAY_SECRET
 
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
-    ensemble_weight_poisson: float = 0.45
+
+    # Active ensemble weights
     ensemble_weight_elo: float = 0.35
     ensemble_weight_gbm: float = 0.20  # heuristic GBM until factor-graph trainer ships
 

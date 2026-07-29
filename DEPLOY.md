@@ -6,60 +6,47 @@
 
 1. https://dashboard.render.com/ → sign in with GitHub
 2. **New +** → **Blueprint**
-3. Connect repo **abhyvx/Gambit** → **Apply**
-4. **Environment** tab, add:
-   | Key | Value |
-   |-----|--------|
-   | `CRAFT_DISABLE` | `1` (auto from blueprint) |
-   | `STAKE_USE_BROWSER` | `false` |
-   | `STAKE_RELAY_SECRET` | pick a long random string |
-   | `GAMBIT_REPO` | `abhyvx/Gambit` |
-   | `ODDS_API_KEY` | optional |
-5. Wait 10-20 min until **Live**
-6. Open `https://YOUR-SERVICE.onrender.com/app`
+3. Connect repo **abhyvx/Gambit** → **Apply** (no env vars to type; blueprint fills them)
+4. Wait 10-20 min until **Live**
+5. Open `https://YOUR-SERVICE.onrender.com/app`
 
 ### Manual web service (if Blueprint fails)
 
 1. **New +** → **Web Service** → repo **Gambit**, branch **main**
 2. Runtime: **Docker**, Dockerfile `./Dockerfile`, plan **Free**
 3. Health check: `/api/health`
-4. Same env vars as above
+4. Env: `CRAFT_DISABLE=1`, `STAKE_USE_BROWSER=false`, `STAKE_RELAY_SECRET=gambit-relay-v1-abhyvx`
 5. **Create Web Service**
 
-## Stake live odds on cloud
+## Stake live odds (one URL in .env)
 
-Render cannot call stake.com directly (403). Use the **relay**:
+Cloud cannot call stake.com (403). Run the relay on your laptop:
 
-**On Render:** `STAKE_RELAY_SECRET=your-secret`
+**.env** (only your Render URL required):
 
-**On your laptop** (`.env`):
 ```
-STAKE_USE_BROWSER=true
-STAKE_RELAY_SECRET=your-secret
 GAMBIT_CLOUD_URL=https://YOUR-SERVICE.onrender.com
+STAKE_USE_BROWSER=true
 ```
 
-Run (keep open):
 ```bash
 playwright install chromium   # once
-PYTHONPATH=src python3 scripts/stake_relay.py
+./scripts/start_stake_relay.sh
 ```
 
-Cloud app receives live Stake boards via `/api/stake/relay`.
+Relay secret is built in (`gambit-relay-v1-abhyvx`). Same on Render and laptop automatically.
 
 ## Training
 
-- Daily cron: midnight UTC on `main`
-- Manual: https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml → **Run workflow**
-- Model release: https://github.com/abhyvx/Gambit/releases/tag/model-latest
-- After success: Render → **Manual Deploy**
+- Daily: midnight UTC on `main`
+- Manual: https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml
+- Model: https://github.com/abhyvx/Gambit/releases/tag/model-latest
+- After green run: Render → **Manual Deploy**
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| Docker build fails | **Manual Deploy** → **Clear build cache & deploy** after pulling latest `main` |
-| Port / health check | Fixed: app listens on Render `PORT` |
+| Docker build fails | Manual Deploy → Clear build cache & deploy |
+| Stake 403 in logs | Normal on cloud; run `./scripts/start_stake_relay.sh` on laptop |
 | Model page empty | Wait for green Actions run; redeploy |
-| Stake 403 in logs | Expected on cloud; use `stake_relay.py` on laptop |
-| No Stake prices | Run relay script with matching secret |

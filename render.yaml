@@ -16,4 +16,4 @@ services:
       - key: GAMBIT_REPO
         value: abhyvx/Gambit
       - key: STAKE_RELAY_SECRET
-        sync: false
+        value: gambit-relay-v1-abhyvx

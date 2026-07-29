@@ -2735,13 +2735,7 @@ def plan_hit_target_for_match(
     human_context["stake_overlay"] = stake_overlay
 
     probabilities = predict_all_markets(match)
-    options = resolve_portfolio_options(
-        match, probabilities, budget_inr, human_context, home_n, away_n,
-    )
-    overlay = human_context.get("stake_overlay")
-    if overlay:
-        from bet_placer.engine.stake_odds import inject_goalscorer_options
-        inject_goalscorer_options(options, overlay, home_n, away_n)
+    # Build priced board BEFORE portfolio resolve — otherwise cloud (no Stake) returns []
     try:
         from bet_placer.engine.bet_builder import _match_thesis, build_match_flat_board
         from bet_placer.engine.smart_picks import build_smart_picks
@@ -2769,6 +2763,14 @@ def plan_hit_target_for_match(
         human_context["easy_money_picks"] = picks.get("easy_money") or []
     except Exception:
         pass
+
+    options = resolve_portfolio_options(
+        match, probabilities, budget_inr, human_context, home_n, away_n,
+    )
+    overlay = human_context.get("stake_overlay")
+    if overlay:
+        from bet_placer.engine.stake_odds import inject_goalscorer_options
+        inject_goalscorer_options(options, overlay, home_n, away_n)
 
     result = build_target_plans(
         options, budget_inr, target_cashout_inr,

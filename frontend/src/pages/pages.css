@@ -2108,6 +2108,39 @@
 
 /* Stake tab */
 .stake-tab { padding: 2px 0; }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.model-boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-height: 42vh;
+  text-align: center;
+}
+.model-boot p { margin: 0; font-size: var(--fs-md); }
+.model-desk-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 8px 12px;
+  margin-bottom: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2, rgba(255,255,255,0.04));
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.analysis-quick-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.analysis-brief-empty { margin-top: 4px; }
+
 .spinner {
   width: 36px; height: 36px;
   border: 3px solid var(--border);

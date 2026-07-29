@@ -398,7 +398,13 @@ function resolveCuratedPicks(slip, home = '', away = '') {
     }
   }
 
-  // Fall back: turn easy-money / unified singles into viewable plans
+  // Fall back: bet_slips / easy-money / unified singles into viewable plans
+  if (!picks.length) {
+    for (const bs of (slip?.bet_slips || []).slice(0, 4)) {
+      if (!bs?.legs?.length) continue
+      picks.push(annotatePlan(bs, bs.pick_label || bs.name || 'Plan', bs.pick_type || 'Bet plan'))
+    }
+  }
   if (!picks.length) {
     for (const em of (slip?.easy_money || []).slice(0, 3)) {
       const fake = {
@@ -1042,13 +1048,15 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
             </>
           ) : (
             <div className="skip-note skip-note-hard">
-              <strong>No priced path yet</strong>
+              <strong>Building priced paths…</strong>
               <p>
                 {activeSlip.skip_reason
-                  || 'Open All plans / Build for Stake markets, or tap Odds to refresh lines.'}
+                  || (slipRefreshing
+                    ? 'Loading ESPN/model lines for this match.'
+                    : 'Open Build for the full market board, or tap Odds for book estimates.')}
               </p>
-              {(activeSlip.easy_money?.length > 0 || activeSlip.unified_picks?.length > 0) && (
-                <p className="muted">High-probability / situational picks are listed above when available.</p>
+              {(activeSlip.easy_money?.length > 0 || activeSlip.unified_picks?.length > 0 || activeSlip.bet_slips?.length > 0) && (
+                <p className="muted">High-probability picks and slips are listed above / under All plans.</p>
               )}
             </div>
           )}
@@ -1124,18 +1132,24 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
           )}
           {!stakeLoading && stake && !stake.available && (
             <div className="stake-fallback">
-              <h5>Stake payouts unavailable</h5>
-              <p>{stake.reason || "Couldn't reach Stake for this game."} Cached prices and model estimates still power the plans above.</p>
+              <h5>Stake live lines offline</h5>
+              <p>
+                {stake.reason || "Cloudflare blocks Stake from this host."}
+                {' '}Recs and Build still use ESPN/model prices — open Stake.com to place.
+              </p>
               <button type="button" className="stake-open-btn" onClick={connectStake} disabled={stakeConnecting}>
-                {stakeConnecting ? 'Opening...' : 'Open / Reconnect Stake'}
+                {stakeConnecting ? 'Opening...' : 'Open / Reconnect Stake (laptop)'}
               </button>
               <button type="button" className="stake-open-btn secondary" onClick={loadStake}>Retry</button>
             </div>
           )}
           {!stakeLoading && stake?.available && (
             <div className="stake-live">
-              <span className="live-pill stake-live-pill">Live from Stake</span>
-              <p className="muted">Exact payouts at {formatINR(perMatchBudget)} stake:</p>
+              <span className={`live-pill stake-live-pill${stake.source === 'espn_book' || stake.source === 'stake_cache' ? ' is-book' : ''}`}>
+                {stake.source === 'espn_book' ? 'Book estimate' : stake.from_cache ? 'Cached Stake' : 'Live from Stake'}
+              </span>
+              {stake.note && <p className="muted">{stake.note}</p>}
+              <p className="muted">Payouts at {formatINR(perMatchBudget)} stake:</p>
               {stake.categories.map((cat) => (
                 <div key={cat.category} className="options-category">
                   <h5>{cat.category}</h5>

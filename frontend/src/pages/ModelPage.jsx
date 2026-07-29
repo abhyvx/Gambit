@@ -559,15 +559,66 @@ function InsightContainer({ c, curves, sportKeys }) {
 export default function ModelPage() {
   const [ins, setIns] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [deskLoading, setDeskLoading] = useState(true)
   const [retraining, setRetraining] = useState(false)
   const [paperBusy, setPaperBusy] = useState(false)
   const [err, setErr] = useState(null)
+  // Unlock entry as soon as craft snapshot paints — don't wait on full insights
   useEntryReady(!loading)
+
+  const craftFromSnap = (craft) => {
+    const fromBlocks = blocksToCurves(craft?.blocks)
+    return {
+      status: 'loading',
+      total_corpus: 0,
+      sports: {},
+      containers: [],
+      curves: {
+        craft_roi: fromBlocks?.craft_roi || craft?.roi_trend || [],
+        craft_accuracy: fromBlocks?.craft_accuracy || craft?.accuracy_trend || [],
+        craft_equity: fromBlocks?.craft_equity || craft?.equity_curve || [],
+        craft_sport_roi: {},
+        craft_sport_accuracy: {},
+        craft_sport_volume: {},
+      },
+      craft: {
+        n_epochs: craft?.n_epochs || 0,
+        hit_target: craft?.hit_target,
+        best_roi: (craft?.best?.roi != null && Number(craft.best.roi) > -0.5)
+          ? craft.best.roi
+          : craft?.train_status?.holdout_roi,
+        best_accuracy: craft?.best?.accuracy ?? craft?.train_status?.holdout_accuracy,
+        best_bets: craft?.best?.bets,
+        target_roi: 0.25,
+        target_accuracy: 0.60,
+        holdout_roi: craft?.train_status?.holdout_roi,
+        holdout_accuracy: craft?.train_status?.holdout_accuracy,
+        train_status: craft?.train_status,
+        block: craft?.block,
+        block_prev: craft?.block_prev,
+        blocks: craft?.blocks,
+      },
+      insights: [],
+    }
+  }
 
   const load = (retrain = false) => {
     if (retrain) setRetraining(true)
-    else setLoading(true)
+    else {
+      setLoading(true)
+      setDeskLoading(true)
+    }
     setErr(null)
+
+    // Fast path: craft snapshot (~ms) so the page isn't a blank hang
+    if (!retrain) {
+      fetchCraftProgress()
+        .then((craft) => {
+          setIns((prev) => prev?.containers?.length ? prev : craftFromSnap(craft))
+          setLoading(false)
+        })
+        .catch(() => {})
+    }
 
     const job = retrain
       ? fetchModelReport({ retrain: true }).then(() => fetchModelInsights())
@@ -578,43 +629,15 @@ export default function ModelPage() {
           ])
           if (rep?.insights) return rep.insights
           if (!rep && !craft) throw e
-          const fromBlocks = blocksToCurves(craft?.blocks)
-          return {
-            status: rep?.status,
-            total_corpus: rep?.trained_on || 0,
-            sports: {},
-            containers: [],
-            curves: {
-              craft_roi: fromBlocks?.craft_roi || craft?.roi_trend || [],
-              craft_accuracy: fromBlocks?.craft_accuracy || craft?.accuracy_trend || [],
-              craft_equity: fromBlocks?.craft_equity || craft?.equity_curve || [],
-              craft_sport_roi: {},
-              craft_sport_accuracy: {},
-              craft_sport_volume: {},
-            },
-            craft: {
-              n_epochs: craft?.n_epochs || 0,
-              hit_target: craft?.hit_target,
-              best_roi: (craft?.best?.roi != null && Number(craft.best.roi) > -0.5)
-                ? craft.best.roi
-                : craft?.train_status?.holdout_roi,
-              best_accuracy: craft?.best?.accuracy ?? craft?.train_status?.holdout_accuracy,
-              best_bets: craft?.best?.bets,
-              target_roi: 0.25,
-              target_accuracy: 0.60,
-              holdout_roi: craft?.train_status?.holdout_roi,
-              holdout_accuracy: craft?.train_status?.holdout_accuracy,
-              train_status: craft?.train_status,
-            },
-            insights: [],
-          }
+          return craftFromSnap(craft)
         })
 
     job
-      .then(setIns)
-      .catch((e) => { setErr(String(e)); setIns(null) })
+      .then((d) => { setIns(d); setErr(null) })
+      .catch((e) => { setErr(String(e)) })
       .finally(() => {
         setLoading(false)
+        setDeskLoading(false)
         setRetraining(false)
       })
   }
@@ -675,7 +698,17 @@ export default function ModelPage() {
 
   useEffect(() => { load(false) }, [])
 
-  if (loading) return <div className="page"><p className="muted">Loading model desk…</p></div>
+  if (loading && !ins) {
+    return (
+      <div className="page model-page">
+        <div className="model-boot" role="status" aria-live="polite">
+          <div className="spinner" />
+          <p>Loading model desk…</p>
+          <small className="muted">Craft snapshot first, then full charts.</small>
+        </div>
+      </div>
+    )
+  }
   if (err && !ins) return <div className="page"><p className="muted">Could not load: {err}</p></div>
 
   const sportKeys = ['soccer', 'basketball', 'cricket']
@@ -685,6 +718,12 @@ export default function ModelPage() {
 
   return (
     <div className="page model-page insight-page">
+      {deskLoading && (
+        <div className="model-desk-banner" role="status">
+          <div className="spinner small" />
+          <span>Refreshing desk charts…</span>
+        </div>
+      )}
       <header className="page-header">
         <div>
           <h1>Model</h1>

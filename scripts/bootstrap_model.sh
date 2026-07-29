@@ -38,8 +38,21 @@ done
 
 if [ "$NEED_REFRESH" = "0" ]; then
     echo "model: using cached state in $DEST"
-    # Still hydrate accounts if a prior wipe left only model files
-    [ -f "$DEST/users.json" ] || _restore_users
+    # Always refresh accounts bundle — Render free disk wipes users on redeploy
+    API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+    JSON=$(curl -fsSL "$API" 2>/dev/null || true)
+    URL=$(echo "$JSON" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for a in d.get('assets',[]):
+    if a.get('name')=='gambit_users_bundle.json':
+        print(a['browser_download_url']); break
+" 2>/dev/null || true)
+    if [ -n "$URL" ]; then
+      curl -fsSL "$URL" -o "$DEST/gambit_users_bundle.json"
+      echo "  → refreshed gambit_users_bundle.json"
+    fi
+    _restore_users
     exit 0
 fi
 

@@ -28,6 +28,8 @@ cat > "$PLIST" <<EOF
     <key>STAKE_RELAY_SECRET</key><string>gambit-relay-v1-abhyvx</string>
     <key>GAMBIT_CLOUD_URL</key><string>https://gambit-yqng.onrender.com</string>
     <key>STAKE_UPLOAD_RELEASE</key><string>1</string>
+    <key>STAKE_BROWSER_HEADLESS</key><string>false</string>
+    <key>STAKE_SKIP_ESPN</key><string>1</string>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
   </dict>
   <key>StartInterval</key><integer>600</integer>

@@ -14,26 +14,29 @@ Auto-deploy: if Render Auto-Deploy is on for `main`, every push rebuilds. You do
 
 Render and GitHub Actions get Cloudflare-blocked by stake.com. They cannot scrape live Stake.
 
-Odds still work from ESPN and model prices without Stake.
-
-For live Stake lines on Render, run the laptop relay (this machine clears Cloudflare once):
+**The fix:** run Stake on your Mac once, then keep a background agent pushing lines to Render.
 
 ```bash
-# First time: Chrome may open — finish "Just a moment…", leave the profile alone
-./scripts/start_stake_relay.sh
+# 1) One-time: opens Chrome — finish "Just a moment…", wait until it prints priced fixtures
+cd "/path/to/Gambit"
+source .venv/bin/activate
+PYTHONPATH=src python3 scripts/connect_stake_and_push.py
 
-# Optional: push every 10 min in the background
+# 2) Keep it fresh every 10 minutes
 ./scripts/install_stake_relay_agent.sh
 ```
 
-That POSTs priced fixtures to `/api/stake/relay`. A good push can also upload `stake_overlay_cache.json` to the `model-latest` release (`STAKE_UPLOAD_RELEASE=1`) so redeploys bootstrap Stake from disk.
+That POSTs to `/api/stake/relay` and uploads `stake_overlay_cache.json` to GitHub `model-latest` so redeploys still boot with Stake.
+
+Odds still work from ESPN/model when Stake is cold.
 
 | Service | Runs on | Role |
 |---------|---------|------|
 | Web app | Render | Always |
-| Stake relay | Your Mac (`start_stake_relay` / LaunchAgent) | Live Stake → cloud |
+| Stake relay | Your Mac (`connect_stake_and_push` / LaunchAgent) | Live Stake → cloud |
 | Craft training | GitHub Actions | Daily model |
 
+GitHub Actions Stake workflow cannot pass Cloudflare — treat it as best-effort only.
 ## 3. After craft training
 
 1. https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml

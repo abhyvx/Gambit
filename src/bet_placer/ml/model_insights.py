@@ -587,7 +587,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 3
+INSIGHTS_CACHE_VERSION = 4
 
 
 def save_insights_cache(payload: dict[str, Any]) -> None:
@@ -714,7 +714,7 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
         },
         {
             "id": "13_monthly_roi",
-            "title": "13 · Monthly unit ROI",
+            "title": "13 · Monthly close-price ROI",
             "kind": "chart",
             "chart": "betting_monthly_roi",
             "status": "ready" if len(betting_trends) >= 4 else "building",
@@ -753,7 +753,7 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
         },
         {
             "id": "07_craft_roi_sport",
-            "title": "7 · Paper craft ROI by sport",
+            "title": "7 · Holdout craft ROI by sport",
             "kind": "sport_grid",
             "chart": "craft_sport_roi",
             "sports": [{"sport": s, "status": "ready", "n": len(sport_roi[s]), "need": 1} for s in SPORTS],
@@ -1139,8 +1139,8 @@ def _build_containers(
         },
         {
             "id": "07_craft_roi_sport",
-            "title": "7 · Paper craft ROI by sport",
-            "desc": "Latest / best epoch PnL over stake. real books only when available.",
+            "title": "7 · Holdout craft ROI by sport",
+            "desc": "Latest frozen-holdout epoch only (not monthly close-price charts below). Negative here gates live picks for that sport.",
             "kind": "sport_grid",
             "sports": craft_sport_cells,
             "chart": "craft_sport_roi",
@@ -1197,8 +1197,8 @@ def _build_containers(
         },
         {
             "id": "13_monthly_roi",
-            "title": "13 · Monthly unit ROI",
-            "desc": "Per-sport monthly heartbeat (model-fair skill). Sports with overall pairs ROI ≤ 0 stay gated for live picks but still chart.",
+            "title": "13 · Monthly close-price ROI",
+            "desc": "Historical model-fair pairs by month (different from holdout craft above). Can be green while a sport’s latest holdout is red.",
             "kind": "chart",
             "chart": "betting_monthly_roi",
             **_ready(monthly_n, MIN_N["monthly"]),
@@ -1506,7 +1506,6 @@ def _soccer_league_depth() -> dict[str, Any]:
             n = 0
             for path in CACHE_DIR.glob(f"*_{code}.csv") if CACHE_DIR.exists() else []:
                 try:
-                    # cheap line count
                     with path.open("rb") as f:
                         n += max(0, sum(1 for _ in f) - 1)
                 except Exception:
@@ -1516,14 +1515,45 @@ def _soccer_league_depth() -> dict[str, Any]:
                 "league": name,
                 **_ready(n, MIN_N["league"]),
             })
+        n_matches = sum(int(L.get("n") or 0) for L in leagues)
+        # Cloud hosts often lack the CSV tree — use bundled snapshot so fuel isn't all zeros.
+        if n_matches <= 0:
+            snap = _bundled_soccer_fuel()
+            if snap.get("leagues"):
+                return snap
         leagues.sort(key=lambda r: -(r["n"] or 0))
         return {
             "leagues": leagues,
             "n_leagues": sum(1 for L in leagues if L["status"] == "ready"),
-            "n_matches": sum(int(L.get("n") or 0) for L in leagues),
+            "n_matches": n_matches,
         }
     except Exception:
+        return _bundled_soccer_fuel()
+
+
+def _bundled_soccer_fuel() -> dict[str, Any]:
+    from pathlib import Path
+    import json as _json
+    path = Path(__file__).with_name("soccer_league_fuel.json")
+    try:
+        raw = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
         return {"leagues": [], "n_leagues": 0, "n_matches": 0}
+    leagues = []
+    for row in raw.get("leagues") or []:
+        n = int(row.get("n") or 0)
+        leagues.append({
+            "code": row.get("code"),
+            "league": row.get("league"),
+            **_ready(n, MIN_N["league"]),
+        })
+    leagues.sort(key=lambda r: -(r.get("n") or 0))
+    return {
+        "leagues": leagues,
+        "n_leagues": sum(1 for L in leagues if L.get("status") == "ready"),
+        "n_matches": sum(int(L.get("n") or 0) for L in leagues),
+        "source": "bundled_snapshot",
+    }
 
 
 def _bb_ck_format_fuel() -> dict[str, Any]:

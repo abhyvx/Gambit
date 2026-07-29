@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "playwright>=1.40",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

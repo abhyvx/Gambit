@@ -82,6 +82,23 @@ function chartRoi(v) {
   return `${(Number(v) * 100).toFixed(1)}%`
 }
 
+/** Accept plain numbers or {roi|v} points from the API. Drop −1 sentinels. */
+function asChartNumber(v) {
+  if (v == null) return null
+  if (typeof v === 'object') {
+    const n = Number(v.roi ?? v.v ?? v.value)
+    if (!Number.isFinite(n) || n === -1) return null
+    return n
+  }
+  const n = Number(v)
+  if (!Number.isFinite(n) || n === -1) return null
+  return n
+}
+
+function asSeriesValues(raw) {
+  return (raw || []).map(asChartNumber)
+}
+
 /** Drop runs of identical values so block charts aren't a flat plateau. */
 function dedupePlateau(values) {
   const out = []
@@ -123,7 +140,7 @@ function StatusPill({ status, n, need }) {
 function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 120 }) {
   const norm = (series || []).map((s) => ({
     ...s,
-    values: dedupePlateau(s.values || []),
+    values: dedupePlateau(asSeriesValues(s.values || [])),
   }))
   const len = Math.max(0, ...norm.map((s) => (s.values || []).length))
   const flat = norm.flatMap((s) => (s.values || []).map(Number).filter(Number.isFinite))
@@ -142,8 +159,9 @@ function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 
   const sorted = [...flat].sort((a, b) => a - b)
   const lo = sorted[Math.floor(sorted.length * 0.05)]
   const hi = sorted[Math.ceil(sorted.length * 0.95) - 1] ?? sorted[sorted.length - 1]
-  const min = Math.min(lo, 0, ...flat.filter((v) => v >= lo && v <= hi))
-  const max = Math.max(hi, 0)
+  // Keep zero in view; don't force the whole chart below zero when data is mostly green
+  const min = Math.min(0, lo)
+  const max = Math.max(0, hi)
   const span = Math.max(max - min, 0.001)
   const xAt = (i) => pad.l + (i / Math.max(len - 1, 1)) * (w - pad.l - pad.r)
   const yAt = (v) => pad.t + (1 - (Math.min(max, Math.max(min, v)) - min) / span) * (h - pad.t - pad.b)
@@ -559,7 +577,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           series={[{
             key: 'block_roi',
             color: SPORT_COLOR.cricket,
-            values: (curves.craft_equity || []).map((p) => (p.roi != null ? Number(p.roi) : null)),
+            values: curves.craft_equity || [],
           }]}
           format={(v) => chartRoi(v)}
         />
@@ -573,9 +591,10 @@ function InsightContainer({ c, curves, sportKeys }) {
       )}
       {c.kind === 'chart' && c.chart === 'betting_monthly_roi' && (
         <div className="insight-charts">
-          {gatedSports.size > 0 && (
-            <p className="muted">Gated for live picks (overall pairs ROI ≤ 0): {[...gatedSports].join(', ')}. Charts still show the heartbeat.</p>
-          )}
+          <p className="muted">
+            Close-price monthly pairs (history). Separate from holdout craft ROI in box 7.
+            {gatedSports.size > 0 ? ` Live-pick gate still on: ${[...gatedSports].join(', ')}.` : ''}
+          </p>
           {bettingRoiBySport.map((s) => (
             <MultiLineChart key={s.key} title={`${s.key} monthly ROI`} series={[s]} format={(v) => chartRoi(v)} height={110} />
           ))}
@@ -587,7 +606,7 @@ function InsightContainer({ c, curves, sportKeys }) {
       {c.kind === 'chart' && c.chart === 'craft_overall' && (
         <div className="insight-charts">
           <MultiLineChart
-            title="Desk ROI (all 3 sports)"
+            title="Block desk ROI"
             series={[
               { key: 'all 3', color: 'var(--accent, #c4a574)', values: curves.craft_roi || [] },
               { key: 'soccer', color: SPORT_COLOR.soccer, values: (curves.craft_sport_roi || {}).soccer || [] },
@@ -821,18 +840,18 @@ export default function ModelPage() {
             <small>3 sports live</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Best test ROI</span>
+            <span className="stat-label">Champion ROI</span>
             <strong className={`stat-value ${Number(deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
               {roiPct(deskRoi(craft))}
             </strong>
-            <small>target {roiPct(craft.target_roi || 0.25)}</small>
+            <small>best saved desk · target {roiPct(craft.target_roi || 0.25)}</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Live desk ROI</span>
-            <strong className={`stat-value ${Number(deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(deskRoi(craft))}
+            <span className="stat-label">Latest holdout ROI</span>
+            <strong className={`stat-value ${Number(craft.holdout_roi ?? craft.train_status?.holdout_roi) >= 0 ? 'delta-up' : 'delta-down'}`}>
+              {roiPct(craft.holdout_roi ?? craft.train_status?.holdout_roi)}
             </strong>
-            <small>soccer · basketball · cricket</small>
+            <small>current run · can lag champion</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Live hit rate</span>

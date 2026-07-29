@@ -8,7 +8,7 @@ export function AuthProvider({ children }) {
   const [ready, setReady] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [mode, setMode] = useState('login') // login | signup
-  const [form, setForm] = useState({ email: '', password: '', name: '' })
+  const [form, setForm] = useState({ email: '', password: '', name: '', accept: false })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -39,6 +39,10 @@ export function AuthProvider({ children }) {
 
   const submit = async (e) => {
     e?.preventDefault?.()
+    if (mode === 'signup' && !form.accept) {
+      setErr('Accept Privacy and Terms to create an account.')
+      return
+    }
     setBusy(true)
     setErr('')
     try {
@@ -47,7 +51,7 @@ export function AuthProvider({ children }) {
         : await authLogin(form)
       setUser(out.user)
       setAuthOpen(false)
-      setForm({ email: '', password: '', name: '' })
+      setForm({ email: '', password: '', name: '', accept: false })
     } catch (ex) {
       setErr(ex?.message || 'Auth failed')
     } finally {
@@ -65,10 +69,10 @@ export function AuthProvider({ children }) {
       {children}
       {authOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setAuthOpen(false)}>
-          <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Account" onClick={(e) => e.stopPropagation()}>
+          <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Account" onClick={(ev) => ev.stopPropagation()}>
             <h2>{mode === 'signup' ? 'Create account' : 'Sign in'}</h2>
             <p className="muted">
-              Your journal and Stake connection stay private to this account.
+              Private journal + optional Stake API token. Analytics only — we never place bets for you.
             </p>
             <form onSubmit={submit} className="auth-form">
               {mode === 'signup' && (
@@ -102,6 +106,22 @@ export function AuthProvider({ children }) {
                   autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 />
               </label>
+              {mode === 'signup' && (
+                <label className="auth-accept">
+                  <input
+                    type="checkbox"
+                    checked={form.accept}
+                    onChange={(e) => setForm((f) => ({ ...f, accept: e.target.checked }))}
+                  />
+                  <span>
+                    I am 18+ and accept the{' '}
+                    <a href="/app/legal/terms" onClick={() => setAuthOpen(false)}>Terms</a>
+                    {' '}and{' '}
+                    <a href="/app/legal/privacy" onClick={() => setAuthOpen(false)}>Privacy</a>
+                    {' '}policy.
+                  </span>
+                </label>
+              )}
               {err && <p className="auth-error" role="alert">{err}</p>}
               <button type="submit" className="refresh-btn" disabled={busy}>
                 {busy ? 'Working…' : (mode === 'signup' ? 'Create account' : 'Sign in')}

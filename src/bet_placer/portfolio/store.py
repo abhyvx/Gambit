@@ -13,6 +13,8 @@ from typing import Any
 from bet_placer.config import data_path, get_settings
 from bet_placer.data.stake_browser import browser_status, wait_until_logged_in
 from bet_placer.data.stake_scraper import StakeScraper
+from bet_placer.security.secrets import reveal as _reveal_token
+from bet_placer.security.secrets import seal as _seal_token
 
 _LOCK = Lock()
 _CONSENT_VERSION = "2026-07-02"
@@ -862,7 +864,7 @@ def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[
                         "has_stake_token": True,
                     }
                 )
-                state["secrets"] = {"stake_api_token": token}
+                state["secrets"] = {"stake_api_token": _seal_token(token)}
                 return _merged_status(_save_state(state))
         except Exception:
             pass
@@ -871,7 +873,7 @@ def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[
     job_id = secrets.token_hex(8)
     with _LOCK:
         state, _ = _ensure_privacy_defaults(_load_state())
-        state["secrets"] = {"stake_api_token": token}
+        state["secrets"] = {"stake_api_token": _seal_token(token)}
         state["connection"].update(
             {
                 "status": "syncing",
@@ -891,7 +893,7 @@ def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[
             {
                 "id": job_id,
                 "user_id": user_id or _CURRENT_USER_ID.get(),
-                "token": token,
+                "token": _seal_token(token),
                 "status": "pending",
                 "created_at": _utc_now(),
             }
@@ -926,7 +928,14 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
         jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
     except Exception:
         return []
-    return [j for j in (jobs or []) if j.get("status") == "pending" and j.get("token")]
+    return [
+        {
+            **j,
+            "token": _reveal_token(j.get("token")),
+        }
+        for j in (jobs or [])
+        if j.get("status") == "pending" and j.get("token")
+    ]
 
 
 def complete_sync_job(
@@ -1000,11 +1009,14 @@ def complete_sync_job(
 def disconnect_browser_session() -> dict[str, Any]:
     with _LOCK:
         state = _load_state()
+        state.pop("secrets", None)
         state["connection"].update(
             {
                 "status": "disconnected",
                 "connected": False,
-                "last_sync_message": "Disconnected from Stake. Imported portfolio data remains saved privately until you delete it.",
+                "has_stake_token": False,
+                "login_url": None,
+                "last_sync_message": "Disconnected Stake. Token removed. Journal rows stay until you delete them.",
             }
         )
         return _merged_status(_save_state(state))

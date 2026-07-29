@@ -1,0 +1,96 @@
+{
+  "leagues": [
+    {
+      "code": "E1",
+      "league": "Championship",
+      "n": 18217
+    },
+    {
+      "code": "E3",
+      "league": "League Two",
+      "n": 18107
+    },
+    {
+      "code": "E2",
+      "league": "League One",
+      "n": 18066
+    },
+    {
+      "code": "SP2",
+      "league": "La Liga 2",
+      "n": 15699
+    },
+    {
+      "code": "E0",
+      "league": "EPL",
+      "n": 13401
+    },
+    {
+      "code": "SP1",
+      "league": "La Liga",
+      "n": 13400
+    },
+    {
+      "code": "F1",
+      "league": "Ligue 1",
+      "n": 13029
+    },
+    {
+      "code": "I1",
+      "league": "Serie A",
+      "n": 12970
+    },
+    {
+      "code": "I2",
+      "league": "Serie B",
+      "n": 12532
+    },
+    {
+      "code": "F2",
+      "league": "Ligue 2",
+      "n": 11876
+    },
+    {
+      "code": "N1",
+      "league": "Eredivisie",
+      "n": 11503
+    },
+    {
+      "code": "T1",
+      "league": "Super Lig",
+      "n": 11345
+    },
+    {
+      "code": "D1",
+      "league": "Bundesliga",
+      "n": 11329
+    },
+    {
+      "code": "D2",
+      "league": "Bundesliga 2",
+      "n": 11328
+    },
+    {
+      "code": "P1",
+      "league": "Primeira",
+      "n": 11049
+    },
+    {
+      "code": "G1",
+      "league": "Super League Greece",
+      "n": 9754
+    },
+    {
+      "code": "B1",
+      "league": "Belgium Jupiler",
+      "n": 9722
+    },
+    {
+      "code": "SC0",
+      "league": "Scottish Prem",
+      "n": 8447
+    }
+  ],
+  "n_matches": 231774,
+  "n_leagues": 18
+}

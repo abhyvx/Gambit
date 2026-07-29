@@ -13,6 +13,7 @@ const NAV = [
   { to: '/app', label: 'Home', icon: 'matches' },
   { to: '/app/model', label: 'Model', icon: 'model' },
   { to: '/app/portfolio', label: 'Portfolio', icon: 'portfolio' },
+  { to: '/app/settings', label: 'Settings', icon: 'guide' },
   { to: '/app/guide', label: 'Guide', icon: 'guide' },
 ]
 
@@ -26,7 +27,7 @@ export default function Layout() {
   } = useBankroll()
   const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
-  const { user, openAuth, logout } = useAuth()
+  const { user, openAuth } = useAuth()
 
   useEffect(() => {
     let cancelled = false
@@ -70,10 +71,10 @@ export default function Layout() {
               <strong>{online ? 'Live' : 'Down'}</strong>
             </div>
             {user ? (
-              <button type="button" className="user-chip auth-chip is-on" onClick={logout} title="Sign out">
+              <Link to="/app/settings" className="user-chip auth-chip is-on" title="Account settings">
                 <small>Account</small>
                 <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
-              </button>
+              </Link>
             ) : (
               <button type="button" className="user-chip auth-chip" onClick={() => openAuth('login')}>
                 <small>Account</small>

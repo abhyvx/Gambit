@@ -7,6 +7,8 @@ import WorldCupPage from './pages/WorldCupPage'
 import GuidePage from './pages/GuidePage'
 import ModelPage from './pages/ModelPage'
 import PortfolioPage from './pages/PortfolioPage'
+import SettingsPage from './pages/SettingsPage'
+import { PrivacyPage, TermsPage } from './pages/LegalPages'
 import { BankrollProvider } from './context/BankrollContext'
 import { AuthProvider } from './context/AuthContext'
 import './index.css'
@@ -24,8 +26,10 @@ export default function App() {
               <Route path="worldcup" element={<WorldCupPage />} />
               <Route path="model" element={<ModelPage />} />
               <Route path="portfolio" element={<PortfolioPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="legal/privacy" element={<PrivacyPage />} />
+              <Route path="legal/terms" element={<TermsPage />} />
               <Route path="guide" element={<GuidePage />} />
-              <Route path="settings" element={<Navigate to="/app" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

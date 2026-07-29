@@ -523,10 +523,11 @@ def resolve_portfolio_options(
 
     if flat:
         options = options_from_flat_board(flat, budget)
-    else:
-        if not stake_lines_usable(overlay, ctx):
-            return []
+    elif stake_lines_usable(overlay, ctx):
         options = supplement_options_from_overlay([], overlay, match, budget, home, away)
+    else:
+        # Cloud / no Stake: still price from ESPN + model — never empty the desk
+        options = analyze_all_options(match, probabilities, budget, ctx)
 
     # The flat board often misses Stake-only variants/fields; merge those in when we
     # have a live or cached overlay so planning can look beyond the usual 20-30 lines.

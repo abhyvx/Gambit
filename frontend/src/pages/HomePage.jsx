@@ -144,7 +144,12 @@ export default function HomePage() {
       if (ev.sport_key?.startsWith('cricket')) return g.id === 'cricket'
       return g.id === 'soccer'
     }) || SPORT_GROUPS[0]
-    const q = new URLSearchParams({ focus: String(ev.event_id || ev.id) })
+    const q = new URLSearchParams({
+      focus: String(ev.event_id || ev.id || ''),
+    })
+    if (ev.sport_key) q.set('league', String(ev.sport_key))
+    if (ev.home_team) q.set('home', String(ev.home_team))
+    if (ev.away_team) q.set('away', String(ev.away_team))
     navigate(`/app/sport/${group.id}?${q}`)
   }
 

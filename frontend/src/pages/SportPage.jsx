@@ -122,9 +122,35 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
         )}
       </div>
       {picks.length === 0 ? (
-        <p className="muted">
-          No priced recommendation. Use 1 / X / 2 above to add a match result.
-        </p>
+        <div className="analysis-brief-empty">
+          <p className="muted">Model picks pending — use 1 / X / 2 above to add a result, or wait for Recs below.</p>
+          {ev?.odds?.home && (
+            <div className="analysis-quick-add">
+              <button type="button" className="btn-secondary tight" onClick={() => onAdd(ev, {
+                selection: 'home', label: `${ev.home_team} to win`, decimal_odds: ev.odds.home,
+                market: 'match_winner', market_name: 'Match Result',
+              })}>
+                Add {ev.home_team} @ {Number(ev.odds.home).toFixed(2)}
+              </button>
+              {ev.odds.draw != null && (
+                <button type="button" className="btn-secondary tight" onClick={() => onAdd(ev, {
+                  selection: 'draw', label: 'Draw', decimal_odds: ev.odds.draw,
+                  market: 'match_winner', market_name: 'Match Result',
+                })}>
+                  Add Draw @ {Number(ev.odds.draw).toFixed(2)}
+                </button>
+              )}
+              {ev.odds.away && (
+                <button type="button" className="btn-secondary tight" onClick={() => onAdd(ev, {
+                  selection: 'away', label: `${ev.away_team} to win`, decimal_odds: ev.odds.away,
+                  market: 'match_winner', market_name: 'Match Result',
+                })}>
+                  Add {ev.away_team} @ {Number(ev.odds.away).toFixed(2)}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       ) : (
         <table className="data-table">
           <thead>
@@ -385,10 +411,26 @@ export default function SportPage() {
   }, [loading, liveUpcoming, apiSport, group.id])
 
   useEffect(() => {
-    if (!focusId || loading || !rows.length) return
-    const ev = rows.find((r) => String(r.id) === String(focusId))
+    if (loading || !rows.length) return
+    const focusHome = (params.get('home') || '').toLowerCase()
+    const focusAway = (params.get('away') || '').toLowerCase()
+    if (!focusId && !focusHome) return
+
+    const ev = rows.find((r) => {
+      if (focusId && String(r.id) === String(focusId)) return true
+      if (focusHome && focusAway) {
+        const h = String(r.home_team || '').toLowerCase()
+        const a = String(r.away_team || '').toLowerCase()
+        return (h.includes(focusHome) || focusHome.includes(h)) && (a.includes(focusAway) || focusAway.includes(a))
+      }
+      return false
+    })
     if (!ev) return
     setExpanded(ev.id)
+    // Scroll the focused fixture into view once boards paint
+    requestAnimationFrame(() => {
+      document.getElementById(`fixture-${ev.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
     if (ev._wc) {
       setAnalysis(ev)
       setAnalyzing(false)
@@ -410,7 +452,16 @@ export default function SportPage() {
         setAnalyzing(false)
       })
       .catch(() => setAnalyzing(false))
-  }, [focusId, loading, rows, apiSport, perMatchBudget, targetCashout, bettorStyle])
+  }, [focusId, loading, rows, apiSport, perMatchBudget, targetCashout, bettorStyle, params])
+
+  // If focus points at another league, switch tab so the fixture exists in `rows`
+  useEffect(() => {
+    const league = params.get('league')
+    if (!league || league === sport) return
+    if (!group.leagues.some((l) => l.key === league)) return
+    setSport(league)
+    setVisible(PAGE)
+  }, [group.id, params, sport])
 
   const parkAnalysis = (ev, a) => {
     // Explicit add only - opening a match must not dump legs into the slip
@@ -477,26 +528,37 @@ export default function SportPage() {
   }
 
   const openMatch = (ev) => {
-    if (expanded === ev.id) {
+    // Top bet / featured → deep-link so league + focus survive remounts
+    if (ev?.event_id && !rows.some((r) => String(r.id) === String(ev.event_id || ev.id))) {
+      const q = new URLSearchParams({ focus: String(ev.event_id || ev.id) })
+      if (ev.sport_key) q.set('league', String(ev.sport_key))
+      if (ev.home_team) q.set('home', String(ev.home_team))
+      if (ev.away_team) q.set('away', String(ev.away_team))
+      navigate(`/app/sport/${group.id}?${q}`)
+      return
+    }
+    const id = ev.event_id || ev.id
+    const row = rows.find((r) => String(r.id) === String(id)) || ev
+    if (expanded === row.id) {
       setExpanded(null)
       return
     }
-    setExpanded(ev.id)
-    if (ev._wc) {
-      setAnalysis(ev)
+    setExpanded(row.id)
+    if (row._wc) {
+      setAnalysis(row)
       setAnalyzing(false)
       return
     }
     setAnalyzing(true)
     setAnalysis(group.id === 'soccer' ? {
-      home_team: ev.home_team,
-      away_team: ev.away_team,
-      status: ev.status,
+      home_team: row.home_team,
+      away_team: row.away_team,
+      status: row.status,
       web_consensus: null,
     } : null)
     fetchAnalysis({
       sport: apiSport,
-      eventId: ev.id,
+      eventId: row.id,
       bankroll: perMatchBudget,
       goal: bettorStyle.goal,
       risk: bettorStyle.risk,
@@ -610,7 +672,7 @@ export default function SportPage() {
           const priced = odds.home && odds.away
 
           return (
-            <article key={ev.id} className={`fixture-row ${open ? 'is-open' : ''} ${ev.status === 'live' ? 'is-live' : ''}`}>
+            <article key={ev.id} id={`fixture-${ev.id}`} className={`fixture-row ${open ? 'is-open' : ''} ${ev.status === 'live' ? 'is-live' : ''}`}>
               <button type="button" className="fixture-main" onClick={() => openMatch(ev)}>
                 <div className="fixture-time">
                   {ev.status === 'live' ? <span className="live-tag">LIVE</span> : null}

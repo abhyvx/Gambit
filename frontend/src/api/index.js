@@ -302,7 +302,7 @@ export async function fetchCraftProgress() {
 }
 
 export async function fetchModelInsights() {
-  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(60000) })
+  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
   return r.json()
 }

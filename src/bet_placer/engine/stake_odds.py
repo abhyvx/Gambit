@@ -290,8 +290,10 @@ def _stake_unavailable_reason(exc: Exception) -> str:
 
 
 def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dict:
-    """Best-effort, honest scrape of exact Stake payouts for one match."""
+    """Best-effort Stake payouts; on cloud falls back to ESPN/book 1X2 so Odds tab still works."""
     global _overlay_fail_ts, _overlay_cache, _overlay_cache_ts
+
+    from bet_placer.config import stake_network_enabled
 
     # Fast path: already-warm overlay cache (no browser launch).
     try:
@@ -305,6 +307,23 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
                 return _stake_match_response(fx, categories, source="stake_overlay")
     except Exception as exc:
         logger.debug("Stake overlay lookup failed: %s", exc)
+
+    # Disk cache for this fixture
+    cached_fx = get_cached_fixture(home, away)
+    if cached_fx and cached_fx.markets:
+        categories = curate_stake_markets(cached_fx, budget_inr)
+        if categories:
+            resp = _stake_match_response(cached_fx, categories, source="stake_cache")
+            resp["from_cache"] = True
+            resp["note"] = (
+                f"Cached Stake lines for {home} vs {away}. "
+                "Refresh when Stake relay is online for live prices."
+            )
+            return resp
+
+    # Cloud: never hang on Playwright — serve ESPN/book estimate as priced board
+    if not stake_network_enabled():
+        return _book_payout_fallback(home, away, budget_inr)
 
     fixture = None
     try:
@@ -324,17 +343,10 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
         if fixture is None:
             logger.warning("Stake match lookup failed for %s vs %s: %s", home, away, exc)
             _overlay_fail_ts = time.monotonic()
-            cached_fx = get_cached_fixture(home, away)
-            if cached_fx and cached_fx.markets:
-                categories = curate_stake_markets(cached_fx, budget_inr)
-                if categories:
-                    resp = _stake_match_response(cached_fx, categories, source="stake_cache")
-                    resp["from_cache"] = True
-                    resp["note"] = (
-                        f"Cached Stake lines for {home} vs {away}. "
-                        "Stake is unreachable — open Odds tab to refresh when back online."
-                    )
-                    return resp
+            book = _book_payout_fallback(home, away, budget_inr)
+            if book.get("available"):
+                book["reason"] = _stake_unavailable_reason(exc)
+                return book
             return {
                 "available": False,
                 "reason": _stake_unavailable_reason(exc),
@@ -343,6 +355,9 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
             }
 
     if not fixture or not fixture.markets:
+        book = _book_payout_fallback(home, away, budget_inr)
+        if book.get("available"):
+            return book
         return {
             "available": False,
             "reason": (
@@ -355,6 +370,9 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
 
     categories = curate_stake_markets(fixture, budget_inr)
     if not categories:
+        book = _book_payout_fallback(home, away, budget_inr)
+        if book.get("available"):
+            return book
         return {
             "available": False,
             "reason": f"Found {home} vs {away} on Stake but couldn't map markets.",
@@ -366,6 +384,100 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
     persist_match_stake_data(home, away, fixture, ov)
 
     return _stake_match_response(fixture, categories, source="stake_live")
+
+
+def _book_payout_fallback(home: str, away: str, budget_inr: float) -> dict:
+    """ESPN/book 1X2 as a priced Odds tab when Stake scrape/relay is dark."""
+    try:
+        from bet_placer.engine.bet_builder import _resolve_league_match
+        resolved = _resolve_league_match(home, away)
+        if not resolved:
+            return {
+                "available": False,
+                "reason": f"No book prices for {home} vs {away} yet.",
+                "categories": [],
+                "source": "none",
+            }
+        match, _meta = resolved
+        odds = getattr(match, "market_odds", None) or []
+        mw = next((o for o in odds if getattr(o, "market", None) and str(getattr(o.market, "value", o.market)) == "match_winner"), None)
+        # market_odds is list of OddsRow keyed by market+selection — collect 1x2
+        by_sel = {}
+        for row in odds:
+            m = getattr(row, "market", None)
+            mv = getattr(m, "value", str(m or ""))
+            if mv != "match_winner":
+                continue
+            price = float(getattr(row, "best_odds", 0) or 0)
+            if price > 1.01:
+                by_sel[str(getattr(row, "selection", "") or "")] = price
+        # Also try match.home_odds style if present on analysis match
+        if not by_sel:
+            for sel, attr in (("home", "home_odds"), ("draw", "draw_odds"), ("away", "away_odds")):
+                v = getattr(match, attr, None)
+                if v and float(v) > 1.01:
+                    by_sel[sel] = float(v)
+        # ESPN Event-style: dig bookmakers
+        if not by_sel and getattr(match, "extra", None):
+            pass
+        home_n = match.home_team
+        away_n = match.away_team
+        outcomes = []
+        labels = {"home": f"{home_n} win", "draw": "Draw", "away": f"{away_n} win"}
+        for sel in ("home", "draw", "away"):
+            price = by_sel.get(sel)
+            if not price:
+                continue
+            stake = float(budget_inr)
+            outcomes.append({
+                "label": labels[sel],
+                "selection": sel,
+                "odds": round(price, 2),
+                "payout_inr": round(stake * price, 0),
+                "profit_inr": round(stake * (price - 1), 0),
+                "active": True,
+            })
+        if not outcomes:
+            return {
+                "available": False,
+                "reason": (
+                    f"Stake is offline on this host and no ESPN 1X2 for {home} vs {away}. "
+                    "Recs still use model prices — open Stake.com to place."
+                ),
+                "categories": [],
+                "source": "none",
+            }
+        return {
+            "available": True,
+            "fixture_id": getattr(match, "id", None),
+            "matched_name": f"{home_n} vs {away_n}",
+            "name": f"{home_n} vs {away_n}",
+            "home": home_n,
+            "away": away_n,
+            "tournament": getattr(match, "league", None),
+            "categories": [{
+                "category": "Match Result",
+                "markets": [{
+                    "market_label": "Match Winner (book estimate)",
+                    "outcomes": outcomes,
+                }],
+            }],
+            "source": "espn_book",
+            "from_cache": False,
+            "note": (
+                "Stake live scrape is off on cloud (Cloudflare). "
+                "These are ESPN/book estimates — verify on Stake before placing."
+            ),
+            "stake_url": "https://stake.com/sports",
+        }
+    except Exception as exc:
+        logger.debug("Book payout fallback failed: %s", exc)
+        return {
+            "available": False,
+            "reason": "Couldn't load book prices while Stake is offline.",
+            "categories": [],
+            "source": "none",
+        }
 
 
 def _stake_match_response(fixture: StakeFixture, categories: list, *, source: str) -> dict:

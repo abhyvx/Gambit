@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useBankroll, formatINR } from '../context/BankrollContext'
-import { fetchBettorStyleCatalog } from '../api'
+import { useAuth } from '../context/AuthContext'
+import {
+  fetchBettorStyleCatalog,
+  disconnectPortfolioSession,
+  authDeleteAccount,
+} from '../api'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
 
@@ -29,9 +35,12 @@ export default function SettingsPage() {
     targetCashout, updateTargetCashout,
     bettorStyle, updateBettorStyle, presets,
   } = useBankroll()
+  const { user, openAuth, logout } = useAuth()
   const [budgetDraft, setBudgetDraft] = useState(String(perMatchBudget))
   const [cashoutDraft, setCashoutDraft] = useState(String(targetCashout))
   const [catalog, setCatalog] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
 
   useEffect(() => { setBudgetDraft(String(perMatchBudget)) }, [perMatchBudget])
   useEffect(() => { setCashoutDraft(String(targetCashout)) }, [targetCashout])
@@ -45,20 +54,89 @@ export default function SettingsPage() {
   const risks = catalog?.risks || FALLBACK_RISKS
   const structures = catalog?.structures || FALLBACK_STRUCTURES
 
+  const clearStake = async () => {
+    setBusy('stake')
+    setMsg('')
+    try {
+      await disconnectPortfolioSession()
+      setMsg('Stake token cleared from this account.')
+    } catch (e) {
+      setMsg(e?.message || 'Could not clear Stake token.')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const removeAccount = async () => {
+    if (!window.confirm('Delete your GAMBIT account and private journal on this server? This cannot be undone.')) return
+    setBusy('delete')
+    setMsg('')
+    try {
+      await authDeleteAccount()
+      await logout()
+      setMsg('Account deleted.')
+    } catch (e) {
+      setMsg(e?.message || 'Could not delete account.')
+    } finally {
+      setBusy('')
+    }
+  }
+
   return (
-    <div className="page">
+    <div className="page settings-page">
       <header className="page-header">
         <div>
-          <h1>Style & bankroll</h1>
+          <h1>Account & settings</h1>
           <p className="subtitle">
-            Goal, risk, and structure control which bets get surfaced. Change anytime.
+            Profile, Stake connection, bankroll style, and legal docs.
           </p>
         </div>
       </header>
 
       <section className="panel">
+        <h2 className="panel-title">Account</h2>
+        {user ? (
+          <div className="settings-account">
+            <p><strong>{user.name || 'You'}</strong> · {user.email}</p>
+            <div className="settings-actions">
+              <button type="button" className="refresh-btn" onClick={logout}>Sign out</button>
+              <button type="button" className="refresh-btn" disabled={busy === 'stake'} onClick={clearStake}>
+                {busy === 'stake' ? 'Clearing…' : 'Remove Stake token'}
+              </button>
+              <button type="button" className="refresh-btn danger" disabled={busy === 'delete'} onClick={removeAccount}>
+                {busy === 'delete' ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="settings-account">
+            <p className="muted">Sign in to keep your journal private and connect Stake with an API token.</p>
+            <div className="settings-actions">
+              <button type="button" className="refresh-btn" onClick={() => openAuth('login')}>Sign in</button>
+              <button type="button" className="refresh-btn" onClick={() => openAuth('signup')}>Create account</button>
+            </div>
+          </div>
+        )}
+        {msg && <p className="muted" role="status">{msg}</p>}
+        <p className="muted">
+          Stake connect lives on <Link to="/app/portfolio">Portfolio</Link> (paste API token).
+        </p>
+      </section>
+
+      <section className="panel">
+        <h2 className="panel-title">Legal</h2>
+        <div className="settings-actions">
+          <Link className="refresh-btn" to="/app/legal/privacy">Privacy</Link>
+          <Link className="refresh-btn" to="/app/legal/terms">Terms</Link>
+        </div>
+        <p className="responsible-note">
+          18+ only · Analytics software, not a bookmaker · Bet only what you can afford to lose.
+        </p>
+      </section>
+
+      <section className="panel">
         <h2 className="panel-title">What do you want?</h2>
-        <p className="panel-desc">Pick a goal. Change anytime.</p>
+        <p className="panel-desc">Goal, risk, and structure control which bets get surfaced.</p>
         <div className="style-grid">
           {goals.map((g) => (
             <button
@@ -155,10 +233,6 @@ export default function SettingsPage() {
           <strong>{(targetCashout / Math.max(perMatchBudget, 1)).toFixed(1)}x</strong>
         </p>
       </section>
-
-      <p className="responsible-note">
-        18+ only · Betting carries real risk of loss. Only bet money you can afford to lose.
-      </p>
     </div>
   )
 }

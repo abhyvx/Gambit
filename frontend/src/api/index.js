@@ -399,6 +399,19 @@ export async function authLogout() {
   setAuthToken('')
 }
 
+export async function authDeleteAccount() {
+  const r = await fetch(`${API}/auth/delete`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Delete failed (${r.status})`)
+  }
+  setAuthToken('')
+  return r.json()
+}
+
 export async function fetchAuthMe() {
   const r = await fetch(`${API}/auth/me`, { headers: authHeaders() })
   if (!r.ok) return { user: null }

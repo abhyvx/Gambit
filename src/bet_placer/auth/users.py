@@ -124,6 +124,29 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
         return public_user(row)
 
 
+def delete_account(token: str | None) -> None:
+    """Remove user row, sessions, and portfolio file."""
+    user = user_from_token(token)
+    if not user:
+        raise ValueError("Not signed in.")
+    email = user.get("email")
+    uid = user.get("id")
+    with _LOCK:
+        users = _load(_USERS)
+        users.pop(email, None)
+        _save(_USERS, users)
+        sessions = _load(_SESSIONS)
+        sessions = {k: v for k, v in sessions.items() if v.get("email") != email and v.get("user_id") != uid}
+        _save(_SESSIONS, sessions)
+    if uid:
+        path = data_path("portfolios", f"{uid}.json")
+        try:
+            if path.is_file():
+                path.unlink()
+        except Exception:
+            pass
+
+
 def public_user(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),

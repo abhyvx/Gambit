@@ -542,7 +542,7 @@ export default function PortfolioPage() {
           </div>
         </div>
         <form
-          className="portfolio-controls"
+          className="portfolio-manual-form"
           onSubmit={async (e) => {
             e.preventDefault()
             setManualBusy(true)

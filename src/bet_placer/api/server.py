@@ -324,6 +324,19 @@ def auth_logout(request: Request):
     return {"ok": True}
 
 
+@app.post("/api/auth/delete")
+def auth_delete(request: Request):
+    from bet_placer.auth.users import delete_account
+
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    try:
+        delete_account(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 class PortfolioPrivacyUpdate(BaseModel):
     portfolio_enabled: bool
     risk_acknowledged: bool

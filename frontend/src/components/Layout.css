@@ -120,7 +120,60 @@
   background: var(--bg);
   color: var(--text);
 }
-.auth-error { color: #f07178; margin: 0; font-size: var(--fs-sm); }
+.auth-accept {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.auth-accept input { margin-top: 3px; }
+.auth-accept a { color: var(--blue-bright); }
+
+.settings-account { display: grid; gap: 10px; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.refresh-btn.danger {
+  border-color: color-mix(in srgb, #c45c5c 50%, var(--border));
+  color: #e07070;
+}
+.legal-body h2 { margin-top: 1.2rem; font-size: 1.05rem; }
+.legal-body ul { padding-left: 1.2rem; line-height: 1.55; }
+.legal-body p { line-height: 1.55; color: var(--text-muted); }
+
+.portfolio-manual-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+.portfolio-manual-form .portfolio-check.compact {
+  display: grid;
+  gap: 4px;
+}
+.portfolio-manual-form .portfolio-check.compact span {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.portfolio-manual-form input,
+.portfolio-manual-form select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.portfolio-manual-form .refresh-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.user-chip.auth-chip {
+  text-decoration: none;
+}
 .auth-switch {
   margin-top: 12px;
   background: none;

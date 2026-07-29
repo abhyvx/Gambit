@@ -33,13 +33,16 @@ def main() -> None:
 
     os.environ.setdefault("STAKE_USE_BROWSER", "true")
     from bet_placer.data.stake_scraper import StakeScraper
-    from bet_placer.engine.stake_odds import export_stake_overlay_payload, fetch_fast_stake_overlay
+    from bet_placer.engine.stake_odds import fetch_fast_stake_overlay, persist_match_stake_data
 
     print(f"Stake relay -> {cloud}/api/stake/relay every {interval}s (Ctrl+C to stop)")
     while True:
         try:
             scraper = StakeScraper(timeout=90, allow_browser_launch=True)
             overlay = fetch_fast_stake_overlay(scraper)
+            for fx in overlay.values():
+                if fx.markets:
+                    persist_match_stake_data(fx.home_team, fx.away_team, fx, None)
             from bet_placer.engine.stake_odds import _overlay_key, _serialize_fixture
             fixtures = {
                 _overlay_key(fx.home_team, fx.away_team): _serialize_fixture(fx)

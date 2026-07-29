@@ -1,0 +1,3 @@
+# Paste your live Render URL here (one line, no trailing slash).
+# Example: https://gambit-xxxx.onrender.com
+https://YOUR-SERVICE.onrender.com

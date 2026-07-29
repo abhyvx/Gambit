@@ -1,52 +1,54 @@
 # Deploy Gambit on Render (free)
 
-## Exact steps
+## 1. Deploy the app
 
-### Blueprint (recommended)
+1. https://dashboard.render.com/ → **New +** → **Blueprint**
+2. Connect **abhyvx/Gambit** → **Apply** (env vars pre-filled from `render.yaml`)
+3. Wait until **Live** → copy URL e.g. `https://gambit-xxxx.onrender.com`
 
-1. https://dashboard.render.com/ → sign in with GitHub
-2. **New +** → **Blueprint**
-3. Connect repo **abhyvx/Gambit** → **Apply** (no env vars to type; blueprint fills them)
-4. Wait 10-20 min until **Live**
-5. Open `https://YOUR-SERVICE.onrender.com/app`
+If Blueprint fails: **New +** → **Web Service** → Docker → branch `main` → health `/api/health` → Free.
 
-### Manual web service (if Blueprint fails)
+## 2. Enable 24/7 Stake + training (one edit, no secrets)
 
-1. **New +** → **Web Service** → repo **Gambit**, branch **main**
-2. Runtime: **Docker**, Dockerfile `./Dockerfile`, plan **Free**
-3. Health check: `/api/health`
-4. Env: `CRAFT_DISABLE=1`, `STAKE_USE_BROWSER=false`, `STAKE_RELAY_SECRET=gambit-relay-v1-abhyvx`
-5. **Create Web Service**
+Edit in GitHub (or locally and push):
 
-## Stake live odds (one URL in .env)
-
-Cloud cannot call stake.com (403). Run the relay on your laptop:
-
-**.env** (only your Render URL required):
+**`deploy/cloud_url.txt`** - replace placeholder with your Render URL:
 
 ```
-GAMBIT_CLOUD_URL=https://YOUR-SERVICE.onrender.com
-STAKE_USE_BROWSER=true
+https://gambit-xxxx.onrender.com
 ```
 
-```bash
-playwright install chromium   # once
-./scripts/start_stake_relay.sh
-```
+That single line enables:
 
-Relay secret is built in (`gambit-relay-v1-abhyvx`). Same on Render and laptop automatically.
+| Service | Runs on | Schedule |
+|---------|---------|----------|
+| Craft training | GitHub Actions | Daily midnight UTC |
+| Stake relay | GitHub Actions | Every 15 minutes |
+| Web app | Render | 24/7 |
 
-## Training
+Optional: GitHub repo **Settings → Variables →** `GAMBIT_CLOUD_URL` = same URL.
 
-- Daily: midnight UTC on `main`
-- Manual: https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml
-- Model: https://github.com/abhyvx/Gambit/releases/tag/model-latest
-- After green run: Render → **Manual Deploy**
+## 3. After craft training completes
+
+1. https://github.com/abhyvx/Gambit/actions/workflows/craft-train.yml
+2. Green run → Render → **Manual Deploy**
+
+Model release: https://github.com/abhyvx/Gambit/releases/tag/model-latest
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| Docker build fails | Manual Deploy → Clear build cache & deploy |
-| Stake 403 in logs | Normal on cloud; run `./scripts/start_stake_relay.sh` on laptop |
-| Model page empty | Wait for green Actions run; redeploy |
+| Docker build failed | Pull latest `main` (regex fix in SportPage). Clear build cache & deploy. |
+| Stake 403 on Render logs | Normal. Stake comes via Actions relay, not Render directly. |
+| Stake relay skips | `deploy/cloud_url.txt` still has placeholder. Paste real Render URL. |
+| Model page empty | Wait for green craft run; Manual Deploy. |
+
+## Local dev only
+
+```bash
+./scripts/run.sh
+STAKE_USE_BROWSER=true   # optional, in .env
+```
+
+Laptop relay fallback: `./scripts/start_stake_relay.sh` (not needed if Actions relay works).

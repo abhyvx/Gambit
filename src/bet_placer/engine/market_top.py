@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from bet_placer.data.providers import UnifiedOddsProvider
+from bet_placer.config import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def _stake_cache_payload(*, allow_stale: bool = False) -> tuple[dict, float | No
     """Load Stake disk cache. Returns (data, age_hours). age None if unknown."""
     from pathlib import Path
     import json
-    path = Path.home() / ".bet_placer" / "stake_overlay_cache.json"
+    path = data_path("stake_overlay_cache.json")
     if not path.exists():
         return {}, None
     data = json.loads(path.read_text())

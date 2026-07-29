@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 
-from bet_placer.config import get_settings
+from bet_placer.config import data_path, get_settings
 from bet_placer.data.stake_browser import browser_status, warmup_visible
 from bet_placer.data.stake_scraper import StakeScraper
 
@@ -137,7 +137,7 @@ def _store_path() -> Path:
     settings = get_settings()
     if settings.portfolio_store_path:
         return Path(settings.portfolio_store_path).expanduser()
-    return Path.home() / ".bet_placer" / "portfolio_state.json"
+    return data_path("portfolio_state.json")
 
 
 def _default_state() -> dict[str, Any]:

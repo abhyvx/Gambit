@@ -8,9 +8,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from bet_placer.config import data_path
 
-WEIGHTS_PATH = Path.home() / ".bet_placer" / "craft_nn.joblib"
-CHAMPION_PATH = Path.home() / ".bet_placer" / "craft_nn_champion.joblib"
+WEIGHTS_PATH = data_path("craft_nn.joblib")
+CHAMPION_PATH = data_path("craft_nn_champion.joblib")
 
 _SPORT = {"soccer": 0.0, "basketball": 1.0, "cricket": 2.0}
 _KIND = {

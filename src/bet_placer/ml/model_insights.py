@@ -7,6 +7,7 @@ building status with need/have counts.
 from __future__ import annotations
 
 from typing import Any
+from bet_placer.config import data_path
 
 # Ticket / paired-sample floors (ROI desk). Entity counts use TEAMS_NEED / soft needs -
 # NBA will never have 10k franchises; that was a bad gate.
@@ -40,7 +41,7 @@ FACTORS_TRAINED = (
     {"id": "intuition", "label": "Context knobs (capped)", "sports": "rest, must-win, public lean (bounded)"},
     {"id": "calibration", "label": "Calibration + craft NN", "sports": "paper loop · real books preferred"},
     {"id": "markets", "label": "Market coverage", "sports": "1X2, ML, OU, spreads, BTTS, SGM, niches"},
-    {"id": "betting_evolution", "label": "Close-price pairing", "sports": "soccer B365/Avg · BB/cricket fair labeled"},
+    {"id": "betting_evolution", "label": "Model-fair pairing", "sports": "soccer / BB / cricket even-money skill"},
     {"id": "stake_volume", "label": "Stake handle / bettors", "sports": "live boards when overlay cached"},
 )
 
@@ -454,10 +455,8 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "craft_sport_volume": sport_vol,
             "block_label": block.get("label"),
             "block_prev_label": block_prev.get("label"),
-            "betting_trends": [
-                t for t in (betting.get("trends") or [])
-                if float(((betting.get("by_sport") or {}).get(t.get("sport")) or {}).get("roi") or 0) > 0
-            ],
+            # Keep gated sports in trends so monthly charts still render (desk 12 marks them)
+            "betting_trends": list(betting.get("trends") or []),
             "betting_yearly": betting.get("yearly") or [],
             "betting_gated": [
                 sp for sp, row in (betting.get("by_sport") or {}).items()
@@ -495,10 +494,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "craft_sport_volume": sport_vol,
             "block_label": block.get("label"),
             "block_prev_label": block_prev.get("label"),
-            "betting_trends": [
-                t for t in (betting.get("trends") or [])
-                if float(((betting.get("by_sport") or {}).get(t.get("sport")) or {}).get("roi") or 0) > 0
-            ],
+            "betting_trends": list(betting.get("trends") or []),
             "betting_yearly": betting.get("yearly") or [],
             "betting_gated": [
                 sp for sp, row in (betting.get("by_sport") or {}).items()
@@ -906,14 +902,14 @@ def _build_containers(
         {
             "id": "12_betting_pairs",
             "title": "12 · Close-price betting pairs",
-            "desc": "Soccer B365/Avg closes; basketball/cricket model-fair labeled (no Odds API spend). Ready at 10k.",
+            "desc": "Soccer / basketball / cricket model-fair even-money (no Odds API). Ready at 10k.",
             "kind": "sport_grid",
             "sports": betting_cells,
         },
         {
             "id": "13_monthly_roi",
             "title": "13 · Monthly unit ROI",
-            "desc": "Per-sport monthly heartbeat. Soccer = tight B365 value band (edge≥8%, odds 1.45–3.6). Underwater sports show as gated on the pairs desk. not a craft failure.",
+            "desc": "Per-sport monthly heartbeat (model-fair skill). Sports with overall pairs ROI ≤ 0 stay gated for live picks but still chart.",
             "kind": "chart",
             "chart": "betting_monthly_roi",
             **_ready(monthly_n, MIN_N["monthly"]),
@@ -1275,9 +1271,9 @@ def _book_depth_from_boards(params: dict) -> dict[str, Any]:
     try:
         from pathlib import Path
         import json
-        path = Path.home() / ".bet_placer" / "espn_board_cache.json"
+        path = data_path("espn_board_cache.json")
         blob = json.loads(path.read_text()) if path.exists() else {}
-        odds_dir = Path.home() / ".bet_placer" / "odds_api_cache"
+        odds_dir = data_path("odds_api_cache")
         for sp, prefs in prefixes.items():
             seen_ids: set[str] = set()
             priced = 0
@@ -1342,7 +1338,7 @@ def _recent_craft_notes(limit: int = 8) -> list[str]:
     """Tail of craft_notes.log. what the trainer is actually doing."""
     try:
         from pathlib import Path
-        path = Path.home() / ".bet_placer" / "craft_notes.log"
+        path = data_path("craft_notes.log")
         if not path.exists():
             return []
         lines = [ln.strip() for ln in path.read_text(errors="ignore").splitlines() if ln.strip()]

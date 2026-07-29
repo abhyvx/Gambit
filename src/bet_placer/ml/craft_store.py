@@ -10,8 +10,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from bet_placer.config import data_path
 
-DB_PATH = Path.home() / ".bet_placer" / "craft.db"
+DB_PATH = data_path("craft.db")
 
 
 def _now() -> str:

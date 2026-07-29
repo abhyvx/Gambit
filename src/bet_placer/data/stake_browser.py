@@ -22,10 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from bet_placer.config import data_path
+
 logger = logging.getLogger(__name__)
 
 # Persistent Chrome profile — log in / pass Cloudflare once, reused forever.
-PROFILE_DIR = Path.home() / ".bet_placer" / "stake_profile"
+PROFILE_DIR = data_path("stake_profile")
 STAKE_URL = "https://stake.com/sports/soccer"
 GRAPHQL_PATH = "/_api/graphql"
 
@@ -58,7 +60,7 @@ class StakeBrowserError(RuntimeError):
 
 def _headless() -> bool:
     try:
-        from bet_placer.config import get_settings
+        from bet_placer.config import data_path, get_settings
         return bool(get_settings().stake_browser_headless)
     except Exception:
         return True

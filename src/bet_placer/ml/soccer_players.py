@@ -12,8 +12,9 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
+from bet_placer.config import data_path
 
-CACHE = Path.home() / ".bet_placer" / "statsbomb"
+CACHE = data_path("statsbomb")
 BASE = "https://raw.githubusercontent.com/statsbomb/open-data/master/data"
 TTL_DAYS = 14
 PLAYER_K = 18.0

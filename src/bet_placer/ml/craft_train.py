@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from bet_placer.config import data_path
 from bet_placer.ml.craft_nn import CraftNet
 from bet_placer.ml.craft_store import get_meta, log_epoch, progress_snapshot, set_meta
 from bet_placer.ml.gem_craft import spot_gems_from_events, update_craft_weights_from_tickets
@@ -367,7 +368,7 @@ def train_until_roi(
     gate_detail: dict[str, Any] = {}
     sport_ev_boost: dict[str, float] = {"soccer": 0.0, "basketball": 0.0, "cricket": 0.0}
     sport_ledger: dict = dict(get_meta("sport_ledger") or {})
-    notes_path = Path.home() / ".bet_placer" / "craft_notes.log"
+    notes_path = data_path("craft_notes.log")
     notes_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build holdout once from a deep pool so later epochs stay comparable

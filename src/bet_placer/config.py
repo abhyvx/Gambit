@@ -1,9 +1,23 @@
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Built-in relay token (Render + laptop share this; no manual secret setup)
 DEFAULT_STAKE_RELAY_SECRET = "gambit-relay-v1-abhyvx"
+
+
+def bet_placer_home() -> Path:
+    """Durable data dir. Render sets BET_PLACER_HOME=/var/lib/bet_placer; local uses ~/.bet_placer."""
+    raw = (os.environ.get("BET_PLACER_HOME") or "").strip()
+    p = Path(raw).expanduser() if raw else (Path.home() / ".bet_placer")
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def data_path(*parts: str) -> Path:
+    return bet_placer_home().joinpath(*parts)
 
 
 class Settings(BaseSettings):

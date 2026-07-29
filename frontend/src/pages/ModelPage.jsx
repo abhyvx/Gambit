@@ -254,16 +254,15 @@ function InsightContainer({ c, curves, sportKeys }) {
   }))
   const trendRows = curves.betting_trends || []
   const gatedSports = new Set(curves.betting_gated || [])
-  // Each sport keeps its own last 24 months — underwater sports filtered server-side
+  // Last 24 months per sport — gated sports still chart (labeled below)
   const bettingRoiBySport = sportKeys
-    .filter((k) => !gatedSports.has(k))
     .map((k) => {
       const rows = trendRows
         .filter((t) => t.sport === k && t.ym && t.roi != null)
         .sort((a, b) => String(a.ym).localeCompare(String(b.ym)))
         .slice(-24)
       return {
-        key: k,
+        key: gatedSports.has(k) ? `${k} (gated)` : k,
         color: SPORT_COLOR[k],
         values: rows.map((r) => Number(r.roi)),
       }
@@ -513,13 +512,13 @@ function InsightContainer({ c, curves, sportKeys }) {
       {c.kind === 'chart' && c.chart === 'betting_monthly_roi' && (
         <div className="insight-charts">
           {gatedSports.size > 0 && (
-            <p className="muted">Gated (negative pairs ROI): {[...gatedSports].join(', ')}. See desk 12.</p>
+            <p className="muted">Gated for live picks (overall pairs ROI ≤ 0): {[...gatedSports].join(', ')}. Charts still show the heartbeat.</p>
           )}
           {bettingRoiBySport.map((s) => (
             <MultiLineChart key={s.key} title={`${s.key} monthly ROI`} series={[s]} format={(v) => chartRoi(v)} height={110} />
           ))}
           {!bettingRoiBySport.length && (
-            <p className="muted">No positive-ROI monthly series yet.</p>
+            <p className="muted">No monthly series yet — wait for betting evolution data on this host.</p>
           )}
         </div>
       )}

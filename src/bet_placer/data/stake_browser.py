@@ -594,10 +594,21 @@ def _relaunch_preference() -> bool | None:
     return False if _state.get("launch_headless") is False else None
 
 
-def _graphql_on_thread(query: str, variables: dict | None, launch_if_needed: bool) -> dict[str, Any]:
+def _graphql_on_thread(
+    query: str,
+    variables: dict | None,
+    launch_if_needed: bool,
+    access_token: str | None = None,
+) -> dict[str, Any]:
     global _recovery_used
     _ensure_browser(launch_if_needed=launch_if_needed)
     page = _state["page"]
+    if access_token:
+        try:
+            page.evaluate("(t) => { window.__betplacerAuthToken = t; }", access_token)
+            _state["auth_token"] = access_token
+        except Exception:
+            pass
     js = (
         "async ({query, variables}) => {"
         "  const pickToken = () => {"
@@ -698,11 +709,12 @@ def graphql(
     variables: dict | None = None,
     timeout: int = 60,
     launch_if_needed: bool = True,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     """Run a GraphQL query through the persistent browser (thread-safe)."""
     if not is_installed():
         raise StakeBrowserError("Playwright not installed — run: playwright install chromium")
-    fut = _executor.submit(_graphql_on_thread, query, variables, launch_if_needed)
+    fut = _executor.submit(_graphql_on_thread, query, variables, launch_if_needed, access_token)
     return fut.result(timeout=timeout + 160)
 
 

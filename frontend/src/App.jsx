@@ -8,26 +8,29 @@ import GuidePage from './pages/GuidePage'
 import ModelPage from './pages/ModelPage'
 import PortfolioPage from './pages/PortfolioPage'
 import { BankrollProvider } from './context/BankrollContext'
+import { AuthProvider } from './context/AuthContext'
 import './index.css'
 
 export default function App() {
   return (
-    <BankrollProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/app" element={<Layout />}>
-            <Route index element={<HomePage />} />
-            <Route path="sport/:sportId" element={<SportPage />} />
-            <Route path="worldcup" element={<WorldCupPage />} />
-            <Route path="model" element={<ModelPage />} />
-            <Route path="portfolio" element={<PortfolioPage />} />
-            <Route path="guide" element={<GuidePage />} />
-            <Route path="settings" element={<Navigate to="/app" replace />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </BankrollProvider>
+    <AuthProvider>
+      <BankrollProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/app" element={<Layout />}>
+              <Route index element={<HomePage />} />
+              <Route path="sport/:sportId" element={<SportPage />} />
+              <Route path="worldcup" element={<WorldCupPage />} />
+              <Route path="model" element={<ModelPage />} />
+              <Route path="portfolio" element={<PortfolioPage />} />
+              <Route path="guide" element={<GuidePage />} />
+              <Route path="settings" element={<Navigate to="/app" replace />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </BankrollProvider>
+    </AuthProvider>
   )
 }

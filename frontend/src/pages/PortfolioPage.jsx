@@ -9,9 +9,11 @@ import {
   updatePortfolioPrivacy,
   addManualPortfolioBet,
   updatePortfolioBetResult,
+  connectStakeApiToken,
 } from '../api'
 import PortfolioCurve from '../components/PortfolioCurve'
 import { useEntryReady } from '../components/EntryScreen'
+import { useAuth } from '../context/AuthContext'
 import './pages.css'
 
 function fmtTs(ts) {
@@ -40,6 +42,9 @@ export default function PortfolioPage() {
     home: '', away: '', selection: '', odds: '', stake: '', result: 'open', market: 'manual',
   })
   const [manualBusy, setManualBusy] = useState(false)
+  const [stakeToken, setStakeToken] = useState('')
+  const [tokenBusy, setTokenBusy] = useState(false)
+  const { user, openAuth } = useAuth()
   useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
@@ -194,7 +199,7 @@ export default function PortfolioPage() {
           <span className="page-eyebrow">PORTFOLIO</span>
           <h1>Betting journal</h1>
           <p className="subtitle">
-            Confirm placed slip bets here. Finished matches settle won or lost automatically. Stake history imports from your Mac login script when cloud Chrome is blocked.
+            Sign in, connect Stake with an API token, or confirm slip bets. Finished matches settle won or lost automatically.
           </p>
           {portfolio.profile?.summary && (
             <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
@@ -224,15 +229,77 @@ export default function PortfolioPage() {
         </div>
       </header>
 
-      {(cloudStake && !stakeLive) && (
-        <div className="portfolio-alert">
-          Cloud cannot open Stake login (datacenter IP). On your Mac, from the repo run:
-          {' '}
-          <code>PYTHONPATH=src python3 scripts/stake_login.py</code>
-          {' '}
-          Sign in once in Chrome; it pushes your Stake journal here. Slip confirm still works without Stake.
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Connect Stake</h2>
+            <p className="muted">
+              No installs. Create a token on Stake, paste it here, and we import your bet history.
+            </p>
+          </div>
         </div>
-      )}
+        {!user && (
+          <p className="muted">
+            <button type="button" className="refresh-btn" onClick={() => openAuth('signup')}>
+              Create a Gambit account
+            </button>
+            {' '}first so your journal stays private to you.
+          </p>
+        )}
+        <div className="stake-token-box">
+          <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem', lineHeight: 1.5 }}>
+            <li>
+              <a href="https://stake.com/?tab=login&modal=auth" target="_blank" rel="noreferrer">
+                Sign in on Stake
+              </a>
+            </li>
+            <li>
+              Open{' '}
+              <a href="https://stake.com/settings/security" target="_blank" rel="noreferrer">
+                Settings → Security → API Tokens
+              </a>
+              {' '}and create a token
+            </li>
+            <li>Paste the token below and tap Connect</li>
+          </ol>
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder="Paste Stake API token"
+            value={stakeToken}
+            onChange={(e) => setStakeToken(e.target.value.trim())}
+          />
+          <div className="stake-token-actions">
+            <button
+              type="button"
+              className="refresh-btn"
+              disabled={tokenBusy || !stakeToken}
+              onClick={async () => {
+                setTokenBusy(true)
+                setErr('')
+                try {
+                  const next = await connectStakeApiToken(stakeToken)
+                  setState(next)
+                  setStakeToken('')
+                  const status = next?.connection?.last_sync_status
+                  if (status === 'queued') {
+                    // Odds link usually drains the queue within a few minutes.
+                    setTimeout(() => {
+                      fetchPortfolioState().then(setState).catch(() => {})
+                    }, 20000)
+                  }
+                } catch (e) {
+                  setErr(fetchErrorMessage(e, 'Could not connect Stake token.'))
+                } finally {
+                  setTokenBusy(false)
+                }
+              }}
+            >
+              {tokenBusy ? 'Connecting…' : 'Connect with token'}
+            </button>
+          </div>
+        </div>
+      </section>
 
       {(showStatusError || statusBanner) && (
         <div className={`portfolio-alert ${showStatusError ? 'error' : ''}`}>

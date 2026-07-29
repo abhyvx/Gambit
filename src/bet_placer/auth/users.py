@@ -1,0 +1,132 @@
+"""Lightweight Gambit user accounts (email + password). No OAuth deps."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import secrets
+import time
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from bet_placer.config import data_path
+
+_LOCK = Lock()
+_USERS = data_path("users.json")
+_SESSIONS = data_path("sessions.json")
+_PBKDF_ITERS = 120_000
+
+
+def _load(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        _PBKDF_ITERS,
+    ).hex()
+    return salt, digest
+
+
+def _check_password(password: str, salt: str, digest: str) -> bool:
+    _, got = _hash_password(password, salt)
+    return hmac.compare_digest(got, digest)
+
+
+def signup(*, email: str, password: str, name: str | None = None) -> dict[str, Any]:
+    email = (email or "").strip().lower()
+    password = password or ""
+    if "@" not in email or len(email) < 5:
+        raise ValueError("Enter a valid email.")
+    if len(password) < 6:
+        raise ValueError("Password must be at least 6 characters.")
+    with _LOCK:
+        users = _load(_USERS)
+        if email in users:
+            raise ValueError("That email already has an account. Sign in instead.")
+        uid = secrets.token_hex(8)
+        salt, digest = _hash_password(password)
+        users[email] = {
+            "id": uid,
+            "email": email,
+            "name": (name or email.split("@")[0]).strip()[:64],
+            "salt": salt,
+            "password": digest,
+            "created_at": time.time(),
+        }
+        _save(_USERS, users)
+        token = _issue_session(uid, email)
+        return {"token": token, "user": public_user(users[email])}
+
+
+def login(*, email: str, password: str) -> dict[str, Any]:
+    email = (email or "").strip().lower()
+    with _LOCK:
+        users = _load(_USERS)
+        row = users.get(email)
+        if not row or not _check_password(password, row.get("salt") or "", row.get("password") or ""):
+            raise ValueError("Email or password is wrong.")
+        token = _issue_session(row["id"], email)
+        return {"token": token, "user": public_user(row)}
+
+
+def _issue_session(uid: str, email: str) -> str:
+    sessions = _load(_SESSIONS)
+    token = secrets.token_urlsafe(32)
+    sessions[token] = {"user_id": uid, "email": email, "created_at": time.time()}
+    # ponytail: drop sessions older than 90d — fine for student app scale
+    cutoff = time.time() - 90 * 86400
+    sessions = {k: v for k, v in sessions.items() if float(v.get("created_at") or 0) >= cutoff}
+    sessions[token] = {"user_id": uid, "email": email, "created_at": time.time()}
+    _save(_SESSIONS, sessions)
+    return token
+
+
+def logout(token: str | None) -> None:
+    if not token:
+        return
+    with _LOCK:
+        sessions = _load(_SESSIONS)
+        sessions.pop(token, None)
+        _save(_SESSIONS, sessions)
+
+
+def user_from_token(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    with _LOCK:
+        sessions = _load(_SESSIONS)
+        sess = sessions.get(token)
+        if not sess:
+            return None
+        email = sess.get("email")
+        users = _load(_USERS)
+        row = users.get(email) if email else None
+        if not row:
+            return None
+        return public_user(row)
+
+
+def public_user(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "email": row.get("email"),
+        "name": row.get("name"),
+    }

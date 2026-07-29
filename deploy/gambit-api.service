@@ -1,0 +1,21 @@
+[Unit]
+Description=Gambit API + static frontend
+After=network.target
+
+[Service]
+Type=simple
+User=gambit
+WorkingDirectory=/opt/gambit
+Environment=CRAFT_DISABLE=1
+Environment=STAKE_USE_BROWSER=false
+Environment=STAKE_BROWSER_WARMUP_ON_STARTUP=false
+Environment=GAMBIT_FRONTEND_DIST=/opt/gambit/frontend/dist
+Environment=GAMBIT_HOST=127.0.0.1
+Environment=GAMBIT_PORT=8000
+EnvironmentFile=-/opt/gambit/.env
+ExecStart=/opt/gambit/.venv/bin/uvicorn bet_placer.api.server:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

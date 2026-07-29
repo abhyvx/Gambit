@@ -2,10 +2,10 @@ const API = '/api'
 
 function fetchErrorMessage(err, fallback) {
   if (err?.name === 'TimeoutError' || String(err).includes('TimeoutError')) {
-    return 'Request timed out. The API may still be working. Wait, then click Reload.'
+    return 'Request timed out. Wait, then click Reload.'
   }
   if (String(err).includes('Failed to fetch')) {
-    return 'Could not reach the API. Run ./scripts/run.sh from the Bet Placer folder and keep that terminal open.'
+    return 'Could not reach the API. Start ./scripts/run.sh locally, or open your Render URL to wake the free service.'
   }
   return err?.message || fallback
 }
@@ -232,6 +232,26 @@ export async function refreshPortfolioSnapshot() {
     }
     throw new Error(msg)
   }
+  return r.json()
+}
+
+export async function recordSlipLegs(legs) {
+  const r = await fetch(`${API}/slip/record`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ legs: legs || [] }),
+  })
+  if (!r.ok) throw new Error(`Slip record failed (${r.status})`)
+  return r.json()
+}
+
+export async function settleSlipLeg({ id, won, sport }) {
+  const r = await fetch(`${API}/slip/settle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, won: Boolean(won), sport }),
+  })
+  if (!r.ok) throw new Error(`Slip settle failed (${r.status})`)
   return r.json()
 }
 

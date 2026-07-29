@@ -326,24 +326,17 @@ def build_smart_picks(
 
     ctx = human_context or {}
     from bet_placer.engine.stake_odds import option_on_stake, stake_lines_usable, stake_overlay_ready
+    from bet_placer.engine.market_advisor import _match_sport
+    from bet_placer.ml.craft_store import sport_min_probability
+
+    sport = _match_sport(match)
+    # Craft floor when a sport is bleeding; otherwise keep desk usable at 0.58
+    sport_floor = max(0.58, float(sport_min_probability(sport, 0.58) or 0.58))
 
     overlay = ctx.get("stake_overlay")
     board_stake = ctx.get("_board_source") == "stake"
-    if not stake_lines_usable(overlay, ctx):
-        return {
-            "easy_money": [],
-            "situational_picks": [],
-            "smart_picks": [],
-            "unified_picks": [],
-            "parlay_suggestion": None,
-            "thesis": thesis,
-            "game_profile": {},
-            "analyst_read": {},
-            "stage_note": _stage_note(matchday),
-            "skip_reasons": ["Verify on Stake — no live lines loaded."],
-            "spotlight": None,
-            "easy_money_note": "Connect Stake and refresh to see picks priced from live lines.",
-        }
+    # ponytail: blanking the whole desk when Stake is cold forced CAUTION / empty tabs
+    stake_ok = stake_lines_usable(overlay, ctx) or board_stake
 
     slate = slate_usage if slate_usage is not None else {}
     thesis = thesis or _match_thesis(flat, home, away)
@@ -362,12 +355,14 @@ def build_smart_picks(
     pool = [
         o for o in flat
         if _is_pool_eligible(o, home, away) and plausible(o) and o.get("odds", 0) >= 1.15
+        and float(o.get("our_probability") or 0) >= sport_floor
         and (
             o.get("market") != "player_goal"
             or player_goal_eligible(home, away, o.get("selection") or "")
         )
         and (
-            board_stake
+            not stake_ok
+            or board_stake
             or option_on_stake(o.get("market"), o.get("selection"), o.get("line"), overlay)
         )
     ]
@@ -406,7 +401,7 @@ def build_smart_picks(
         fam = _market_family(angle.get("market", ""))
         if fam in used_families and len(situational) >= _MIN_SITUATIONAL:
             continue
-        if not _on_stake({}, angle, ctx) and angle.get("market") != "first_goal_team":
+        if stake_ok and not _on_stake({}, angle, ctx) and angle.get("market") != "first_goal_team":
             continue
         o = _resolve_angle(angle, pool, home, away, match, ctx)
         if not o:
@@ -486,8 +481,20 @@ def build_smart_picks(
         "game_profile": profile,
         "analyst_read": read,
         "stage_note": stage,
-        "skip_reasons": [] if (easy_money or situational) else ["No high-confidence or situational market resolved."],
+        "skip_reasons": (
+            [] if (easy_money or situational)
+            else (["No high-confidence or situational market resolved."] if stake_ok else ["Model-priced slate is thin — connect Stake for more lines."])
+        ),
         "spotlight": (easy_money[0] if easy_money else unified[0]) if (easy_money or unified) else None,
+        "easy_money_note": (
+            None if easy_money
+            else (
+                "No bet cleared the high-confidence bar for this match."
+                if stake_ok
+                else "High-confidence picks use model prices until Stake is connected."
+            )
+        ),
+        "stake_priced": stake_ok,
     }
 
 

@@ -17,7 +17,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     p = argparse.ArgumentParser(description="Craft ROI worker (holdout-evaluated)")
-    p.add_argument("--epochs", type=int, default=20, help="Max craft epochs this run")
+    p.add_argument("--epochs", type=int, default=0, help="Max craft epochs (0 = unlimited until gates)")
     p.add_argument("--full-model", action="store_true", help="Full tracker.train() before craft")
     p.add_argument("--target-roi", type=float, default=0.25)
     p.add_argument("--target-acc", type=float, default=0.60)
@@ -40,19 +40,24 @@ def main() -> None:
     if float(best.get("roi") or -1) < 0 or float(best.get("accuracy") or 0) < args.target_acc:
         set_meta("best_roi", {})
 
+    prev = get_meta("train_status") or {}
     set_meta("train_status", {
+        **prev,
         "state": "running",
         "owner": "craft_worker",
         "target_roi": args.target_roi,
         "target_accuracy": args.target_acc,
-        "note": "holdout-evaluated · cloud worker",
+        "unlimited": args.epochs <= 0,
+        "note": "holdout-evaluated · learns from losses · sport ledger · notes in craft_notes.log",
     })
 
-    print(f"=== CRAFT (max {args.epochs} epochs, holdout frozen) ===")
+    cap = None if args.epochs <= 0 else args.epochs
+    print(f"=== CRAFT ({'unlimited' if cap is None else f'max {cap}'} epochs, holdout frozen) ===")
+    print("Notes → ~/.bet_placer/craft_notes.log")
     out = train_until_roi(
         target_roi=args.target_roi,
         target_acc=args.target_acc,
-        max_epochs=args.epochs,
+        max_epochs=cap,
         verbose=True,
     )
     print("DONE", {

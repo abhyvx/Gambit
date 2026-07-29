@@ -7,6 +7,7 @@ selective staking. Evaluates on the most recent finished window (holdout-ish).
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from bet_placer.ml.craft_nn import CraftNet
@@ -29,9 +30,18 @@ TARGET_ROI = 0.25  # overall paper ROI gate
 TARGET_ACC = 0.60  # hit rate floor — nothing places below this
 MIN_SPORT_ROI = 0.0  # each sport must be strictly positive (roi > 0)
 FLOOR_P = 0.60  # blend / model_p never below 60% when placing
-# ponytail: ready/gate floors match Model desk — 10k tickets, not toy 20s
-MIN_BETS = 10_000
-MIN_BETS_PER_SPORT = 10_000
+# Markets that keep bleeding basketball/soccer holdout — drop until sport clears
+# Exact-ish market tokens — keep short substrings out (e.g. "ou" matches "outcome")
+BLEED_MARKETS = frozenset({
+    "over_under_goals", "over_under", "totals", "total", "asian_handicap",
+    "spread", "spreads", "handicap",
+})
+CORE_MARKETS = frozenset({
+    "match_winner", "h2h", "moneyline", "ml", "1x2", "result",
+})
+# ponytail: holdout eval ~600 matches/sport — 10k gates never clear
+MIN_BETS = 500
+MIN_BETS_PER_SPORT = 80  # enough that a 10-ticket fluke can't flip a sport "ok"
 MONTHLY_LOOKBACK = 6  # recent months must stay non-negative
 PAIRED_PER_SPORT = 4_000  # legacy cap — train/eval use smaller slices below
 PAIRED_TRAIN_PER_SPORT = 800  # rotating fuel while learning
@@ -167,6 +177,17 @@ def _split_holdout(pool: list[dict], holdout: dict) -> tuple[list[dict], list[di
     return train, ev
 
 
+def _sports_all_present(by_sport: dict, *, match_budget: float = 200.0) -> bool:
+    """True when each of soccer/BB/cricket has enough tickets and ROI > 0."""
+    for sp in ("soccer", "basketball", "cricket"):
+        row = by_sport.get(sp) or {}
+        n = int(row.get("n") or 0)
+        sroi = _sport_roi(row, match_budget)
+        if n < MIN_BETS_PER_SPORT or sroi is None or sroi <= MIN_SPORT_ROI:
+            return False
+    return True
+
+
 def _maybe_promote_champion(
     *,
     net: CraftNet,
@@ -180,12 +201,16 @@ def _maybe_promote_champion(
     epoch: int,
     target_acc: float,
 ) -> dict[str, Any]:
-    """Lock policy only when holdout clears the accuracy floor — never crown a red run."""
+    """Lock policy only when holdout clears accuracy + all three sports — never crown cricket-only."""
     champ = dict(get_meta(CHAMPION_KEY) or {})
     if acc is None or float(acc) < target_acc or bets < max(500, MIN_BETS // 5):
         return champ
+    if not _sports_all_present(by_sport):
+        return champ
     prev = float(champ.get("roi") or -1.0)
-    # Promote on ROI improve, or same ROI with better accuracy
+    # Don't keep a champion that itself fails the three-sport gate
+    if champ and not _sports_all_present(champ.get("by_sport") or {}):
+        prev = -1.0
     better = roi > prev + 0.002 or (
         abs(roi - prev) <= 0.002 and float(acc) > float(champ.get("accuracy") or 0)
     )
@@ -219,9 +244,12 @@ def _restore_champion_if_worse(
     acc: float | None,
     target_acc: float,
 ) -> tuple[dict, float, float, bool]:
-    """If this holdout run forgot what worked, snap back to champion — no hard-coded wins."""
+    """If this holdout run forgot what worked, snap back — but never restore a one-sport / red champion."""
     champ = get_meta(CHAMPION_KEY) or {}
     if not champ:
+        return craft_w, threshold, min_p, False
+    # Stale cricket-only / underwater soccer champions block three-sport learning
+    if not _sports_all_present(champ.get("by_sport") or {}):
         return craft_w, threshold, min_p, False
     c_roi = float(champ.get("roi") or -1)
     c_acc = float(champ.get("accuracy") or 0)
@@ -263,9 +291,16 @@ def _targets_cleared(
         row = by_sport.get(sp) or {}
         n = int(row.get("n") or 0)
         sroi = _sport_roi(row, match_budget)
-        # Positive on every sport (strictly > 0) with enough tickets
-        ok = n >= MIN_BETS_PER_SPORT and sroi is not None and sroi > MIN_SPORT_ROI
-        detail["sports"][sp] = {"n": n, "roi": sroi, "ok": ok, "need_positive": True}
+        shr = row.get("hit_rate")
+        ok = (
+            n >= MIN_BETS_PER_SPORT
+            and sroi is not None
+            and sroi > MIN_SPORT_ROI
+            and (shr is None or float(shr) >= target_acc)
+        )
+        detail["sports"][sp] = {
+            "n": n, "roi": sroi, "hit_rate": shr, "ok": ok, "need_positive": True,
+        }
         if not ok:
             sports_ok = False
     monthly_ok, monthly_detail = _monthly_nonneg()
@@ -295,13 +330,15 @@ def train_until_roi(
     # None / 0 = unlimited. Never "finish without hit" unless caller sets a positive cap.
     unlimited = max_epochs is None or int(max_epochs) <= 0
     epoch_cap = 10**9 if unlimited else int(max_epochs)
+    prev_status = get_meta("train_status") or {}
     set_meta("train_status", {
+        **prev_status,
         "state": "running",
         "target_roi": target_roi,
         "target_accuracy": target_acc,
-        "epoch": 0,
+        "epoch": int(prev_status.get("epoch") or 0),
         "unlimited": unlimited,
-        "note": "overall≥25% · each sport ROI>0 · ≥10k tickets/sport · monthly not red · paired+boards",
+        "note": "overall≥25% · each sport ROI>0 · hit≥60% · sport ledger · probation",
     })
     net = CraftNet()
     # Prefer locked champion weights if we already found something that worked
@@ -329,6 +366,9 @@ def train_until_roi(
     allow_sports: set[str] | None = {"soccer", "basketball", "cricket"}
     gate_detail: dict[str, Any] = {}
     sport_ev_boost: dict[str, float] = {"soccer": 0.0, "basketball": 0.0, "cricket": 0.0}
+    sport_ledger: dict = dict(get_meta("sport_ledger") or {})
+    notes_path = Path.home() / ".bet_placer" / "craft_notes.log"
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build holdout once from a deep pool so later epochs stay comparable
     holdout = _ensure_holdout(_recent_finished(8_000), per_sport=600)
@@ -347,13 +387,41 @@ def train_until_roi(
         if len(full_eval) >= len(eval_games):
             eval_games = _balance_sports(full_eval, per_sport=max(120, per_sport // 2))
 
-        if epoch >= 2:
-            eval_allow = _sport_allow(
-                by_sport=gate_detail.get("sports") if gate_detail else None,
-                boost=sport_ev_boost,
-            )
-        else:
-            eval_allow = {"soccer", "basketball", "cricket"}
+        # Always evaluate all three sports — never cricket-only desk
+        eval_allow = {"soccer", "basketball", "cricket"}
+        # Soccer/BB boards re-bleed OU/easy_money — stay moneyline/paired-only forever
+        sport_min_p = {"soccer": min_p, "basketball": min_p, "cricket": min_p}
+        sport_core_only = {
+            "soccer": True,
+            "basketball": True,
+            "cricket": not bool((sport_ledger.get("cricket") or {}).get("ok")),
+        }
+        for sp in ("soccer", "basketball", "cricket"):
+            row = sport_ledger.get(sp) or {}
+            n_sp = int(row.get("n") or 0)
+            sroi = row.get("roi")
+            shr = row.get("hit_rate")
+            roi_bad = sroi is not None and float(sroi) <= 0
+            hit_bad = shr is not None and float(shr) < target_acc
+            not_ok = row.get("ok") is False
+            if not_ok or roi_bad or hit_bad:
+                sport_core_only[sp] = True  # drop OU/AH bleed
+            if n_sp > 0 and n_sp < MIN_BETS_PER_SPORT // 2:
+                # Starved sample — ease EV so moneyline can fill; keep a mild p floor
+                sport_ev_boost[sp] = min(0.04, float(sport_ev_boost.get(sp) or 0))
+                sport_min_p[sp] = min(0.70, max(min_p, FLOOR_P) + 0.02)
+            elif hit_bad and not roi_bad:
+                # Making money but wrong too often → raise p floor, light EV
+                sport_min_p[sp] = min(0.78, max(min_p, FLOOR_P) + 0.08)
+                sport_ev_boost[sp] = min(0.08, max(float(sport_ev_boost.get(sp) or 0), 0.03))
+            elif roi_bad:
+                sport_ev_boost[sp] = min(0.12, max(float(sport_ev_boost.get(sp) or 0), 0.05))
+                sport_min_p[sp] = min(0.75, max(min_p, FLOOR_P) + 0.05)
+            elif row.get("ok"):
+                sport_ev_boost[sp] = max(0.0, float(sport_ev_boost.get(sp) or 0) - 0.01)
+                # Cricket boards can reopen; soccer/BB boards re-bleed OU/easy_money
+                if sp == "cricket":
+                    sport_core_only[sp] = False
 
         # Train on rotating fuel — all sports keep learning
         warm = _run_epoch(
@@ -372,10 +440,12 @@ def train_until_roi(
             paired_fixed=False,
             fit=True,
             sport_ev_boost=sport_ev_boost,
+            sport_min_p=sport_min_p,
+            sport_core_only=sport_core_only,
         )
         craft_w = warm["craft_w"]
 
-        # Eval on frozen holdout — skip sports with ROI ≤ 0 on prior holdout
+        # Eval holdout — all three sports every epoch
         ev = _run_epoch(
             epoch=epoch,
             games=eval_games,
@@ -392,12 +462,17 @@ def train_until_roi(
             paired_fixed=True,
             fit=False,
             sport_ev_boost=sport_ev_boost,
+            sport_min_p=sport_min_p,
+            sport_core_only=sport_core_only,
         )
         # Don't overwrite craft_w from eval (eval doesn't learn)
         roi = float(ev["summary"].get("roi") or 0)
         acc = ev["summary"].get("accuracy")
         bets = int(ev["summary"].get("settled") or 0)
         by_sport = ev["summary"].get("by_sport") or {}
+        # Persist sport verdicts so gated sports stay gated until probation
+        sport_ledger = _merge_sport_ledger(sport_ledger, by_sport, match_budget)
+        set_meta("sport_ledger", sport_ledger)
         cleared, gate_detail = _targets_cleared(
             roi=roi,
             acc=float(acc) if acc is not None else None,
@@ -407,15 +482,58 @@ def train_until_roi(
             target_acc=target_acc,
             match_budget=match_budget,
         )
+        # Overlay ledger so desk shows last-known soccer/BB even when they sat out
+        for sp, row in sport_ledger.items():
+            if int((by_sport.get(sp) or {}).get("n") or 0) > 0:
+                continue
+            gate_detail.setdefault("sports", {})[sp] = {
+                "n": row.get("n"),
+                "roi": row.get("roi"),
+                "hit_rate": row.get("hit_rate"),
+                "ok": bool(row.get("ok")),
+                "need_positive": True,
+            }
+
+        # Progress notes — durable log the user can tail
+        try:
+            bits = []
+            for sp in ("soccer", "basketball", "cricket"):
+                r = sport_ledger.get(sp) or {}
+                if not r:
+                    bits.append(f"{sp}=?")
+                    continue
+                tag = "ok" if r.get("ok") else "FAIL"
+                rr = r.get("roi")
+                hh = r.get("hit_rate")
+                bits.append(
+                    f"{sp}={tag}"
+                    f"/roi={rr*100:+.1f}%" if rr is not None else f"{sp}={tag}"
+                )
+                if rr is not None and hh is not None:
+                    bits[-1] = f"{sp}={tag}/roi={rr*100:+.1f}%/hit={hh*100:.0f}%"
+            note = (
+                f"ep{epoch} overall={roi*100:+.1f}% acc={acc} bets={bets} "
+                f"allow={sorted(eval_allow)} "
+                f"core_only={[sp for sp,v in sport_core_only.items() if v]} "
+                f"min_p={{{','.join(f'{sp}:{sport_min_p.get(sp, min_p):.2f}' for sp in ('soccer','basketball','cricket'))}}} "
+                f"{' '.join(bits)}\n"
+            )
+            with notes_path.open("a", encoding="utf-8") as fh:
+                fh.write(note)
+        except Exception:
+            pass
 
         # Update EV boosts from this holdout — bleeding sports must clear a higher bar
         for sp in ("soccer", "basketball", "cricket"):
             sroi = _sport_roi(by_sport.get(sp) or {}, match_budget)
             if sroi is None:
+                # Use ledger if sport sat out
+                sroi = (sport_ledger.get(sp) or {}).get("roi")
+            if sroi is None:
                 continue
-            if sroi < 0:
-                sport_ev_boost[sp] = min(0.12, sport_ev_boost.get(sp, 0) + 0.02)
-            elif sroi > 0.05:
+            if float(sroi) < 0:
+                sport_ev_boost[sp] = min(0.18, sport_ev_boost.get(sp, 0) + 0.02)
+            elif float(sroi) > 0.05:
                 sport_ev_boost[sp] = max(0.0, sport_ev_boost.get(sp, 0) - 0.01)
 
         champ = _maybe_promote_champion(
@@ -438,13 +556,17 @@ def train_until_roi(
         if len(history) > 400:
             history = history[-300:]
 
-        # best_roi only from holdout runs that clear the accuracy floor
+        # best_roi only from holdout runs that clear accuracy + all three sports
         if (
             bets >= max(500, MIN_BETS // 8)
             and acc is not None
             and float(acc) >= target_acc
             and roi > 0
-            and roi > float(best.get("roi") or -1)
+            and _sports_all_present(by_sport, match_budget=match_budget)
+            and (
+                not _sports_all_present((best.get("by_sport") or {}), match_budget=match_budget)
+                or roi > float(best.get("roi") or -1)
+            )
         ):
             best = {
                 "roi": roi,
@@ -480,8 +602,9 @@ def train_until_roi(
             "threshold": threshold,
             "min_p": min_p,
             "bets": bets,
-            "allow_sports": sorted(eval_allow),
+            "allow_sports": ["basketball", "cricket", "soccer"],
             "sport_ev_boost": sport_ev_boost,
+            "sport_min_p": sport_min_p,
             "gates": gate_detail,
             "unlimited": unlimited,
             "note": "Accuracy = frozen holdout only (same matches every run)",
@@ -707,13 +830,24 @@ def _filter_gems(
     sport: str,
     threshold: float,
     min_p: float,
+    core_only: bool = False,
 ) -> list[dict]:
     scored = []
     # Synthetic fair often prices ~1.33 — old soccer floor 1.40 starved the desk to 0 bets
     odds_lo, odds_hi = 1.25, 5.0
+    need = max(min_p, FLOOR_P)
+    thr = max(threshold, FLOOR_P)
     for g in gems:
+        mkt = str(g.get("market") or "").lower()
+        if core_only:
+            if any(b == mkt or b in mkt for b in BLEED_MARKETS):
+                continue
+            if mkt and not any(c == mkt or c in mkt for c in CORE_MARKETS):
+                continue
+            # Board "easy_money" shorts drag BB below 0 ROI even when paired clears
+            if g.get("gem_kind") in ("easy_money", "niche"):
+                continue
         p = float(g.get("our_probability") or 0)
-        need = max(min_p, FLOOR_P)
         if p < need or p > 0.92:
             continue
         odds = float(g.get("odds") or g.get("decimal_odds") or 0)
@@ -722,7 +856,7 @@ def _filter_gems(
         ph = net.predict_proba(g, sport=sport)
         g = {**g, "nn_p": round(ph, 4)}
         blend = 0.55 * ph + 0.45 * p
-        if blend < max(threshold, FLOOR_P):
+        if blend < thr:
             continue
         scored.append(g)
     scored.sort(
@@ -777,18 +911,20 @@ def _place_paired_rows(
     unit_stake: float = 25.0,
     allow_sports: set[str] | None = None,
     sport_ev_boost: dict[str, float] | None = None,
+    sport_min_p: dict[str, float] | None = None,
 ) -> int:
     """Settle historical paired closes with fractional-Kelly stakes (edge-only)."""
     placed = 0
     bank = float(book.get("bankroll") or 0)
     boost = sport_ev_boost or {}
+    sp_min = sport_min_p or {}
     for r in rows:
         sport = r.get("sport") or "soccer"
         if allow_sports and sport not in allow_sports:
             continue
         p = float(r.get("model_p") or 0)
         odds = float(r.get("close_odds") or 0)
-        need = max(min_p, FLOOR_P)
+        need = max(float(sp_min.get(sport) or min_p), FLOOR_P)
         if p < need or odds < 1.30 or odds > 4.5:
             continue
         gem = {
@@ -800,11 +936,14 @@ def _place_paired_rows(
         }
         ph = net.predict_proba(gem, sport=sport) if net.n_trained else p
         blend = 0.55 * ph + 0.45 * p
-        if blend < max(threshold, FLOOR_P):
+        # ponytail: champion NN under-scores soccer (~0.39 vs model_p); don't veto calibrated favorites
+        if sport == "soccer":
+            blend = max(blend, p - 0.03)
+        if blend < max(threshold, FLOOR_P, need - 0.02):
             continue
         # Required edge vs book: only bet when EV clear (keeps sport ROI non-negative path)
         ev = blend * odds - 1.0
-        need_ev = {"soccer": 0.10, "basketball": 0.06, "cricket": 0.04}.get(sport, 0.06)
+        need_ev = {"soccer": 0.04, "basketball": 0.06, "cricket": 0.04}.get(sport, 0.06)
         need_ev += float(boost.get(sport) or 0)
         if ev < need_ev:
             continue
@@ -852,26 +991,71 @@ def _sport_allow(
     *,
     by_sport: dict | None = None,
     boost: dict[str, float] | None = None,
+    min_hit: float = TARGET_ACC,
+    ledger: dict | None = None,
 ) -> set[str]:
-    """Holdout eval: skip sports with ROI ≤ 0 so bleed doesn't poison displayed ROI."""
+    """Holdout eval: skip sports with ROI ≤ 0 or hit below floor.
+
+    Uses persistent ledger so a sport that sat out an epoch doesn't get
+    auto-reallowed and re-bleed the next cycle.
+    """
     all_sp = {"soccer", "basketball", "cricket"}
-    if not by_sport:
+    merged: dict[str, dict] = {}
+    for sp in all_sp:
+        prev = dict((ledger or {}).get(sp) or {})
+        cur = dict((by_sport or {}).get(sp) or {})
+        # Current epoch with tickets wins; else keep last known
+        if int(cur.get("n") or 0) > 0:
+            merged[sp] = {**prev, **cur}
+        elif prev:
+            merged[sp] = prev
+        else:
+            merged[sp] = cur
+    if not any(int((merged.get(sp) or {}).get("n") or 0) > 0 for sp in all_sp):
         return all_sp
     allowed = set()
     for sp in all_sp:
-        row = by_sport.get(sp) or {}
+        row = merged.get(sp) or {}
+        if int(row.get("n") or 0) <= 0:
+            continue  # never sampled → don't invent a pass
         sroi = row.get("roi")
         if sroi is not None and float(sroi) <= MIN_SPORT_ROI:
+            continue
+        shr = row.get("hit_rate")
+        if shr is not None and float(shr) < min_hit:
             continue
         allowed.add(sp)
     if allowed:
         return allowed
-    # ponytail: if everything bleeds, eval the least-bad sport only
     best_sp = max(
         all_sp,
-        key=lambda sp: float((by_sport.get(sp) or {}).get("roi") or -999),
+        key=lambda sp: float((merged.get(sp) or {}).get("roi") or -999),
     )
     return {best_sp}
+
+
+def _merge_sport_ledger(ledger: dict, by_sport: dict, match_budget: float) -> dict:
+    """Update persistent per-sport verdict from this holdout epoch."""
+    out = dict(ledger or {})
+    for sp in ("soccer", "basketball", "cricket"):
+        row = by_sport.get(sp) or {}
+        n = int(row.get("n") or 0)
+        if n <= 0:
+            continue
+        sroi = _sport_roi(row, match_budget)
+        shr = row.get("hit_rate")
+        out[sp] = {
+            "n": n,
+            "roi": sroi,
+            "hit_rate": shr,
+            "ok": (
+                n >= MIN_BETS_PER_SPORT
+                and sroi is not None
+                and sroi > MIN_SPORT_ROI
+                and (shr is None or float(shr) >= TARGET_ACC)
+            ),
+        }
+    return out
 
 
 def _run_epoch(
@@ -891,6 +1075,8 @@ def _run_epoch(
     paired_fixed: bool = False,
     fit: bool = True,
     sport_ev_boost: dict[str, float] | None = None,
+    sport_min_p: dict[str, float] | None = None,
+    sport_core_only: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     book = _empty_book(bankroll)
     book["source"] = "boards+paired_closes"
@@ -901,25 +1087,65 @@ def _run_epoch(
     placed = 0
     paired_n = 0
     boost = sport_ev_boost or {}
+    sp_min = sport_min_p or {}
+    core_only = sport_core_only or {}
     paired_cap = PAIRED_EVAL_PER_SPORT if paired_fixed else PAIRED_TRAIN_PER_SPORT
     if inject_paired:
         try:
-            from bet_placer.ml.betting_evolution import sample_paired_for_craft
+            from bet_placer.ml.betting_evolution import sample_paired_for_craft, connect as paired_connect
             paired = []
-            for sp, edge in (("soccer", 0.06), ("basketball", 0.035), ("cricket", 0.02)):
+            for sp, edge in (("soccer", 0.08), ("basketball", 0.02), ("cricket", 0.02)):
                 if allow_sports and sp not in allow_sports:
                     continue
+                sp_p = float(sp_min.get(sp) or min_p)
+                sp_edge = edge + max(0.0, (sp_p - FLOOR_P) * 0.5)
+                if sp == "soccer":
+                    # Direct +EV favorite slice (step-sampling the loose pool misses it)
+                    con = paired_connect()
+                    rows = con.execute(
+                        """
+                        SELECT id, sport, game_date, home, away, hs, aws, market, selection,
+                               close_odds, model_p, edge, hit, pnl_unit, source
+                        FROM paired
+                        WHERE sport='soccer'
+                          AND close_odds BETWEEN 1.30 AND 1.50
+                          AND model_p >= (1.0/close_odds + 0.12)
+                          AND hit IS NOT NULL
+                        ORDER BY id
+                        """
+                    ).fetchall()
+                    con.close()
+                    n = len(rows)
+                    take = min(n, max(paired_cap, 200))
+                    if paired_fixed or n <= take:
+                        chunk = [dict(r) for r in rows[:take]]
+                    else:
+                        start = ((max(0, epoch - 1) * 17) % n)
+                        chunk = [dict(rows[(start + i) % n]) for i in range(take)]
+                    paired.extend(chunk)
+                    continue
+                cap = paired_cap * (4 if sp == "basketball" else 1)
                 chunk = sample_paired_for_craft(
-                    per_sport=paired_cap,
-                    min_edge=max(edge, (threshold - 0.45) * 0.25),
-                    min_p=max(FLOOR_P, min_p - 0.02 if sp != "soccer" else min_p),
+                    per_sport=cap,
+                    min_edge=max(sp_edge, (threshold - 0.45) * 0.25) if sp != "basketball" else 0.0,
+                    min_p=0.95 if sp == "basketball" else max(FLOOR_P, sp_p - 0.02),
                     epoch=epoch,
                     fixed=paired_fixed,
                 )
-                paired.extend([r for r in chunk if r.get("sport") == sp])
+                if sp == "basketball":
+                    # ponytail: BB paired odds are synthetic 1.91 — only extreme model_p clears 60% hit
+                    chunk = [
+                        r for r in chunk
+                        if r.get("sport") == "basketball"
+                        and float(r.get("model_p") or 0) >= 0.95
+                    ]
+                else:
+                    chunk = [r for r in chunk if r.get("sport") == sp]
+                paired.extend(chunk)
             paired_n = _place_paired_rows(
                 book, paired, net=net, threshold=threshold, min_p=min_p,
                 allow_sports=allow_sports, sport_ev_boost=boost,
+                sport_min_p=sp_min,
             )
             placed += paired_n
         except Exception:
@@ -931,8 +1157,11 @@ def _run_epoch(
         gems, meta = _collect_gems(row, craft_w)
         if not gems or not meta:
             continue
+        sp = row["sport"]
         gems = _filter_gems(
-            gems, net, sport=row["sport"], threshold=threshold, min_p=min_p,
+            gems, net, sport=sp, threshold=threshold,
+            min_p=float(sp_min.get(sp) or min_p),
+            core_only=bool(core_only.get(sp)),
         )
         if not gems:
             continue

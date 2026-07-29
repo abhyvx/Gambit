@@ -58,7 +58,7 @@ export default function SettingsPage() {
 
       <section className="panel">
         <h2 className="panel-title">What do you want?</h2>
-        <p className="panel-desc">Pick the goal that matches how you bet. Change it anytime.</p>
+        <p className="panel-desc">Pick a goal. Change anytime.</p>
         <div className="style-grid">
           {goals.map((g) => (
             <button

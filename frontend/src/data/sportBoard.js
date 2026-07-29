@@ -174,7 +174,7 @@ export function emptyBoardMessage(rows, leagueName = 'This board') {
         ? new Date(last.kickoff).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : ''
     } catch { /* ignore */ }
-    return `${label}: no upcoming fixtures. Last completed match${when ? ` was ${when}` : ''}. Season may be between rounds or finished — fixtures appear here when ESPN / books publish them.`
+    return `${label}: no upcoming fixtures. Last completed match${when ? ` was ${when}` : ''}. Season may be between rounds or finished. Fixtures appear when ESPN or books publish them.`
   }
   return `${label}: no fixtures found right now. Confirmed empty on our scrapers (ESPN + Odds API cache). Tournament may not have started, may be finished, or the schedule is not published yet.`
 }
@@ -186,15 +186,15 @@ export function matchScoreParts(ev) {
   const a = ev.away_score_display ?? (ev.away_score != null ? String(ev.away_score) : null)
   if (h == null && a == null && !ev.score) return null
   if (h != null || a != null) {
-    return { home: h ?? '—', away: a ?? '—', detail: ev.status_detail || '' }
+    return { home: h ?? '-', away: a ?? '-', detail: ev.status_detail || '' }
   }
   const raw = String(ev.score || '')
-  // Prefer en-dash / em-dash / " vs " — never slash (cricket wickets)
+  // Prefer en-dash / em-dash / " vs " - never slash (cricket wickets)
   const m = raw.match(/^(.+?)\s*[–—]\s*(.+)$/) || raw.match(/^(.+?)\s+vs\.?\s+(.+)$/i)
   if (m) return { home: m[1].trim(), away: m[2].trim(), detail: ev.status_detail || '' }
   const hyphen = raw.match(/^(\d+)\s*-\s*(\d+)$/)
   if (hyphen) return { home: hyphen[1], away: hyphen[2], detail: ev.status_detail || '' }
-  return { home: raw || '—', away: '', detail: ev.status_detail || '' }
+  return { home: raw || '-', away: '', detail: ev.status_detail || '' }
 }
 
 /** Resolve fetch sport key — hoop/cricket tabs share one cached board. */

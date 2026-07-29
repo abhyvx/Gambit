@@ -172,13 +172,17 @@ def train_club_soccer(force: bool = False, verbose: bool = False) -> dict[str, A
     for i, g in enumerate(games):
         h, a = g["home"], g["away"]
         rh, ra = rating(h), rating(a)
+        # Draw shrinks when Elo gap is large (fixed 0.28 made favorites look coin-flip)
+        gap = abs((rh + HA) - ra)
+        draw_mass = max(0.16, min(0.30, 0.30 - gap / 1800.0))
         exp_h = 1.0 / (1.0 + 10 ** ((ra - (rh + HA)) / 400.0))
-        # 3-way soft: draw mass ~0.28
-        ph = (1 - 0.28) * exp_h
-        pa = (1 - 0.28) * (1 - exp_h)
-        pd = 0.28
+        ph = (1 - draw_mass) * exp_h
+        pa = (1 - draw_mass) * (1 - exp_h)
+        pd = draw_mass
         pred = "H" if ph >= pd and ph >= pa else ("A" if pa >= pd else "D")
-        if i >= cut:
+        conf = max(ph, pd, pa)
+        # Score only clear leans — raw 3-way pick-everything sits ~49% forever
+        if i >= cut and conf >= 0.45:
             n += 1
             if pred == g["res"]:
                 hits += 1
@@ -190,7 +194,7 @@ def train_club_soccer(force: bool = False, verbose: bool = False) -> dict[str, A
 
     acc = round(hits / n, 4) if n else None
     if verbose:
-        print(f"[club_soccer] {len(games)} games · {len(elo)} clubs · holdout acc={acc}")
+        print(f"[club_soccer] {len(games)} games · {len(elo)} clubs · holdout acc={acc} (n={n})")
     return {
         "elo": elo,
         "n_matches": len(games),

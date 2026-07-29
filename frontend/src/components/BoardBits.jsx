@@ -57,10 +57,37 @@ export function hotScore(ev) {
 }
 
 export function pickFeatured(rows, n = 8) {
-  return [...rows]
-    .filter((r) => r.status === 'live' || r.status === 'upcoming')
-    .sort((a, b) => hotScore(b) - hotScore(a))
-    .slice(0, n)
+  const open = [...rows].filter((r) => r.status === 'live' || r.status === 'upcoming')
+  open.sort((a, b) => hotScore(b) - hotScore(a))
+  // Balance sports so Home isn't soccer-only / "next kickoff" only
+  const buckets = { soccer: [], basketball: [], cricket: [], other: [] }
+  for (const ev of open) {
+    const sk = String(ev.sport_key || '')
+    if (sk.startsWith('basket')) buckets.basketball.push(ev)
+    else if (sk.startsWith('cricket')) buckets.cricket.push(ev)
+    else if (sk.startsWith('soccer') || !sk) buckets.soccer.push(ev)
+    else buckets.other.push(ev)
+  }
+  const out = []
+  const seen = new Set()
+  const per = Math.max(1, Math.ceil(n / 3))
+  for (const key of ['soccer', 'basketball', 'cricket', 'other']) {
+    for (const ev of buckets[key].slice(0, per)) {
+      const id = `${ev.sport_key}-${ev.id}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push(ev)
+      if (out.length >= n) return out
+    }
+  }
+  for (const ev of open) {
+    const id = `${ev.sport_key}-${ev.id}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push(ev)
+    if (out.length >= n) break
+  }
+  return out
 }
 
 export function OddsBtn({ label, value, stake, onClick }) {
@@ -181,7 +208,7 @@ export function LeagueBanner({ league, active, onClick }) {
   )
 }
 
-/** Board 1X2 → TopBetTicket-shaped favorites (no model wait). */
+/** Board favorites → TopBetTicket shape, ranked by popularity not soonest kickoff. */
 export function marketPicksFromRows(rows, n = 8) {
   const picks = []
   for (const ev of rows) {
@@ -191,9 +218,13 @@ export function marketPicksFromRows(rows, n = 8) {
       { selection: 'home', label: `${ev.home_team} to win`, price: o.home },
       { selection: 'draw', label: 'Draw', price: o.draw },
       { selection: 'away', label: `${ev.away_team} to win`, price: o.away },
-    ].filter((s) => s.price && Number(s.price) >= 1.28)
+    ].filter((s) => s.price && Number(s.price) >= 1.28 && Number(s.price) <= 6.5)
     if (!sides.length) continue
-    sides.sort((a, b) => Number(a.price) - Number(b.price))
+    // Prefer value-band favorite, not 1.05 juice
+    sides.sort((a, b) => {
+      const band = (p) => (Number(p) >= 1.5 && Number(p) <= 3.2 ? 0 : 1)
+      return band(a.price) - band(b.price) || Number(a.price) - Number(b.price)
+    })
     const best = sides[0]
     picks.push({
       event_id: ev.id,
@@ -209,18 +240,20 @@ export function marketPicksFromRows(rows, n = 8) {
       market_name: 'Match Result',
       decimal_odds: Number(best.price),
       status: ev.status,
-      // legacy fields for older callers
+      handle_usd: ev.handle_usd || ev.extra?.handle_usd,
+      bettors: ev.bettors || ev.extra?.bettors,
+      books: ev.bookmaker_count || ev.books,
       match: `${ev.home_team} vs ${ev.away_team}`,
       eventId: ev.id,
       odds: Number(best.price),
       raw: ev,
+      source: ev.odds_source || ev.source || 'espn_books',
       marketPick: true,
+      ticket_kind: 'single',
+      _hot: hotScore(ev) + (Number(best.price) >= 1.5 && Number(best.price) <= 3.2 ? 40 : 0),
     })
   }
-  picks.sort((a, b) => {
-    const liveBoost = (x) => (x.status === 'live' ? 1 : 0)
-    return liveBoost(b) - liveBoost(a) || a.decimal_odds - b.decimal_odds
-  })
+  picks.sort((a, b) => (b._hot || 0) - (a._hot || 0))
   return picks.slice(0, n)
 }
 

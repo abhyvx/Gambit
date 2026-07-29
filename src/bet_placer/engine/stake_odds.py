@@ -1158,7 +1158,7 @@ def refresh_stake_overlay() -> dict:
             "fixtures": n,
             "status": stake_overlay_status(),
             "skipped": True,
-            "reason": "Stake live odds need STAKE_USE_BROWSER=true (local only — cloud gets 403)",
+            "reason": "Stake live scrape needs STAKE_USE_BROWSER=true (local). Cloud uses relay/cache or ESPN/model prices.",
         }
     global _overlay_fetching, _overlay_fetch_started
     with _overlay_cache_lock:

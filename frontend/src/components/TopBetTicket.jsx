@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import TeamLogo from './TeamLogo'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import { fmtOdds } from './BoardBits'
@@ -19,24 +19,41 @@ function sportTag(key) {
   return 'Soccer'
 }
 
-/** Stake-style vertical bet ticket for a horizontal top-bets rail. */
+function sourceLabel(src) {
+  if (!src) return ''
+  if (src.includes('stake')) return 'Stake odds'
+  if (src.includes('skip')) return 'SkipOdds'
+  if (src.includes('espn')) return 'ESPN odds'
+  if (src.includes('double')) return 'Hot double'
+  return ''
+}
+
+/** Stake-style vertical bet ticket — add without amount; payout only when amount set. */
 export default function TopBetTicket({ bet, onOpenMatch }) {
-  const { addLeg, setSlipMsg } = useBankroll()
+  const { addLeg, setSlipMsg, setSlipOpen } = useBankroll()
   const [stake, setStake] = useState('')
   const odds = Number(bet.decimal_odds)
   const stakeNum = Number(stake)
   const payout = odds && stakeNum > 0 ? Math.round(stakeNum * odds) : null
   const tag = sportTag(bet.sport_key)
+  const isCombo = bet.ticket_kind === 'combo' || bet.market === 'stake_combo'
+  const comboParts = (bet.legs || []).map((l) => l.label).filter(Boolean)
 
   const add = () => {
     const n = Number(stake)
-    addLeg(legFromBet(bet, n > 0 ? n : null))
+    const ok = addLeg(legFromBet({
+      ...bet,
+      market: bet.market || (isCombo ? 'stake_combo' : 'match_winner'),
+      market_name: bet.market_name || (isCombo ? 'Combo' : 'Match Result'),
+    }, n > 0 ? n : null))
+    if (ok) setSlipOpen?.(true)
   }
 
   return (
-    <article className={`bet-ticket-v ${bet.status === 'live' ? 'is-live' : ''}`}>
+    <article className={`bet-ticket-v ${bet.status === 'live' ? 'is-live' : ''} ${isCombo ? 'is-combo' : ''}`}>
       <div className="bet-ticket-v-top">
         {tag && <span className="bet-ticket-v-sport">{tag}</span>}
+        {isCombo && <span className="bet-ticket-v-kind">Combo</span>}
         {bet.status === 'live' && <span className="live-tag">LIVE</span>}
       </div>
 
@@ -61,6 +78,11 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
       <div className="bet-ticket-v-pick">
         <small>{bet.market_name || bet.league || 'Match'}</small>
         <strong>{bet.label}</strong>
+        {comboParts.length > 1 && (
+          <ul className="bet-ticket-v-legs">
+            {comboParts.map((p) => <li key={p}>{p}</li>)}
+          </ul>
+        )}
       </div>
 
       <div className="bet-ticket-v-odds">
@@ -69,29 +91,30 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
 
       <div className="bet-ticket-v-stake">
         <label className="slip-amount">
-          <span className="slip-amount-label">Amount</span>
+          <span className="slip-amount-label">Amount (optional)</span>
           <input
             type="text"
             inputMode="decimal"
-            placeholder=""
+            placeholder="₹"
             value={stake}
             onChange={(e) => setStake(e.target.value.replace(/[^\d.]/g, ''))}
             aria-label="Amount"
           />
         </label>
-        <div className="bet-ticket-v-payout">
-          <span>Payout</span>
-          <strong>{payout != null ? formatINR(payout) : 'n/a'}</strong>
-        </div>
+        {payout != null && (
+          <div className="bet-ticket-v-payout">
+            <span>Payout</span>
+            <strong>{formatINR(payout)}</strong>
+          </div>
+        )}
       </div>
 
-      {(bet.handle_usd || bet.bettors || bet.books) && (
-        <p className="bet-ticket-v-meta muted">
-          {bet.handle_usd ? `${formatHandle(bet.handle_usd)} handle` : ''}
-          {bet.bettors ? `${bet.handle_usd ? ' · ' : ''}${Number(bet.bettors).toLocaleString()} bettors` : ''}
-          {!bet.handle_usd && bet.books ? `${bet.books} books` : ''}
-        </p>
-      )}
+      <p className="bet-ticket-v-meta muted">
+        {bet.handle_usd ? `${formatHandle(bet.handle_usd)} handle` : ''}
+        {bet.bettors ? `${bet.handle_usd ? ' · ' : ''}${Number(bet.bettors).toLocaleString()} bettors` : ''}
+        {bet.books > 1 ? `${bet.handle_usd || bet.bettors ? ' · ' : ''}Tracked at ${bet.books} books` : ''}
+        {!bet.handle_usd && !bet.bettors && bet.source ? sourceLabel(bet.source) : ''}
+      </p>
 
       <button type="button" className="btn-primary bet-ticket-v-add" onClick={add}>
         Add to slip

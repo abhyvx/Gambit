@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage, peekEventsCache,
+  fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage, fetchMarketTop, peekEventsCache,
 } from '../api'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import MatchSlipPanel from '../components/MatchSlipPanel'
@@ -162,13 +162,24 @@ function rowVerdict(m) {
   if (!m) return null
   if (m?._wc) {
     const slip = m.bet_slip
-    if (slip?.verdict === 'SKIP_MATCH' || slip?.recommended_strategy === 'skip') return 'CAUTION'
+    const hasPicks = Boolean(
+      slip?.curated_picks?.primary?.legs?.length
+      || slip?.easy_money?.length
+      || slip?.recommended_singles?.length
+      || slip?.unified_picks?.length
+      || (slip?.strategies && Object.values(slip.strategies).some((v) => (Array.isArray(v) ? v : [v]).some((p) => p?.legs?.length)))
+    )
+    if (slip?.verdict === 'BET') return 'BET'
+    if (slip?.verdict === 'SKIP_MATCH' || slip?.recommended_strategy === 'skip') {
+      return hasPicks ? 'CAUTION' : 'SKIP'
+    }
+    if (slip?.skip_recommended && hasPicks) return 'CAUTION'
     if (slip?.verdict) return slip.verdict
     return m.verdict?.verdict
   }
   const v = m?.verdict?.verdict || m?.verdict
   const raw = typeof v === 'string' ? v : (v?.value || null)
-  if (raw === 'SKIP' || raw === 'skip') return 'CAUTION'
+  if (raw === 'SKIP' || raw === 'skip') return 'SKIP'
   return raw
 }
 
@@ -350,17 +361,28 @@ export default function SportPage() {
           decimal_odds: Number(b.decimal_odds || b.odds || b.best_odds),
           status: m.status,
           raw: m,
+          ticket_kind: 'single',
         })).filter((p) => p.decimal_odds >= 1.28)
       }).slice(0, 4)
       setTopPicks(picks)
       setPicksLoading(false)
       return undefined
     }
-    // Same vertical tickets as Home - board 1X2 favorites
-    setTopPicks(marketPicksFromRows(liveUpcoming, 4))
-    setPicksLoading(false)
-    return undefined
-  }, [loading, liveUpcoming, apiSport])
+    let cancelled = false
+    setPicksLoading(true)
+    const prefix = group.id === 'basketball' ? 'basket' : group.id === 'cricket' ? 'cricket' : 'soccer'
+    fetchMarketTop(12)
+      .then((r) => {
+        if (cancelled) return
+        const sportBets = (r.bets || []).filter((b) => String(b.sport_key || '').startsWith(prefix))
+        setTopPicks(sportBets.length ? sportBets.slice(0, 6) : marketPicksFromRows(liveUpcoming, 4))
+      })
+      .catch(() => {
+        if (!cancelled) setTopPicks(marketPicksFromRows(liveUpcoming, 4))
+      })
+      .finally(() => { if (!cancelled) setPicksLoading(false) })
+    return () => { cancelled = true }
+  }, [loading, liveUpcoming, apiSport, group.id])
 
   useEffect(() => {
     if (!focusId || loading || !rows.length) return
@@ -552,7 +574,7 @@ export default function SportPage() {
 
       <section className="top-picks-block">
         <div className="section-label">Top bets</div>
-        <p className="section-sub">Open matches only - tap a ticket for payout, or open the fixture.</p>
+        <p className="section-sub">Popular singles and combos. Amount optional.</p>
         {picksLoading && <BoardBuffer rows={3} label="Loading market…" />}
         {!picksLoading && !topPicks.length && (
           <p className="muted">No priced favorites on this board yet.</p>

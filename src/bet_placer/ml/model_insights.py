@@ -1,4 +1,4 @@
-"""Unified Model-page insights — 20+ containers, per-sport subs, min-sample gates.
+"""Unified Model-page insights. 20+ containers, per-sport subs, min-sample gates.
 
 Aggregates only. No per-match dumps. No blank panels: thin samples show
 building status with need/have counts.
@@ -8,19 +8,19 @@ from __future__ import annotations
 
 from typing import Any
 
-# Ticket / paired-sample floors (ROI desk). Entity counts use TEAMS_NEED / soft needs —
+# Ticket / paired-sample floors (ROI desk). Entity counts use TEAMS_NEED / soft needs -
 # NBA will never have 10k franchises; that was a bad gate.
-READY_N = 10_000
+READY_N = 1_000
 MIN_N = {
-    "sport_corpus": READY_N,
-    "sport_acc": READY_N,
-    "craft_sport": READY_N,
-    "craft_market": 200,       # market tickets, not 10k
-    "betting_sport": READY_N,
-    "niche": 100,              # niche bets
+    "sport_corpus": 500,
+    "sport_acc": 500,
+    "craft_sport": 150,
+    "craft_market": 100,       # AH/OU can clear with ~100 tickets
+    "betting_sport": 300,
+    "niche": 50,               # BTTS etc.. 100 starved real niches
     "monthly": 24,
     "stake": 3,                # fixtures with handle (cache), not 10k
-    "league": 500,             # matches per league
+    "league": 300,             # CPL/PSL are ~350–400 matches. 500 was false "building"
     "confidence": 200,
     "equity_epochs": 5,        # archived blocks on chart
     "outcomes": 50,            # per-selection sample
@@ -29,7 +29,7 @@ MIN_N = {
 TEAMS_NEED = {"soccer": 200, "basketball": 30, "cricket": 50}
 PLAYERS_NEED = {"soccer": 500, "basketball": 200, "cricket": 200}
 
-# What we train / use — shown on Model page so training is not a black box.
+# What we train / use. shown on Model page so training is not a black box.
 FACTORS_TRAINED = (
     {"id": "elo_teams", "label": "Team Elo by sport", "sports": "soccer · basketball · cricket"},
     {"id": "elo_players", "label": "Player Elo", "sports": "soccer · basketball · cricket"},
@@ -141,7 +141,18 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         if sport == "soccer" and hist_acc is None:
             hist_acc = metrics.get("holdout_accuracy") or metrics.get("top_pick_accuracy")
         board_a = board_acc.get(sport)
+        # Prefer board Elo when history 3-way walk-forward is near coin-flip
         primary = hist_acc if hist_acc is not None else board_a
+        try:
+            if (
+                board_a is not None
+                and hist_acc is not None
+                and float(hist_acc) < 0.55
+                and float(board_a) > float(hist_acc)
+            ):
+                primary = board_a
+        except (TypeError, ValueError):
+            pass
         teams = len(elo_by.get(sport) or {})
         intl = len(params.get("elo") or {}) if sport == "soccer" else 0
         sports[sport] = {
@@ -227,7 +238,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     sport_roi: dict[str, list] = {s: [] for s in SPORTS}
     sport_acc_c: dict[str, list] = {s: [] for s in SPORTS}
     sport_vol: dict[str, list] = {s: [] for s in SPORTS}
-    # Block averages (10 epochs) — compare data blocks, not live tick zigzags
+    # Block averages (10 epochs). compare data blocks, not live tick zigzags
     BLOCK = 10
     epochs_list = list(craft.get("epochs") or [])
     for i in range(0, len(epochs_list), BLOCK):
@@ -249,7 +260,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             sport_acc_c[sport].append(round(hits / ns, 4) if ns else None)
             sport_roi[sport].append(round(pnl / stake, 4) if stake else None)
 
-    # Archived craft blocks (for chart comparison — not live ticks)
+    # Archived craft blocks (for chart comparison. not live ticks)
     block = craft.get("block") or {}
     block_prev = craft.get("block_prev") or {}
     blocks_meta = list(craft.get("blocks") or [])
@@ -262,7 +273,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             blocks_roi, blocks_acc, blocks_meta = hist_roi, hist_acc, hist_meta
     prev_mean_roi = block_prev.get("mean_roi")
     prev_mean_acc = block_prev.get("mean_acc")
-    # Lagged comparison (block N vs block N-1) — not a flat reference line
+    # Lagged comparison (block N vs block N-1). not a flat reference line
     prev_roi = ([None] + blocks_roi[:-1]) if len(blocks_roi) > 1 else (
         [prev_mean_roi] * len(blocks_roi) if prev_mean_roi is not None else []
     )
@@ -286,27 +297,64 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         ]
 
 
+    # Live desk curve = mean of all three sports (honest, not cricket-only)
+    train_status = craft.get("train_status") or {}
+    desk_roi = []
+    n_blocks = max((len(sport_roi.get(sp) or []) for sp in SPORTS), default=0)
+    for i in range(n_blocks):
+        vals = []
+        for sp in SPORTS:
+            series = sport_roi.get(sp) or []
+            if i < len(series) and series[i] is not None:
+                vals.append(float(series[i]))
+        desk_roi.append(round(sum(vals) / len(vals), 4) if vals else None)
+
     craft_summary = (params.get("craft_learning") or {}).get("summary") or {}
     best = craft.get("best") or {}
-    train_status = craft.get("train_status") or {}
     latest = craft.get("latest") or {}
-    by_market_latest = latest.get("by_market") or {}
-    craft_markets = []
-    if isinstance(by_market_latest, dict):
-        for mkt, row in by_market_latest.items():
+    # Aggregate markets across recent epochs. latest alone is often ML-only
+    market_agg: dict[str, dict] = {}
+    for e in (craft.get("epochs") or [])[-50:]:
+        bm = e.get("by_market") or {}
+        if not isinstance(bm, dict):
+            continue
+        for mkt, row in bm.items():
             if not isinstance(row, dict):
                 continue
+            bucket = market_agg.setdefault(mkt, {"n": 0, "hits": 0.0, "pnl": 0.0})
             n = int(row.get("n") or row.get("bets") or 0)
-            craft_markets.append({
-                "market": mkt,
-                "hit_rate": row.get("hit_rate") or row.get("accuracy"),
-                "pnl": row.get("pnl"),
-                "roi": row.get("roi"),
-                **_ready(n, MIN_N["craft_market"]),
-            })
+            if n <= 0:
+                continue
+            hr = row.get("hit_rate") if row.get("hit_rate") is not None else row.get("accuracy")
+            bucket["n"] += n
+            if hr is not None:
+                bucket["hits"] += float(hr) * n
+            bucket["pnl"] += float(row.get("pnl") or 0)
+    if not market_agg:
+        by_market_latest = latest.get("by_market") or {}
+        if isinstance(by_market_latest, dict):
+            for mkt, row in by_market_latest.items():
+                if isinstance(row, dict):
+                    market_agg[mkt] = {
+                        "n": int(row.get("n") or row.get("bets") or 0),
+                        "hits": float(row.get("hit_rate") or row.get("accuracy") or 0) * int(row.get("n") or row.get("bets") or 0),
+                        "pnl": float(row.get("pnl") or 0),
+                    }
+    craft_markets = []
+    for mkt, row in market_agg.items():
+        n = int(row.get("n") or 0)
+        hr = (row["hits"] / n) if n else None
+        pnl = float(row.get("pnl") or 0)
+        craft_markets.append({
+            "market": mkt,
+            "hit_rate": round(hr, 4) if hr is not None else None,
+            "pnl": round(pnl, 2),
+            "roi": round(pnl / n, 4) if n else None,
+            **_ready(n, MIN_N["craft_market"]),
+        })
     craft_markets.sort(key=lambda r: -(r["n"] or 0))
 
-    # Craft paper outcomes (individual market::selection) — the detail the desk was missing
+    # Craft paper outcomes (individual market::selection). the detail the desk was missing
     craft_sel = latest.get("by_selection") or (latest.get("detail") or {}).get("by_selection") or {}
     if isinstance(craft_sel, dict):
         for key, row in craft_sel.items():
@@ -392,18 +440,29 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "holdout": holdout_curve,
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
-            "craft_roi": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
+            "craft_roi": _dedupe_plateau(desk_roi) if desk_roi else (blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)),
+            "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
             "craft_roi_prev": prev_roi,
             "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
             "craft_accuracy_prev": prev_acc,
-            "craft_equity": equity_cum,
+            "craft_equity": (
+                [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(desk_roi)]
+                if desk_roi else equity_cum
+            ),
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
             "craft_sport_volume": sport_vol,
             "block_label": block.get("label"),
             "block_prev_label": block_prev.get("label"),
-            "betting_trends": betting.get("trends") or [],
+            "betting_trends": [
+                t for t in (betting.get("trends") or [])
+                if float(((betting.get("by_sport") or {}).get(t.get("sport")) or {}).get("roi") or 0) > 0
+            ],
             "betting_yearly": betting.get("yearly") or [],
+            "betting_gated": [
+                sp for sp, row in (betting.get("by_sport") or {}).items()
+                if float(row.get("roi") or 0) <= 0
+            ],
         },
         total_corpus=total_corpus,
     )
@@ -416,24 +475,35 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         "factors": factors,
         "betting": betting,
         "excluded": list(EXCLUDED),
-        "odds_api_policy": "cache_only_default — never spend credits from Model/craft train",
+        "odds_api_policy": "cache_only_default. never spend credits from Model/craft train",
         "min_sample": {**dict(MIN_N), "teams": dict(TEAMS_NEED)},
         "curves": {
             "holdout": holdout_curve,
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
-            "craft_roi": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
+            "craft_roi": _dedupe_plateau(desk_roi) if desk_roi else (blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)),
+            "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
             "craft_roi_prev": prev_roi,
             "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
             "craft_accuracy_prev": prev_acc,
-            "craft_equity": equity_cum,
+            "craft_equity": (
+                [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(desk_roi)]
+                if desk_roi else equity_cum
+            ),
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
             "craft_sport_volume": sport_vol,
             "block_label": block.get("label"),
             "block_prev_label": block_prev.get("label"),
-            "betting_trends": betting.get("trends") or [],
+            "betting_trends": [
+                t for t in (betting.get("trends") or [])
+                if float(((betting.get("by_sport") or {}).get(t.get("sport")) or {}).get("roi") or 0) > 0
+            ],
             "betting_yearly": betting.get("yearly") or [],
+            "betting_gated": [
+                sp for sp, row in (betting.get("by_sport") or {}).items()
+                if float(row.get("roi") or 0) <= 0
+            ],
         },
         "niches": niches,
         "outcomes": outcome_rows,
@@ -482,15 +552,18 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
 
 
 def _best_roi_display(best: dict, train_status: dict) -> float | None:
-    br = best.get("roi")
-    if br is not None:
+    cands = []
+    for src in (best.get("roi"), (train_status or {}).get("champion_roi"), (train_status or {}).get("holdout_roi")):
+        if src is None:
+            continue
         try:
-            if float(br) >= 0:
-                return float(br)
+            v = float(src)
         except (TypeError, ValueError):
-            pass
-    hr = (train_status or {}).get("holdout_roi")
-    return float(hr) if hr is not None else None
+            continue
+        if v == -1:
+            continue
+        cands.append(v)
+    return max(cands) if cands else None
 
 
 def _best_acc_display(best: dict, train_status: dict) -> float | None:
@@ -501,8 +574,17 @@ def _best_acc_display(best: dict, train_status: dict) -> float | None:
     return float(ha) if ha is not None else None
 
 
+def _dedupe_plateau(vals: list) -> list:
+    out = []
+    for v in vals:
+        if out and v is not None and out[-1] is not None and abs(float(out[-1]) - float(v)) < 1e-6:
+            continue
+        out.append(v)
+    return out if len(out) >= 2 else list(vals)
+
+
 def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, list]:
-    """Historical block means from logged epochs — not live ticks."""
+    """Historical block means from logged epochs. not live ticks."""
     rois: list[float] = []
     accs: list[float] = []
     meta: list[dict] = []
@@ -516,6 +598,9 @@ def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, 
             continue
         mean_r = round(sum(rs) / len(rs), 4)
         mean_a = round(sum(ac) / len(ac), 4) if ac else None
+        # Skip flat duplicate of previous block
+        if rois and abs(rois[-1] - mean_r) < 1e-6:
+            continue
         rois.append(mean_r)
         if mean_a is not None:
             accs.append(mean_a)
@@ -536,7 +621,7 @@ def _build_containers(
     betting, niches, outcomes, sport_markets, factors, calibration,
     stake_desk, league_depth, format_fuel, book_depth, curves, total_corpus,
 ) -> list[dict[str, Any]]:
-    """Exactly the Model desk — ≥20 containers, each with per-sport (or category) subs."""
+    """Exactly the Model desk. ≥20 containers, each with per-sport (or category) subs."""
     need_craft = MIN_N["craft_sport"]
     # Lifetime craft volume across epochs (+ betting paired as fuel ceiling)
     life: dict[str, dict] = {sp: {"n": 0, "hits": 0.0, "pnl": 0.0, "stake": 0.0} for sp in SPORTS}
@@ -561,46 +646,73 @@ def _build_containers(
         craft_by[sp] = b if bn >= ln else l
     craft_sport_cells = []
     latest_by = (latest.get("by_sport") or {}) if latest else {}
+    # Persistent ledger fills sports that sat out the last cricket-only eval
+    try:
+        from bet_placer.ml.craft_store import get_meta as _gm
+        sport_ledger = _gm("sport_ledger") or {}
+    except Exception:
+        sport_ledger = {}
     for sp in SPORTS:
         row = latest_by.get(sp) or craft_by.get(sp) or {}
+        led = sport_ledger.get(sp) or {}
         L = life[sp]
         n_life = int(L["n"])
         paired_n = int(((betting.get("by_sport") or {}).get(sp) or {}).get("n") or 0)
-        n_gate = max(n_life, paired_n)
-        # Display holdout epoch only — never sum lifetime epochs (looks like -100% ROI)
-        stake = float(row.get("stake") or 0) or (int(row.get("n") or 0) * 150.0)
+        n_gate = max(n_life, paired_n, int(led.get("n") or 0))
+        # Display holdout epoch only. never sum lifetime epochs (looks like -100% ROI)
+        n_row = int(row.get("n") or 0)
+        stake = float(row.get("stake") or 0) or (n_row * 150.0)
         pnl = float(row.get("pnl") or 0)
-        roi = (pnl / stake) if stake > 0 else row.get("roi")
+        roi = (pnl / stake) if stake > 0 and n_row > 0 else row.get("roi")
         hit = row.get("hit_rate")
+        # Fall back to ledger so soccer/BB never show blank n/a while gated
+        if roi is None and led.get("roi") is not None:
+            roi = led.get("roi")
+        if hit is None and led.get("hit_rate") is not None:
+            hit = led.get("hit_rate")
+        if n_row <= 0 and led.get("n"):
+            n_row = int(led["n"])
         roi_val = round(float(roi), 4) if roi is not None else None
         hit_val = round(float(hit), 4) if hit is not None else None
         floor = float((train_status or {}).get("target_accuracy") or 0.60)
-        note_parts = [f"holdout epoch · lifetime {n_life:,}"]
-        show_roi = roi_val
+        note_parts = [f"holdout · lifetime {n_life:,}"]
+        if led.get("ok") is False:
+            note_parts.append("gated off live picks")
         if roi_val is not None and roi_val < 0:
-            show_roi = None
-            note_parts.append("ROI gated until sport > 0")
+            note_parts.append(f"raw {roi_val:+.1%}")
         if hit_val is not None and hit_val < floor:
-            note_parts.append(f"below {floor:.0%} hit floor")
+            note_parts.append(f"below {floor:.0%} hit")
         craft_sport_cells.append(_sport_cell(
             sp,
             hit_rate=hit_val,
             pnl=round(pnl, 2) if pnl else row.get("pnl"),
-            roi=show_roi,
-            last_n=int(row.get("n") or 0),
+            roi=roi_val,
+            gated=bool(roi_val is not None and roi_val <= 0) or led.get("ok") is False,
+            last_n=n_row,
             note=" · ".join(note_parts),
             **_ready(n_gate, need_craft),
         ))
 
     betting_cells = []
+    floor = float((train_status or {}).get("target_accuracy") or 0.60)
     for sp in SPORTS:
         row = (betting.get("by_sport") or {}).get(sp) or {}
         n = int(row.get("n") or 0)
+        hit = row.get("hit_rate")
+        roi = row.get("roi")
+        show_roi = round(float(roi), 4) if roi is not None else None
+        note = None
+        if show_roi is not None and show_roi < 0:
+            note = f"gated ({show_roi:+.1%} raw)"
+        if hit is not None and float(hit) < floor:
+            note = (note + f" · below {floor:.0%} hit") if note else f"below {floor:.0%} hit"
         betting_cells.append(_sport_cell(
             sp,
-            hit_rate=row.get("hit_rate"),
-            roi=row.get("roi"),
+            hit_rate=round(float(hit), 4) if hit is not None else None,
+            roi=show_roi,
             avg_edge=row.get("avg_edge"),
+            gated=bool(show_roi is not None and show_roi <= 0),
+            note=note,
             **_ready(n, MIN_N["betting_sport"]),
         ))
 
@@ -679,7 +791,7 @@ def _build_containers(
         {
             "id": "03_board_acc",
             "title": "3 · Live-board accuracy",
-            "desc": "Finished ESPN windows. Thin boards fall back to history accuracy — not a fake 10k-board gate.",
+            "desc": "Finished ESPN windows. Thin boards fall back to history accuracy. not a fake 10k-board gate.",
             "kind": "sport_grid",
             "sports": [
                 _sport_cell(
@@ -743,7 +855,7 @@ def _build_containers(
         {
             "id": "07_craft_roi_sport",
             "title": "7 · Paper craft ROI by sport",
-            "desc": "Latest / best epoch PnL over stake — real books only when available.",
+            "desc": "Latest / best epoch PnL over stake. real books only when available.",
             "kind": "sport_grid",
             "sports": craft_sport_cells,
             "chart": "craft_sport_roi",
@@ -768,7 +880,7 @@ def _build_containers(
         {
             "id": "09_craft_volume",
             "title": "9 · Paper craft volume by sport",
-            "desc": "Cumulative tickets (boards + 74k paired closes). Ready at 10k/sport — not 12.",
+            "desc": "Cumulative tickets (boards + 74k paired closes). Ready at 10k/sport. not 12.",
             "kind": "sport_grid",
             "sports": craft_sport_cells,
             "chart": "craft_sport_volume",
@@ -776,7 +888,7 @@ def _build_containers(
         {
             "id": "10_craft_equity",
             "title": "10 · Paper bankroll equity",
-            "desc": "Archived block mean ROI (compare blocks — not a live ₹ zig-zag).",
+            "desc": "Archived block mean ROI (compare blocks. not a live ₹ zig-zag).",
             "kind": "chart",
             "chart": "craft_equity",
             **_ready(len(curves.get("craft_equity") or []), MIN_N["equity_epochs"]),
@@ -801,7 +913,7 @@ def _build_containers(
         {
             "id": "13_monthly_roi",
             "title": "13 · Monthly unit ROI",
-            "desc": "Per-sport monthly heartbeat (soccer B365 closes · basketball/cricket model-fair paper). NBA history ends 2015 — still shown, not truncated by soccer 2026.",
+            "desc": "Per-sport monthly heartbeat. Soccer = tight B365 value band (edge≥8%, odds 1.45–3.6). Underwater sports show as gated on the pairs desk. not a craft failure.",
             "kind": "chart",
             "chart": "betting_monthly_roi",
             **_ready(monthly_n, MIN_N["monthly"]),
@@ -809,7 +921,7 @@ def _build_containers(
         {
             "id": "14_yearly_volume",
             "title": "14 · Betting trend by year",
-            "desc": f"How the desk learned over time — {betting.get('total_paired') or 0:,} paired tickets. Volume + hit rate by year (trend learning, not a calendar widget).",
+            "desc": f"How the desk learned over time. {betting.get('total_paired') or 0:,} paired tickets. Volume + hit rate by year (trend learning, not a calendar widget).",
             "kind": "chart",
             "chart": "betting_yearly_volume",
             **_ready(int(betting.get("total_paired") or 0), READY_N),
@@ -817,7 +929,7 @@ def _build_containers(
         {
             "id": "15_niche_replay",
             "title": "15 · Niche + popular markets",
-            "desc": "Real niches stay: Asian handicap · DNB · double chance · corners · cards — plus core 1X2/BTTS/O-U/ML. Graded on club CSVs + board history.",
+            "desc": "Real niches stay: Asian handicap · DNB · double chance · corners · cards. plus core 1X2/BTTS/O-U/ML. Graded on club CSVs + board history.",
             "kind": "market_list",
             "rows": (niches_ready[:14] or niches_building or [
                 {"market": m, **_ready(0, MIN_N["niche"])}
@@ -830,7 +942,7 @@ def _build_containers(
         {
             "id": "15a_sport_markets",
             "title": "15a · Markets by sport",
-            "desc": "Basketball and cricket get equal desk space — ESPN boards (WNBA/NCAA/FIBA/NBL + cricket) plus history, not soccer-only.",
+            "desc": "Basketball and cricket get equal desk space. ESPN boards (WNBA/NCAA/FIBA/NBL + cricket) plus history, not soccer-only.",
             "kind": "market_list",
             "rows": (sport_markets or [])[:18] or [
                 {"market": m, **_ready(0, MIN_N["niche"])}
@@ -840,11 +952,11 @@ def _build_containers(
         {
             "id": "15b_outcomes",
             "title": "15b · Individual outcomes",
-            "desc": "Readable picks: Home AH −0.5 · Corners over 9.5 · DNB · Over 2.5 — not raw variable names.",
+            "desc": "Home AH −0.5, corners over 9.5, DNB, over 2.5. readable labels.",
             "kind": "market_list",
             "rows": (outcomes or [])[:16] or [
                 {"market": m, **_ready(0, MIN_N["outcomes"])}
-                for m in ("Home AH −0.5", "Corners over 9.5", "BTTS — Yes", "Home moneyline")
+                for m in ("Home AH −0.5", "Corners over 9.5", "BTTS. Yes", "Home moneyline")
             ],
         },
         {
@@ -868,7 +980,7 @@ def _build_containers(
         {
             "id": "18_factor_graph",
             "title": "18 · Factor graph",
-            "desc": "Filled trained fields only — no empty Sparse placeholders.",
+            "desc": "Filled trained fields only. no empty Sparse placeholders.",
             "kind": "factors",
             "total_nodes": factors.get("total_nodes") or 0,
             "total_edges": factors.get("total_edges") or 0,
@@ -879,20 +991,18 @@ def _build_containers(
         },
         {
             "id": "19_stake_volume",
-            "title": "19 · Stake handle & bettors",
-            "desc": "Cached Stake overlay only. Soccer-heavy until you refresh Stake for basketball/cricket — 0 here means no cached fixtures, not 'building forever'.",
+            "title": "19 · Stake handle & book depth",
+            "desc": "Stake handle when cached. Priced books for each sport when Stake is missing.",
             "kind": "sport_grid",
-            "sports": [
-                {**cell, **(
-                    {"status": "ready", "need": 0, "note": "no Stake cache for this sport yet"}
-                    if (cell.get("fixtures") or 0) == 0 else {}
-                )}
-                for cell in stake_cells
-            ],
+            "sports": stake_cells,
             "meta": {
                 "total_volume": stake_desk.get("total_volume"),
                 "total_users": stake_desk.get("total_users"),
                 "fixtures": stake_desk.get("fixtures"),
+                "priced": stake_desk.get("priced"),
+                "age_h": stake_desk.get("age_h"),
+                "stale": stake_desk.get("stale"),
+                "note": stake_desk.get("updated_note"),
             },
         },
         {
@@ -903,7 +1013,7 @@ def _build_containers(
             "sports": book_depth.get("by_sport") or [
                 _sport_cell(sp, avg_books=0, priced=0, **_ready(0, MIN_N["stake"])) for sp in SPORTS
             ],
-            "meta": {"policy": "Odds API cache-only — protect remaining credits"},
+            "meta": {"policy": "Odds API cache-only. protect remaining credits"},
         },
         {
             "id": "21_soccer_leagues",
@@ -924,7 +1034,7 @@ def _build_containers(
         {
             "id": "22_epoch_curves",
             "title": "22 · Self-improvement curves",
-            "desc": "Block means (10 epochs) vs previous block — not live tick zigzags.",
+            "desc": "Block means (10 epochs) vs previous block. not live tick zigzags.",
             "kind": "chart",
             "chart": "craft_overall",
             **_ready(len(curves.get("craft_roi") or []), 2),
@@ -939,9 +1049,16 @@ def _build_containers(
         {
             "id": "24_takeaways",
             "title": "24 · Takeaways",
-            "desc": "Short bullets from live aggregates.",
+            "desc": "Short bullets from live aggregates + latest craft notes.",
             "kind": "bullets",
             "rows": [],  # filled below
+        },
+        {
+            "id": "25_craft_notes",
+            "title": "25 · Craft notes (latest)",
+            "desc": "Tail of craft_notes.log. sport gates, ROI, what the trainer just did.",
+            "kind": "bullets",
+            "rows": _recent_craft_notes(10),
         },
     ]
 
@@ -951,9 +1068,18 @@ def _build_containers(
         calibration.get("market_replay_accuracy"),
         factors, betting, niches,
     )
+    if stake_desk.get("updated_note"):
+        bullets = [f"Stake: {stake_desk['updated_note']} · ${int(stake_desk.get('total_volume') or 0):,} handle / {int(stake_desk.get('total_users') or 0):,} bettors"] + bullets
+    if craft.get("n_epochs"):
+        bullets = [f"Craft epochs logged: {craft.get('n_epochs'):,} (champion ROI {((best.get('roi') or 0) * 100):+.1f}%)"] + bullets
     for c in containers:
+        # Keep titles; drop long desk blurbs
+        if c.get("desc") and len(str(c.get("desc"))) > 80:
+            c["desc"] = None
         if c["id"] == "24_takeaways":
-            c["rows"] = bullets or ["Retrain / run craft until sample health flips to ready."]
+            c["rows"] = bullets or ["Run craft until sample health is ready."]
+        if c["id"] == "25_craft_notes" and not c["rows"]:
+            c["rows"] = ["No craft notes yet. Start craft training."]
     return containers
 
 
@@ -968,24 +1094,39 @@ def _sample_health(sports, craft_cells, betting_cells, niches, stake_cells) -> l
         rows.append({"id": f"bet_{cell['sport']}", "label": f"betting pairs {cell['sport']}", "status": cell.get("status"), "n": cell.get("n"), "need": cell.get("need")})
     ready_niches = sum(1 for n in niches if n.get("status") == "ready")
     rows.append({"id": "niches", "label": "niche markets ready", **_ready(ready_niches, 4)})
-    stake_n = sum(int(c.get("fixtures") or 0) for c in stake_cells)
-    rows.append({"id": "stake", "label": "stake volume fixtures", **_ready(stake_n, MIN_N["stake"])})
+    stake_n = sum(
+        int(c.get("fixtures") or 0) or int(c.get("priced") or 0)
+        for c in stake_cells
+    )
+    rows.append({"id": "stake", "label": "stake / book depth", **_ready(stake_n, MIN_N["stake"] * 3)})
     return rows
 
 
 def _stake_volume_desk() -> dict[str, Any]:
+    """Stake handle when cached; book depth fills BB/CK when Stake is missing."""
     try:
         from bet_placer.engine.market_top import _stake_volume_rows
-        rows = _stake_volume_rows() or []
+        rows = _stake_volume_rows(allow_stale=True) or []
     except Exception:
         rows = []
-    by = {sp: {"volume": 0.0, "users": 0, "bets": 0, "fixtures": 0} for sp in SPORTS}
-    # Stake cache is mostly soccer — attribute by league keywords
+    by = {
+        sp: {
+            "volume": 0.0, "users": 0, "bets": 0, "fixtures": 0,
+            "markets": 0, "combos": 0, "priced": 0, "avg_books": 0.0,
+        }
+        for sp in SPORTS
+    }
+    age_h = None
+    stale = False
     for r in rows:
-        blob = f"{r.get('league') or ''} {r.get('home') or ''} {r.get('away') or ''}".lower()
+        if r.get("age_h") is not None:
+            age_h = r.get("age_h")
+        if r.get("stale"):
+            stale = True
+        blob = f"{r.get('league') or ''} {r.get('sport') or ''} {r.get('home') or ''} {r.get('away') or ''}".lower()
         if any(x in blob for x in ("nba", "wnba", "ncaa", "basket")):
             sp = "basketball"
-        elif any(x in blob for x in ("ipl", "bbl", "cricket", "t20", "odi", "test")):
+        elif any(x in blob for x in ("ipl", "bbl", "cricket", "t20", "odi", "test", "hundred")):
             sp = "cricket"
         else:
             sp = "soccer"
@@ -993,23 +1134,83 @@ def _stake_volume_desk() -> dict[str, Any]:
         by[sp]["users"] += int(r.get("users") or 0)
         by[sp]["bets"] += int(r.get("bets") or 0)
         by[sp]["fixtures"] += 1
-    cells = [
-        _sport_cell(
-            sp,
-            volume=round(by[sp]["volume"], 0),
-            users=by[sp]["users"],
-            bets=by[sp]["bets"],
-            fixtures=by[sp]["fixtures"],
-            **_ready(by[sp]["fixtures"], MIN_N["stake"]),
-        )
-        for sp in SPORTS
-    ]
+        by[sp]["markets"] += int(r.get("markets") or 0)
+        by[sp]["combos"] += int(r.get("combos") or 0)
+
+    books = _book_depth_from_boards({})
+    for cell in books.get("by_sport") or []:
+        sp = cell.get("sport")
+        if sp not in by:
+            continue
+        by[sp]["priced"] = int(cell.get("priced") or 0)
+        by[sp]["avg_books"] = float(cell.get("avg_books") or 0)
+
+    age_note = None
+    if age_h is not None:
+        if age_h >= 48:
+            age_note = f"Stake cache {age_h/24:.0f}d old. Refresh Stake for live handle."
+        elif age_h >= 24:
+            age_note = f"Stake cache {age_h:.0f}h old. Refresh Stake for live handle."
+        else:
+            age_note = f"Stake cache {age_h:.0f}h old."
+
+    cells = []
+    for sp in SPORTS:
+        fx = by[sp]["fixtures"]
+        priced = by[sp]["priced"]
+        if fx > 0:
+            cells.append(_sport_cell(
+                sp,
+                volume=round(by[sp]["volume"], 0),
+                users=by[sp]["users"],
+                bets=by[sp]["bets"],
+                fixtures=fx,
+                priced=priced or None,
+                avg_books=by[sp]["avg_books"] or None,
+                markets=by[sp]["markets"] or None,
+                combos=by[sp]["combos"] or None,
+                note=age_note,
+                stale=stale,
+                **_ready(fx, MIN_N["stake"]),
+            ))
+        elif priced > 0:
+            cells.append(_sport_cell(
+                sp,
+                volume=0,
+                users=0,
+                bets=0,
+                fixtures=0,
+                priced=priced,
+                avg_books=by[sp]["avg_books"],
+                note="No Stake handle yet. Showing priced books.",
+                n=priced,
+                need=MIN_N["stake"],
+                status="ready" if priced >= MIN_N["stake"] else "building",
+            ))
+        else:
+            cells.append(_sport_cell(
+                sp,
+                volume=0,
+                users=0,
+                bets=0,
+                fixtures=0,
+                priced=0,
+                note="Refresh Stake for this sport.",
+                n=0,
+                need=0,
+                status="na",
+            ))
     return {
         "by_sport": cells,
         "total_volume": round(sum(by[sp]["volume"] for sp in SPORTS), 0),
         "total_users": sum(by[sp]["users"] for sp in SPORTS),
         "fixtures": sum(by[sp]["fixtures"] for sp in SPORTS),
+        "priced": sum(by[sp]["priced"] for sp in SPORTS),
+        "age_h": round(age_h, 1) if age_h is not None else None,
+        "stale": stale,
+        "updated_note": age_note,
     }
+
 
 
 def _soccer_league_depth() -> dict[str, Any]:
@@ -1041,7 +1242,7 @@ def _soccer_league_depth() -> dict[str, Any]:
 
 
 def _bb_ck_format_fuel() -> dict[str, Any]:
-    """League/format depth for basketball + cricket — the fuel desk was soccer-only."""
+    """League/format depth for basketball + cricket. the fuel desk was soccer-only."""
     from collections import Counter
     rows = []
     try:
@@ -1063,19 +1264,20 @@ def _bb_ck_format_fuel() -> dict[str, Any]:
 
 
 def _book_depth_from_boards(params: dict) -> dict[str, Any]:
-    """Book depth from ESPN disk cache (+ league boards) — never trigger a fresh scrape here."""
+    """Book depth from ESPN disk cache + Odds API disk cache (no fresh API spend)."""
     cells = []
+    need = {"soccer": 80, "basketball": 40, "cricket": 20}
+    prefixes = {
+        "soccer": ("soccer_",),
+        "basketball": ("basketball_",),
+        "cricket": ("cricket_",),
+    }
     try:
         from pathlib import Path
         import json
         path = Path.home() / ".bet_placer" / "espn_board_cache.json"
         blob = json.loads(path.read_text()) if path.exists() else {}
-        prefixes = {
-            "soccer": ("soccer_",),
-            "basketball": ("basketball_",),
-            "cricket": ("cricket_",),
-        }
-        need = {"soccer": 80, "basketball": 40, "cricket": 20}
+        odds_dir = Path.home() / ".bet_placer" / "odds_api_cache"
         for sp, prefs in prefixes.items():
             seen_ids: set[str] = set()
             priced = 0
@@ -1095,9 +1297,34 @@ def _book_depth_from_boards(params: dict) -> dict[str, Any]:
                         seen_ids.add(eid)
                     events_n += 1
                     nbm = len((e or {}).get("bookmakers") or [])
-                    if nbm:
+                    # ESPN often stores a single consensus price. still "priced"
+                    if nbm or (e or {}).get("home_odds") or ((e or {}).get("odds") or {}).get("home"):
                         priced += 1
-                        books += nbm
+                        books += max(nbm, 1)
+            # Merge Odds API disk cache. real multi-book depth
+            if odds_dir.exists():
+                for f in odds_dir.glob("*.json"):
+                    if not any(f.name.startswith(p) for p in prefs):
+                        continue
+                    try:
+                        data = json.loads(f.read_text())
+                    except Exception:
+                        continue
+                    rows = data if isinstance(data, list) else (data.get("events") or data.get("data") or [])
+                    if not isinstance(rows, list):
+                        continue
+                    for e in rows:
+                        if not isinstance(e, dict):
+                            continue
+                        eid = str(e.get("id") or f"{e.get('home_team')}|{e.get('away_team')}|{e.get('commence_time')}")
+                        if eid in seen_ids:
+                            continue
+                        seen_ids.add(eid)
+                        events_n += 1
+                        nbm = len(e.get("bookmakers") or [])
+                        if nbm:
+                            priced += 1
+                            books += nbm
             avg = (books / priced) if priced else 0
             cells.append(_sport_cell(
                 sp,
@@ -1109,6 +1336,19 @@ def _book_depth_from_boards(params: dict) -> dict[str, Any]:
     except Exception:
         cells = [_sport_cell(sp, events=0, priced=0, avg_books=0, **_ready(0, 10)) for sp in SPORTS]
     return {"by_sport": cells}
+
+
+def _recent_craft_notes(limit: int = 8) -> list[str]:
+    """Tail of craft_notes.log. what the trainer is actually doing."""
+    try:
+        from pathlib import Path
+        path = Path.home() / ".bet_placer" / "craft_notes.log"
+        if not path.exists():
+            return []
+        lines = [ln.strip() for ln in path.read_text(errors="ignore").splitlines() if ln.strip()]
+        return lines[-limit:]
+    except Exception:
+        return []
 
 
 def _fallback_confident(sports: dict, params: dict, best: dict) -> dict[str, Any]:
@@ -1213,7 +1453,7 @@ def _insight_bullets(
         focus = best.get("focus_sport") or "mixed"
         out.append(
             f"Craft paper best ROI {best['roi']*100:.0f}% "
-            f"({focus}, {best.get('bets') or '?'} bets — not a live bankroll guarantee)"
+            f"({focus}, {best.get('bets') or '?'} bets. not a live bankroll guarantee)"
         )
     conf65 = (confident or {}).get("65") or (confident or {}).get(65)
     if conf65 and conf65.get("accuracy") is not None:
@@ -1226,5 +1466,5 @@ def _insight_bullets(
     brier = (metrics or {}).get("result_brier")
     if brier is not None:
         out.append(f"Brier {brier:.3f} (lower = better calibrated)")
-    out.append("Odds API: cache-only on boards/craft — preserve remaining credits.")
+    out.append("Odds API: cache-only on boards/craft. preserve remaining credits.")
     return out[:18]

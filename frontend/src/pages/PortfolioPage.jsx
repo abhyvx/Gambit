@@ -148,11 +148,10 @@ export default function PortfolioPage() {
     <div className="page portfolio-page">
       <header className="portfolio-hero fade-up">
         <div>
-          <span className="page-eyebrow">PRIVATE PORTFOLIO</span>
-          <h1>Betting journal and improvement desk</h1>
+          <span className="page-eyebrow">PORTFOLIO</span>
+          <h1>Betting journal</h1>
           <p className="subtitle">
-            Imported from your Stake session, organized into strengths, leaks, recent form, and the guardrails your
-            main match screen should follow.
+            Imported from your Stake session. Strengths, leaks, and recent form.
           </p>
           {portfolio.profile?.summary && (
             <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>

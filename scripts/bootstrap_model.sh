@@ -6,7 +6,7 @@ REPO="${GAMBIT_REPO:-abhyvx/Gambit}"
 TAG="${GAMBIT_MODEL_TAG:-model-latest}"
 mkdir -p "$DEST"
 
-if [ -f "$DEST/craft.db" ] && [ -f "$DEST/model_params.json" ]; then
+if [ -f "$DEST/craft.db" ] && [ -f "$DEST/model_params.json" ] && [ -f "$DEST/craft_nn.joblib" ]; then
   echo "model: using cached state in $DEST"
   exit 0
 fi

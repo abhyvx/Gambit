@@ -18,9 +18,11 @@ COPY --from=web /app/frontend/dist ./frontend/dist
 ENV CRAFT_DISABLE=1 \
     STAKE_USE_BROWSER=false \
     STAKE_BROWSER_WARMUP_ON_STARTUP=false \
+    BET_PLACER_HOME=/var/lib/bet_placer \
     GAMBIT_FRONTEND_DIST=/app/frontend/dist \
     GAMBIT_HOST=0.0.0.0 \
     GAMBIT_PORT=10000 \
     GAMBIT_REPO=abhyvx/Gambit
+RUN mkdir -p /var/lib/bet_placer
 EXPOSE 10000
 CMD ["bash", "scripts/start_cloud.sh"]

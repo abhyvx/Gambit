@@ -32,13 +32,13 @@ function MatchStatsStrip({ home, away, stats, probs }) {
   const a = stats?.away || {}
   const cells = [
     probs?.home != null && { label: 'Win%', home: pct(probs.home), away: pct(probs.away) },
-    (h.form || a.form) && { label: 'Form', home: h.form || '—', away: a.form || '—' },
-    (h.xg != null || a.xg != null) && { label: 'xG', home: h.xg ?? '—', away: a.xg ?? '—' },
-    (h.xga != null || a.xga != null) && { label: 'xGA', home: h.xga ?? '—', away: a.xga ?? '—' },
+    (h.form || a.form) && { label: 'Form', home: h.form || 'n/a', away: a.form || 'n/a' },
+    (h.xg != null || a.xg != null) && { label: 'xG', home: h.xg ?? 'n/a', away: a.xg ?? 'n/a' },
+    (h.xga != null || a.xga != null) && { label: 'xGA', home: h.xga ?? 'n/a', away: a.xga ?? 'n/a' },
     (h.goals_for != null || a.goals_for != null) && {
       label: 'GF/GA',
-      home: `${h.goals_for ?? '—'} / ${h.goals_against ?? '—'}`,
-      away: `${a.goals_for ?? '—'} / ${a.goals_against ?? '—'}`,
+      home: `${h.goals_for ?? 'n/a'} / ${h.goals_against ?? 'n/a'}`,
+      away: `${a.goals_for ?? 'n/a'} / ${a.goals_against ?? 'n/a'}`,
     },
   ].filter(Boolean)
   if (!cells.length) return null
@@ -94,7 +94,7 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
     <div className="analysis-brief">
       <div className="analysis-brief-head">
         <div>
-          {v.headline ? <strong>{v.headline.replace(/^(BET|CAUTION|SKIP)\s*[—–-]\s*/i, '')}</strong> : null}
+          {v.headline ? <strong>{v.headline.replace(/^(BET|CAUTION|SKIP)\s*[—--]\s*/i, '')}</strong> : null}
           {a.style_note ? <p className="muted">{a.style_note}</p> : null}
         </div>
         {v.verdict ? <VerdictBadge verdict={v.verdict} /> : null}
@@ -231,7 +231,7 @@ export default function SportPage() {
   }
 
   useEffect(() => {
-    // Switching sport category — honor ?league= when valid, else first tab
+    // Switching sport category - honor ?league= when valid, else first tab
     const fromUrl = params.get('league')
     const next = (fromUrl && group.leagues.some((l) => l.key === fromUrl))
       ? fromUrl
@@ -356,7 +356,7 @@ export default function SportPage() {
       setPicksLoading(false)
       return undefined
     }
-    // Same vertical tickets as Home — board 1X2 favorites
+    // Same vertical tickets as Home - board 1X2 favorites
     setTopPicks(marketPicksFromRows(liveUpcoming, 4))
     setPicksLoading(false)
     return undefined
@@ -391,7 +391,7 @@ export default function SportPage() {
   }, [focusId, loading, rows, apiSport, perMatchBudget, targetCashout, bettorStyle])
 
   const parkAnalysis = (ev, a) => {
-    // Explicit add only — opening a match must not dump legs into the slip
+    // Explicit add only - opening a match must not dump legs into the slip
     if (!a) return
     const picks = a._wc
       ? (a.bet_slip?.strategies?.min_loss?.[0]?.legs || a.unified_picks || []).slice(0, MAX_SUGGESTED)
@@ -434,7 +434,7 @@ export default function SportPage() {
         selection: 'away', label: `${ev.away_team} to win`, odds: o.away, market: 'match_winner', market_name: 'Match Result',
       },
     ].filter(Boolean)
-    // Opening a match shouldn't dump all three sides — only park when a side is chosen
+    // Opening a match shouldn't dump all three sides - only park when a side is chosen
     if (!side) return
     for (const p of picks) {
       addLeg(legFromBet({
@@ -552,7 +552,7 @@ export default function SportPage() {
 
       <section className="top-picks-block">
         <div className="section-label">Top bets</div>
-        <p className="section-sub">Open matches only — tap a ticket for payout, or open the fixture.</p>
+        <p className="section-sub">Open matches only - tap a ticket for payout, or open the fixture.</p>
         {picksLoading && <BoardBuffer rows={3} label="Loading market…" />}
         {!picksLoading && !topPicks.length && (
           <p className="muted">No priced favorites on this board yet.</p>
@@ -661,7 +661,7 @@ export default function SportPage() {
                     away={ev.away_team}
                     fanPrediction={a?.web_consensus?.dominant_narrative || null}
                     status={ev.status}
-                    score={parts ? `${parts.home}${parts.away ? `–${parts.away}` : ''}` : (ev.score || null)}
+                    score={parts ? `${parts.home}${parts.away ? `-${parts.away}` : ''}` : (ev.score || null)}
                     sport={apiSport}
                   />
                 </div>

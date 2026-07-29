@@ -54,7 +54,7 @@ function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 
     return (
       <div className="insight-chart">
         <span className="stat-label">{title}</span>
-        <p className="muted">Need ≥2 data blocks — refresh after craft archives the next block.</p>
+        <p className="muted">Need ≥2 data blocks - refresh after craft archives the next block.</p>
       </div>
     )
   }
@@ -164,7 +164,7 @@ function AccGauge({ value, label, color }) {
 function ReliabilityBars({ buckets }) {
   const rows = (buckets || []).filter((b) => b && (b.n || b.predicted != null))
   if (!rows.length) {
-    return <p className="muted">Calibration buckets building — retrain to fill.</p>
+    return <p className="muted">Calibration buckets building - retrain to fill.</p>
   }
   return (
     <div className="insight-calib">
@@ -222,7 +222,7 @@ function InsightContainer({ c, curves, sportKeys }) {
   }))
   const trendRows = curves.betting_trends || []
   // Per-sport heartbeat: each sport uses its own last N months (index-aligned),
-  // so NBA 1946–2015 is not wiped by soccer/cricket running to 2026.
+  // so NBA 1946-2015 is not wiped by soccer/cricket running to 2026.
   const bettingRoiSeries = sportKeys.map((k) => {
     const rows = trendRows
       .filter((t) => t.sport === k && t.ym)
@@ -284,7 +284,7 @@ function InsightContainer({ c, curves, sportKeys }) {
               {cell.users != null && <div><dt>Bettors</dt><dd>{fmt(cell.users)}</dd></div>}
               {cell.fixtures != null && <div><dt>Fixtures</dt><dd>{fmt(cell.fixtures)}</dd></div>}
               {cell.priced != null && (
-                <div><dt>Priced</dt><dd>{fmt(cell.priced)} / {fmt(cell.events)} · avg books {cell.avg_books ?? '—'}</dd></div>
+                <div><dt>Priced</dt><dd>{fmt(cell.priced)} / {fmt(cell.events)} · avg books {cell.avg_books ?? 'n/a'}</dd></div>
               )}
               {cell.last_n != null && <div><dt>Last epoch bets</dt><dd>{fmt(cell.last_n)}</dd></div>}
               {cell.span && <div><dt>Span</dt><dd>{cell.span}</dd></div>}
@@ -425,7 +425,7 @@ function InsightContainer({ c, curves, sportKeys }) {
               <small><StatusPill status={row.status} n={row.n} need={row.need} /></small>
             </div>
           ))}
-          {!(c.rows || []).length && <p className="muted">League CSVs not cached yet — Retrain pulls football-data.</p>}
+          {!(c.rows || []).length && <p className="muted">League CSVs not cached yet - Retrain pulls football-data.</p>}
         </div>
       )}
 
@@ -459,10 +459,10 @@ function InsightContainer({ c, curves, sportKeys }) {
         />
       )}
       {c.kind === 'chart' && c.chart === 'betting_yearly_volume' && (
-        <MultiLineChart title="Trend learning — bets by year (volume the model trained on)" series={bettingYearSeries} format={(v) => fmt(v)} height={140} />
+        <MultiLineChart title="Trend learning - bets by year (volume the model trained on)" series={bettingYearSeries} format={(v) => fmt(v)} height={140} />
       )}
       {c.kind === 'chart' && c.chart === 'betting_monthly_roi' && (
-        <MultiLineChart title="Monthly unit ROI by sport (paired history — learn the bleed)" series={bettingRoiSeries} format={(v) => roiPct(v)} height={140} />
+        <MultiLineChart title="Monthly unit ROI by sport (paired history - learn the bleed)" series={bettingRoiSeries} format={(v) => roiPct(v)} height={140} />
       )}
       {c.kind === 'chart' && c.chart === 'craft_overall' && (
         <div className="insight-charts">
@@ -570,7 +570,7 @@ export default function ModelPage() {
       untilRoi: true,
       targetRoi: 0.25,
       targetAcc: 0.60,
-      maxEpochs: 0, // unlimited — only stops on real ROI+acc gate
+      maxEpochs: 0, // unlimited - only stops on real ROI+acc gate
       bankroll: 10000,
       matchBudget: 200,
     })
@@ -580,7 +580,7 @@ export default function ModelPage() {
       .finally(() => setPaperBusy(false))
   }
 
-  // Craft status only — do NOT re-fetch full insights every few seconds
+  // Craft status only - do NOT re-fetch full insights every few seconds
   // (that made charts look "live" / zigzaggy; user wants block comparisons).
   useEffect(() => {
     const state = ins?.craft?.train_status?.state
@@ -638,7 +638,7 @@ export default function ModelPage() {
         <div>
           <h1>Model</h1>
           <p className="subtitle">
-            Holdout accuracy = same frozen matches every run. Retrain refits the full model — not per-team patches.
+            Holdout accuracy = same frozen matches every run. Retrain refits the full model - not per-team patches.
           </p>
         </div>
         <div className="insight-header-actions">
@@ -699,7 +699,7 @@ export default function ModelPage() {
       {containers.length === 0 && (
         <section className="panel">
           <p className="muted" role="alert">
-            Insight containers missing from API — the backend is still running old code.
+            Insight containers missing from API - the backend is still running old code.
             Restart uvicorn on port 8000, then refresh this page.
           </p>
           <ul className="insight-bullets">

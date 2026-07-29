@@ -35,7 +35,7 @@ function filterPlans(raw, home, away) {
 
 function planMeta(p) {
   const tickets = p.ticket_count ?? (p.legs?.length || 0)
-  const wp = p.win_probability_pct ?? p.hit_probability_pct ?? '—'
+  const wp = p.win_probability_pct ?? p.hit_probability_pct ?? 'n/a'
   const profit = p.best_profit_inr ?? p.target_profit_inr
   const mode = tickets >= 2 ? `${tickets} separate bets` : '1 bet'
   const goal = p.hits_profit_goal ? ' · hits goal' : ''
@@ -166,7 +166,7 @@ export default function HitTargetPanel({ home, away, status, autoLoad = false, s
   return (
     <div className="hit-target-panel slip-tab-content">
       <p className="hit-target-intro">
-        Set budget, style, and cashout here — then find separate tickets that can hit the target.
+        Set budget, style, and cashout here - then find separate tickets that can hit the target.
       </p>
 
       <div className="hit-style-row">

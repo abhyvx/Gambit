@@ -88,7 +88,7 @@ export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '' }) {
     ? (() => {
         const h = ev.home_score_display ?? (ev.home_score != null ? String(ev.home_score) : null)
         const a = ev.away_score_display ?? (ev.away_score != null ? String(ev.away_score) : null)
-        if (h != null || a != null) return { home: h ?? '—', away: a ?? '—' }
+        if (h != null || a != null) return { home: h ?? 'n/a', away: a ?? 'n/a' }
         return null
       })()
     : null

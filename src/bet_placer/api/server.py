@@ -221,19 +221,28 @@ class PortfolioPrivacyUpdate(BaseModel):
     learning_opt_in: bool = False
 
 
+class StakeRelayPayload(BaseModel):
+    secret: str
+    fixtures: dict[str, dict]
+
+
 @app.get("/api/health")
 def health():
     settings = get_settings()
     stake_status = {}
+    from bet_placer.engine.stake_odds import stake_overlay_status
+    overlay = stake_overlay_status()
     if settings.stake_use_browser:
         from bet_placer.data.stake_browser import browser_status
-        from bet_placer.engine.stake_odds import stake_overlay_status
-        stake_status = {**browser_status(), "overlay": stake_overlay_status()}
+        stake_status = {**browser_status(), "overlay": overlay}
+    elif settings.stake_relay_secret or overlay.get("have_data"):
+        stake_status = {"relay": bool(settings.stake_relay_secret), "overlay": overlay}
     return {
         "status": "ok",
         "odds_api_configured": bool(settings.odds_api_key),
         "stake_token_configured": bool(settings.stake_api_token),
         "stake_use_browser": settings.stake_use_browser,
+        "stake_relay": bool(settings.stake_relay_secret),
         "stake_live": stake_network_enabled(),
         "stake_browser": stake_status,
     }
@@ -379,6 +388,16 @@ def events(sport: str = Query(default="soccer_epl"), match: str | None = None):
     payload = _build()
     _EVENTS_RESP[cache_key] = (now, payload)
     return payload
+
+
+@app.post("/api/stake/relay")
+def stake_relay(body: StakeRelayPayload):
+    """Ingest Stake odds from scripts/stake_relay.py on your laptop (bypasses cloud 403)."""
+    settings = get_settings()
+    if not settings.stake_relay_secret or body.secret != settings.stake_relay_secret:
+        raise HTTPException(status_code=401, detail="Invalid relay secret")
+    from bet_placer.engine.stake_odds import ingest_stake_relay
+    return ingest_stake_relay({"fixtures": body.fixtures})
 
 
 @app.post("/api/stake/refresh")

@@ -24,12 +24,10 @@ class Settings(BaseSettings):
     # Open Chromium on API startup. Default off — browser launches on first
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
     stake_browser_warmup_on_startup: bool = False
+    stake_relay_secret: str = ""  # same secret on laptop scripts/stake_relay.py
 
-    # Consensus weighting (how much to consider vs model — never blindly follow)
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
-
-    # Active ensemble weights
     ensemble_weight_poisson: float = 0.45
     ensemble_weight_elo: float = 0.35
     ensemble_weight_gbm: float = 0.20  # heuristic GBM until factor-graph trainer ships

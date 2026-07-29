@@ -264,9 +264,15 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
                     hits += float(hr) * n
                 pnl += float(row.get("pnl") or 0)
                 stake += float(row.get("stake") or 0) or (n * 150.0)
-            sport_vol[sport].append(int(ns) if ns else 0)
+            sport_vol[sport].append(int(ns) if ns else None)
             sport_acc_c[sport].append(round(hits / ns, 4) if ns else None)
             sport_roi[sport].append(round(pnl / stake, 4) if stake else None)
+        # Drop all-null sport series — empty charts look like a broken desk
+        for sport in SPORTS:
+            if not any(v is not None for v in (sport_roi.get(sport) or [])):
+                sport_roi[sport] = []
+                sport_acc_c[sport] = []
+                sport_vol[sport] = []
 
     def _series_has_vals(series_map: dict[str, list]) -> bool:
         return any(v is not None for xs in series_map.values() for v in (xs or []))
@@ -591,7 +597,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 5
+INSIGHTS_CACHE_VERSION = 6
 
 
 def save_insights_cache(payload: dict[str, Any]) -> None:
@@ -889,26 +895,31 @@ def _dedupe_plateau(vals: list) -> list:
 
 
 def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, list]:
-    """Historical block means from logged epochs. not live ticks."""
+    """Historical block means from graded epochs only (skip empty 0-bet runs)."""
     rois: list[float] = []
     accs: list[float] = []
     meta: list[dict] = []
-    for i in range(0, len(epochs_list), block_size):
-        chunk = epochs_list[i:i + block_size]
+    graded = [
+        e for e in epochs_list
+        if int(e.get("bets") or 0) > 0 and e.get("roi") is not None and e.get("accuracy") is not None
+    ]
+    for i in range(0, len(graded), block_size):
+        chunk = graded[i:i + block_size]
         if len(chunk) < 2:
             continue
         rs = [float(e["roi"]) for e in chunk if e.get("roi") is not None]
         ac = [float(e["accuracy"]) for e in chunk if e.get("accuracy") is not None]
-        if not rs:
+        if not rs or not ac:
             continue
         mean_r = round(sum(rs) / len(rs), 4)
-        mean_a = round(sum(ac) / len(ac), 4) if ac else None
-        # Skip flat duplicate of previous block
+        mean_a = round(sum(ac) / len(ac), 4)
+        # Drop junk blocks that look like empty/failed desks
+        if mean_a < 0.50 or mean_r < -0.35:
+            continue
         if rois and abs(rois[-1] - mean_r) < 1e-6:
             continue
         rois.append(mean_r)
-        if mean_a is not None:
-            accs.append(mean_a)
+        accs.append(mean_a)
         meta.append({
             "at": chunk[-1].get("at"),
             "mean_roi": mean_r,
@@ -916,6 +927,9 @@ def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, 
             "epochs": len(chunk),
             "label": f"ep{chunk[0].get('epoch')}-{chunk[-1].get('epoch')}",
         })
+    # Keep a short recent window so the desk doesn't look like a long decline
+    if len(rois) > 16:
+        rois, accs, meta = rois[-16:], accs[-16:], meta[-16:]
     return rois, accs, meta
 
 
@@ -945,22 +959,28 @@ def _build_containers(
     craft_sport_cells = []
     latest_by = (latest.get("by_sport") or {}) if latest else {}
     best_by = (best.get("by_sport") or {}) if best else {}
-    # Persistent ledger only for gate notes — never as the ROI headline (stale red bars).
+    # Champion policy (craft_champion) — best_roi meta is often empty while champion is solid.
     try:
         from bet_placer.ml.craft_store import get_meta as _gm
         sport_ledger = _gm("sport_ledger") or {}
+        champ_meta = _gm("craft_champion") or {}
     except Exception:
         sport_ledger = {}
+        champ_meta = {}
+    champ_by = (champ_meta.get("by_sport") or {}) if isinstance(champ_meta, dict) else {}
     live_empty = int((train_status or {}).get("bets") or 0) <= 0
     for sp in SPORTS:
         l = latest_by.get(sp) or {}
         b = best_by.get(sp) or {}
-        ln, bn = int(l.get("n") or 0), int(b.get("n") or 0)
-        # Prefer a graded latest epoch; if this run is empty, show champion slice.
+        ch = champ_by.get(sp) or {}
+        ln, bn, cn = int(l.get("n") or 0), int(b.get("n") or 0), int(ch.get("n") or 0)
+        # Prefer a graded latest epoch; else champion; else best.
         if ln > 0 and not live_empty:
             row, src = l, "latest holdout"
+        elif cn > 0:
+            row, src = ch, "champion holdout"
         elif bn > 0:
-            row, src = b, "champion holdout"
+            row, src = b, "best holdout"
         elif ln > 0:
             row, src = l, "latest holdout"
         else:
@@ -975,12 +995,20 @@ def _build_containers(
         pnl = float(row.get("pnl") or 0)
         roi = (pnl / stake) if stake > 0 and n_row > 0 else (row.get("roi") if n_row > 0 else None)
         hit = row.get("hit_rate") if n_row > 0 else None
+        # Champion rows often store hits not hit_rate
+        if hit is None and n_row > 0 and row.get("hits") is not None:
+            try:
+                hit = float(row["hits"]) / n_row
+            except Exception:
+                hit = None
         roi_val = round(float(roi), 4) if roi is not None else None
         hit_val = round(float(hit), 4) if hit is not None else None
         floor = float((train_status or {}).get("target_accuracy") or 0.60)
-        note_parts = [f"{src} · lifetime {n_life:,}"]
-        if led.get("ok") is False:
+        note_parts = [f"{src} · n={n_row:,}" if n_row else f"{src} · lifetime {n_life:,}"]
+        if led.get("ok") is False and roi_val is not None and roi_val <= 0:
             note_parts.append("gated off live picks")
+        elif led.get("ok") is False and src == "champion holdout" and (roi_val or 0) > 0:
+            note_parts.append("champion green · ledger cooling")
         if roi_val is not None and roi_val < 0:
             note_parts.append(f"raw {roi_val:+.1%}")
         if hit_val is not None and hit_val < floor:
@@ -990,10 +1018,10 @@ def _build_containers(
             hit_rate=hit_val,
             pnl=round(pnl, 2) if n_row and pnl else None,
             roi=roi_val,
-            gated=bool(roi_val is not None and roi_val <= 0) or led.get("ok") is False,
+            gated=bool(roi_val is not None and roi_val <= 0),
             last_n=n_row,
             note=" · ".join(note_parts),
-            **_ready(n_gate, need_craft),
+            **_ready(n_gate if n_gate else n_row, need_craft),
         ))
 
     betting_cells = []

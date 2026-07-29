@@ -4,11 +4,21 @@ set -euo pipefail
 DEST="${BET_PLACER_HOME:-$HOME/.bet_placer}"
 REPO="${GAMBIT_REPO:-abhyvx/Gambit}"
 TAG="${GAMBIT_MODEL_TAG:-model-latest}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$DEST"
 # Compat: any leftover Path.home()/.bet_placer callers still hit DEST
 if [ -n "${HOME:-}" ] && [ "$DEST" != "$HOME/.bet_placer" ]; then
   ln -sfn "$DEST" "$HOME/.bet_placer" 2>/dev/null || true
 fi
+
+_restore_users() {
+  if [ -f "$DEST/gambit_users_bundle.json" ]; then
+    (cd "$ROOT" && PYTHONPATH=src python3 - <<'PY') || true
+from bet_placer.auth.persist import restore_users_bundle
+print("users:", restore_users_bundle(force=False))
+PY
+  fi
+}
 
 NEED_REFRESH=0
 for name in craft.db model_params.json craft_nn.joblib; do
@@ -20,12 +30,16 @@ done
 [ -f "$DEST/stake_overlay_cache.json" ] || NEED_REFRESH=1
 # Portfolio journal from last sync (cloud-compatible without live Chrome)
 [ -f "$DEST/portfolio_state.json" ] || NEED_REFRESH=1
+# Accounts + per-user journals (survive Render free-disk wipe)
+[ -f "$DEST/gambit_users_bundle.json" ] || NEED_REFRESH=1
 # Model desk cache + factor graph (charts / factor box)
 [ -f "$DEST/model_insights_cache.json" ] || NEED_REFRESH=1
 [ -f "$DEST/factor_store.json" ] || NEED_REFRESH=1
 
 if [ "$NEED_REFRESH" = "0" ]; then
     echo "model: using cached state in $DEST"
+    # Still hydrate accounts if a prior wipe left only model files
+    [ -f "$DEST/users.json" ] || _restore_users
     exit 0
 fi
 
@@ -37,7 +51,7 @@ if [ -z "$JSON" ] || echo "$JSON" | grep -q '"message"'; then
     exit 0
 fi
 
-for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json portfolio_state.json model_insights_cache.json factor_store.json; do
+for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json portfolio_state.json gambit_users_bundle.json model_insights_cache.json factor_store.json; do
   URL=$(echo "$JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -50,3 +64,5 @@ for a in d.get('assets',[]):
     echo "  → $DEST/$name"
   fi
 done
+
+_restore_users

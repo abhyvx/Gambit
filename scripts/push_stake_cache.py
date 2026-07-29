@@ -260,7 +260,35 @@ def main() -> int:
         _process_portfolio_sync_jobs(cloud, secret)
     except Exception as exc:
         print(f"portfolio sync jobs: {exc}")
+
+    # Persist cloud accounts into model-latest so Render redeploys keep users.
+    try:
+        _sync_users_bundle(cloud, secret)
+    except Exception as exc:
+        print(f"users bundle: {exc}")
     return 0
+
+
+def _sync_users_bundle(cloud: str, secret: str) -> None:
+    import requests
+    from bet_placer.auth.persist import bundle_path
+
+    r = requests.get(
+        f"{cloud}/api/relay/users-bundle",
+        params={"secret": secret},
+        timeout=60,
+    )
+    r.raise_for_status()
+    blob = r.json() or {}
+    if not (blob.get("users") or {}):
+        print("users bundle: empty on cloud")
+        return
+    path = bundle_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(blob, indent=2, sort_keys=True), encoding="utf-8")
+    os.environ.setdefault("STAKE_UPLOAD_RELEASE", "1")
+    _upload_release(path)
+    print(f"users bundle: {len(blob.get('users') or {})} accounts, {len(blob.get('portfolios') or {})} portfolios")
 
 
 def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
@@ -281,7 +309,11 @@ def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
         jid = job.get("id")
         token = job.get("token")
         try:
-            # Token-only first — owner's browser cookies + user token = "session expired".
+            # Separate profile so user-token sync never fights the odds-link Chrome lock.
+            os.environ.setdefault(
+                "STAKE_PROFILE_DIR",
+                str(__import__("bet_placer.config", fromlist=["data_path"]).data_path("stake_profile_sync")),
+            )
             bets = []
             last_err = None
             for use_browser in (False, True):
@@ -309,7 +341,7 @@ def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
                 raise last_err
             user = None
             try:
-                scraper = StakeScraper(api_token=token, use_browser=False, timeout=30)
+                scraper = StakeScraper(api_token=token, use_browser=True, allow_browser_launch=True, timeout=30)
                 data = scraper._graphql("query { user { id name } }")
                 user = data.get("user")
             except Exception:

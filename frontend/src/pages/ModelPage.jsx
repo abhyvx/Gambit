@@ -438,10 +438,10 @@ function InsightContainer({ c, curves, sportKeys }) {
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout ROI</span>
-            <strong className={`stat-value ${Number(c.holdout_roi ?? c.best_roi) >= 0 ? 'delta-up' : ''}`}>
-              {c.holdout_roi == null && c.best_roi == null ? '—' : roiPct(c.holdout_roi ?? c.best_roi)}
+            <strong className={`stat-value ${Number(c.holdout_roi ?? c.champion_roi ?? c.best_roi) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(c.holdout_roi ?? c.champion_roi ?? c.best_roi)}
             </strong>
-            <small>{c.holdout_roi == null ? 'empty epoch · champion below' : 'same frozen matches every run'}</small>
+            <small>{c.holdout_roi == null ? 'champion while epoch grades' : 'same frozen matches every run'}</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout hit rate</span>
@@ -616,31 +616,31 @@ function InsightContainer({ c, curves, sportKeys }) {
       {c.kind === 'chart' && c.chart === 'craft_overall' && (
         <div className="insight-charts">
           <MultiLineChart
-            title="Block desk ROI"
+            title="Block desk ROI (graded epochs only)"
             series={[
               { key: 'all 3', color: 'var(--accent, #c4a574)', values: curves.craft_roi || [] },
               { key: 'soccer', color: SPORT_COLOR.soccer, values: (curves.craft_sport_roi || {}).soccer || [] },
               { key: 'basketball', color: SPORT_COLOR.basketball, values: (curves.craft_sport_roi || {}).basketball || [] },
               { key: 'cricket', color: SPORT_COLOR.cricket, values: (curves.craft_sport_roi || {}).cricket || [] },
-            ]}
+            ].filter((s) => (s.values || []).filter((v) => v != null && Number.isFinite(Number(v))).length >= 2)}
             format={(v) => chartRoi(v)}
           />
           <MultiLineChart
-            title="Craft hit rate by block"
+            title="Craft hit rate by block (graded)"
             series={[
               { key: 'blocks', color: 'var(--green, #3d8b6e)', values: curves.craft_accuracy || [] },
-            ]}
+            ].filter((s) => (s.values || []).filter((v) => v != null && Number.isFinite(Number(v))).length >= 2)}
             format={(v) => pct(v)}
           />
         </div>
       )}
-      {c.chart === 'craft_sport_roi' && (
+      {c.chart === 'craft_sport_roi' && craftSportRoi.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
         <MultiLineChart title="Sport ROI per block" series={craftSportRoi} format={(v) => chartRoi(v)} />
       )}
-      {c.chart === 'craft_sport_accuracy' && (
+      {c.chart === 'craft_sport_accuracy' && craftSportAcc.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
         <MultiLineChart title="Sport hit rate per block" series={craftSportAcc} format={(v) => pct(v)} />
       )}
-      {c.chart === 'craft_sport_volume' && (
+      {c.chart === 'craft_sport_volume' && craftSportVol.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
         <MultiLineChart title="Tickets per block" series={craftSportVol} format={(v) => fmt(v)} />
       )}
     </section>
@@ -857,13 +857,15 @@ export default function ModelPage() {
             <small>best saved desk · target {roiPct(craft.target_roi || 0.25)}</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Latest holdout ROI</span>
-            <strong className={`stat-value ${liveHoldoutRoi(craft) == null ? '' : (liveHoldoutRoi(craft) >= 0 ? 'delta-up' : 'delta-down')}`}>
-              {liveHoldoutRoi(craft) == null ? '—' : roiPct(liveHoldoutRoi(craft))}
+            <span className="stat-label">
+              {liveHoldoutRoi(craft) == null ? 'Holdout ROI' : 'Latest holdout ROI'}
+            </span>
+            <strong className={`stat-value ${(liveHoldoutRoi(craft) ?? deskRoi(craft)) != null && Number(liveHoldoutRoi(craft) ?? deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(liveHoldoutRoi(craft) ?? deskRoi(craft))}
             </strong>
             <small>
               {liveHoldoutRoi(craft) == null
-                ? 'this epoch has no graded bets yet · see champion'
+                ? 'champion desk · current epoch still grading'
                 : 'current graded run · can lag champion'}
             </small>
           </div>

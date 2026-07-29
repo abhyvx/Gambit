@@ -4919,3 +4919,38 @@
 .insight-status.is-building {
   color: var(--text-muted);
 }
+
+.account-page .stake-token-input,
+.stake-token-box input {
+  width: 100%;
+  max-width: 420px;
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+}
+
+.admin-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.admin-row {
+  display: grid;
+  grid-template-columns: 1.6fr 0.5fr 0.5fr 0.8fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.55rem 0.4rem;
+  border-bottom: 1px solid var(--border-soft, #2a2f3a);
+}
+.admin-row--head {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border-bottom-color: var(--border);
+}
+.admin-row small { display: block; }
+.refresh-btn.danger { color: var(--red, #d45d5d); }

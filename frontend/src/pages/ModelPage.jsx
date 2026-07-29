@@ -38,6 +38,16 @@ function trainGateLabel(craft) {
   return String(state).replace(/_/g, ' ')
 }
 
+function liveHoldoutRoi(craft) {
+  const ts = craft?.train_status || {}
+  const bets = Number(ts.bets ?? craft?.bets ?? 0)
+  const acc = craft?.holdout_accuracy ?? ts.holdout_accuracy
+  if (bets <= 0 || acc == null) return null
+  const v = craft?.holdout_roi ?? ts.holdout_roi
+  if (v == null || Number.isNaN(Number(v))) return null
+  return Number(v)
+}
+
 /** Prefer champion / best; hide a failed unfinished run as the headline. */
 function deskRoi(craft) {
   const ts = craft?.train_status || {}
@@ -47,9 +57,9 @@ function deskRoi(craft) {
   if (champ != null) return champ
   const block = craft?.block?.mean_roi
   if (block != null && Number.isFinite(Number(block)) && Number(block) > -0.45) return Number(block)
-  const hold = craft?.holdout_roi ?? ts.holdout_roi
+  const hold = liveHoldoutRoi(craft)
   if (ts.state === 'finished_without_hit' && Number(hold) < 0) return null
-  return hold == null ? null : Number(hold)
+  return hold
 }
 
 function deskHitRate(craft) {
@@ -429,9 +439,9 @@ function InsightContainer({ c, curves, sportKeys }) {
           <div className="stat-cell">
             <span className="stat-label">Holdout ROI</span>
             <strong className={`stat-value ${Number(c.holdout_roi ?? c.best_roi) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(c.holdout_roi ?? c.best_roi)}
+              {c.holdout_roi == null && c.best_roi == null ? '—' : roiPct(c.holdout_roi ?? c.best_roi)}
             </strong>
-            <small>same frozen matches every run</small>
+            <small>{c.holdout_roi == null ? 'empty epoch · champion below' : 'same frozen matches every run'}</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout hit rate</span>
@@ -848,10 +858,14 @@ export default function ModelPage() {
           </div>
           <div className="stat-cell">
             <span className="stat-label">Latest holdout ROI</span>
-            <strong className={`stat-value ${Number(craft.holdout_roi ?? craft.train_status?.holdout_roi) >= 0 ? 'delta-up' : 'delta-down'}`}>
-              {roiPct(craft.holdout_roi ?? craft.train_status?.holdout_roi)}
+            <strong className={`stat-value ${liveHoldoutRoi(craft) == null ? '' : (liveHoldoutRoi(craft) >= 0 ? 'delta-up' : 'delta-down')}`}>
+              {liveHoldoutRoi(craft) == null ? '—' : roiPct(liveHoldoutRoi(craft))}
             </strong>
-            <small>current run · can lag champion</small>
+            <small>
+              {liveHoldoutRoi(craft) == null
+                ? 'this epoch has no graded bets yet · see champion'
+                : 'current graded run · can lag champion'}
+            </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Live hit rate</span>

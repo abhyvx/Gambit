@@ -10,6 +10,7 @@ import {
   addManualPortfolioBet,
   updatePortfolioBetResult,
   connectStakeApiToken,
+  retryStakeTokenSync,
 } from '../api'
 import PortfolioCurve from '../components/PortfolioCurve'
 import { useEntryReady } from '../components/EntryScreen'
@@ -273,8 +274,12 @@ export default function PortfolioPage() {
             <button
               type="button"
               className="refresh-btn"
-              disabled={tokenBusy || !stakeToken}
+              disabled={tokenBusy || !stakeToken || !user}
               onClick={async () => {
+                if (!user) {
+                  openAuth('login')
+                  return
+                }
                 setTokenBusy(true)
                 setErr('')
                 try {
@@ -283,10 +288,18 @@ export default function PortfolioPage() {
                   setStakeToken('')
                   const status = next?.connection?.last_sync_status
                   if (status === 'queued') {
-                    // Odds link usually drains the queue within a few minutes.
-                    setTimeout(() => {
-                      fetchPortfolioState().then(setState).catch(() => {})
-                    }, 20000)
+                    let ticks = 0
+                    const id = setInterval(() => {
+                      ticks += 1
+                      fetchPortfolioState()
+                        .then((fresh) => {
+                          setState(fresh)
+                          const s = fresh?.connection?.last_sync_status
+                          if (s && s !== 'queued') clearInterval(id)
+                        })
+                        .catch(() => {})
+                      if (ticks >= 24) clearInterval(id)
+                    }, 8000)
                   }
                 } catch (e) {
                   setErr(fetchErrorMessage(e, 'Could not connect Stake token.'))
@@ -299,6 +312,32 @@ export default function PortfolioPage() {
             </button>
           </div>
         </div>
+        {syncStatus === 'queued' && (
+          <p className="muted" style={{ marginTop: '0.75rem' }}>
+            Import queued
+            {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link'}
+            . Stay signed in — status updates automatically.
+            {' '}
+            <button
+              type="button"
+              className="refresh-btn"
+              disabled={tokenBusy}
+              onClick={async () => {
+                setTokenBusy(true)
+                try {
+                  const next = await retryStakeTokenSync()
+                  setState(next)
+                } catch (e) {
+                  setErr(fetchErrorMessage(e, 'Retry failed.'))
+                } finally {
+                  setTokenBusy(false)
+                }
+              }}
+            >
+              Retry import
+            </button>
+          </p>
+        )}
       </section>
 
       {(showStatusError || statusBanner) && (

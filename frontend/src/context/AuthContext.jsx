@@ -49,7 +49,13 @@ export function AuthProvider({ children }) {
       const out = mode === 'signup'
         ? await authSignup(form)
         : await authLogin(form)
-      setUser(out.user)
+      // /auth/me carries is_admin; login/signup body may not.
+      try {
+        const me = await fetchAuthMe()
+        setUser(me?.user || out.user)
+      } catch {
+        setUser(out.user)
+      }
       setAuthOpen(false)
       setForm({ email: '', password: '', name: '', accept: false })
     } catch (ex) {

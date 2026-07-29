@@ -186,6 +186,12 @@ def main() -> int:
     os.environ.setdefault("STAKE_USE_BROWSER", "true")
     _scrub_empty_disk()
 
+    # Drain user Stake imports first — don't wait on odds scrape.
+    try:
+        _process_portfolio_sync_jobs(cloud, secret)
+    except Exception as exc:
+        print(f"portfolio sync jobs (early): {exc}")
+
     fixtures: dict = {}
     source = "none"
 
@@ -275,22 +281,35 @@ def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
         jid = job.get("id")
         token = job.get("token")
         try:
-            scraper = StakeScraper(
-                api_token=token,
-                use_browser=True,
-                allow_browser_launch=True,
-                timeout=90,
-            )
+            # Token-only first — owner's browser cookies + user token = "session expired".
             bets = []
-            for offset in range(0, 150, 50):
-                batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
-                if not batch:
+            last_err = None
+            for use_browser in (False, True):
+                try:
+                    scraper = StakeScraper(
+                        api_token=token,
+                        use_browser=use_browser,
+                        allow_browser_launch=use_browser,
+                        timeout=90,
+                    )
+                    bets = []
+                    for offset in range(0, 150, 50):
+                        batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
+                        if not batch:
+                            break
+                        bets.extend(batch)
+                        if len(batch) < 50:
+                            break
+                    last_err = None
                     break
-                bets.extend(batch)
-                if len(batch) < 50:
-                    break
+                except Exception as exc:
+                    last_err = exc
+                    bets = []
+            if last_err is not None and not bets:
+                raise last_err
             user = None
             try:
+                scraper = StakeScraper(api_token=token, use_browser=False, timeout=30)
                 data = scraper._graphql("query { user { id name } }")
                 user = data.get("user")
             except Exception:
@@ -308,11 +327,14 @@ def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
             cr.raise_for_status()
             print(f"  job {jid}: imported {len(bets)} bets")
         except Exception as exc:
-            requests.post(
-                f"{cloud}/api/portfolio/sync-jobs/complete",
-                json={"secret": secret, "job_id": jid, "error": str(exc)[:240]},
-                timeout=30,
-            )
+            try:
+                requests.post(
+                    f"{cloud}/api/portfolio/sync-jobs/complete",
+                    json={"secret": secret, "job_id": jid, "error": str(exc)[:240]},
+                    timeout=30,
+                )
+            except Exception:
+                pass
             print(f"  job {jid}: failed {exc}")
 
 

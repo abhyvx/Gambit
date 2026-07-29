@@ -548,8 +548,12 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "best_roi": _best_roi_display(best, train_status),
             "best_accuracy": _best_acc_display(best, train_status),
             "best_bets": best.get("bets"),
-            "holdout_accuracy": train_status.get("holdout_accuracy"),
-            "holdout_roi": train_status.get("holdout_roi"),
+            "holdout_accuracy": (
+                None
+                if int((train_status or {}).get("bets") or 0) <= 0
+                else train_status.get("holdout_accuracy")
+            ),
+            "holdout_roi": _live_holdout_roi(train_status),
             "champion_roi": train_status.get("champion_roi"),
             "focus_sport": best.get("focus_sport") or (train_status.get("focus") or {}).get("sport"),
             "latest": latest,
@@ -587,7 +591,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 4
+INSIGHTS_CACHE_VERSION = 5
 
 
 def save_insights_cache(payload: dict[str, Any]) -> None:
@@ -799,8 +803,10 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
         "curves": curves,
         "craft": {
             "n_epochs": craft.get("n_epochs") or 0,
-            "holdout_roi": ts.get("holdout_roi"),
-            "holdout_accuracy": ts.get("holdout_accuracy"),
+            "holdout_roi": _live_holdout_roi(ts),
+            "holdout_accuracy": (
+                None if int(ts.get("bets") or 0) <= 0 else ts.get("holdout_accuracy")
+            ),
             "best_roi": ts.get("best_roi") or (craft.get("best") or {}).get("roi"),
             "champion_roi": ts.get("champion_roi"),
             "block": craft.get("block"),
@@ -815,9 +821,23 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
     }
 
 
+def _live_holdout_roi(train_status: dict | None) -> float | None:
+    """Current-epoch holdout. Hide 0% when the run graded zero bets (not a real result)."""
+    ts = train_status or {}
+    if int(ts.get("bets") or 0) <= 0 or ts.get("holdout_accuracy") is None:
+        return None
+    v = ts.get("holdout_roi")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _best_roi_display(best: dict, train_status: dict) -> float | None:
     cands = []
-    for src in (best.get("roi"), (train_status or {}).get("champion_roi"), (train_status or {}).get("holdout_roi")):
+    for src in (best.get("roi"), (train_status or {}).get("champion_roi"), _live_holdout_roi(train_status)):
         if src is None:
             continue
         try:
@@ -922,45 +942,43 @@ def _build_containers(
                 life[sp]["hits"] += float(hr) * n
             life[sp]["pnl"] += float(row.get("pnl") or 0)
             life[sp]["stake"] += float(row.get("stake") or 0) or (n * 150.0)
-    # Merge best + latest for last-epoch display
-    craft_by: dict[str, dict] = {}
-    for sp in SPORTS:
-        b = (best.get("by_sport") or {}).get(sp) or {}
-        l = (latest.get("by_sport") or {}).get(sp) or {}
-        bn, ln = int(b.get("n") or 0), int(l.get("n") or 0)
-        craft_by[sp] = b if bn >= ln else l
     craft_sport_cells = []
     latest_by = (latest.get("by_sport") or {}) if latest else {}
-    # Persistent ledger fills sports that sat out the last cricket-only eval
+    best_by = (best.get("by_sport") or {}) if best else {}
+    # Persistent ledger only for gate notes — never as the ROI headline (stale red bars).
     try:
         from bet_placer.ml.craft_store import get_meta as _gm
         sport_ledger = _gm("sport_ledger") or {}
     except Exception:
         sport_ledger = {}
+    live_empty = int((train_status or {}).get("bets") or 0) <= 0
     for sp in SPORTS:
-        row = latest_by.get(sp) or craft_by.get(sp) or {}
+        l = latest_by.get(sp) or {}
+        b = best_by.get(sp) or {}
+        ln, bn = int(l.get("n") or 0), int(b.get("n") or 0)
+        # Prefer a graded latest epoch; if this run is empty, show champion slice.
+        if ln > 0 and not live_empty:
+            row, src = l, "latest holdout"
+        elif bn > 0:
+            row, src = b, "champion holdout"
+        elif ln > 0:
+            row, src = l, "latest holdout"
+        else:
+            row, src = {}, "building"
         led = sport_ledger.get(sp) or {}
         L = life[sp]
         n_life = int(L["n"])
         paired_n = int(((betting.get("by_sport") or {}).get(sp) or {}).get("n") or 0)
-        n_gate = max(n_life, paired_n, int(led.get("n") or 0))
-        # Display holdout epoch only. never sum lifetime epochs (looks like -100% ROI)
+        n_gate = max(n_life, paired_n, int(led.get("n") or 0), int(row.get("n") or 0))
         n_row = int(row.get("n") or 0)
         stake = float(row.get("stake") or 0) or (n_row * 150.0)
         pnl = float(row.get("pnl") or 0)
-        roi = (pnl / stake) if stake > 0 and n_row > 0 else row.get("roi")
-        hit = row.get("hit_rate")
-        # Fall back to ledger so soccer/BB never show blank n/a while gated
-        if roi is None and led.get("roi") is not None:
-            roi = led.get("roi")
-        if hit is None and led.get("hit_rate") is not None:
-            hit = led.get("hit_rate")
-        if n_row <= 0 and led.get("n"):
-            n_row = int(led["n"])
+        roi = (pnl / stake) if stake > 0 and n_row > 0 else (row.get("roi") if n_row > 0 else None)
+        hit = row.get("hit_rate") if n_row > 0 else None
         roi_val = round(float(roi), 4) if roi is not None else None
         hit_val = round(float(hit), 4) if hit is not None else None
         floor = float((train_status or {}).get("target_accuracy") or 0.60)
-        note_parts = [f"holdout · lifetime {n_life:,}"]
+        note_parts = [f"{src} · lifetime {n_life:,}"]
         if led.get("ok") is False:
             note_parts.append("gated off live picks")
         if roi_val is not None and roi_val < 0:
@@ -970,7 +988,7 @@ def _build_containers(
         craft_sport_cells.append(_sport_cell(
             sp,
             hit_rate=hit_val,
-            pnl=round(pnl, 2) if pnl else row.get("pnl"),
+            pnl=round(pnl, 2) if n_row and pnl else None,
             roi=roi_val,
             gated=bool(roi_val is not None and roi_val <= 0) or led.get("ok") is False,
             last_n=n_row,
@@ -1129,8 +1147,12 @@ def _build_containers(
             "best_roi": _best_roi_display(best, train_status),
             "best_accuracy": _best_acc_display(best, train_status),
             "best_bets": best.get("bets"),
-            "holdout_accuracy": (train_status or {}).get("holdout_accuracy"),
-            "holdout_roi": (train_status or {}).get("holdout_roi"),
+            "holdout_accuracy": (
+                None
+                if int((train_status or {}).get("bets") or 0) <= 0
+                else (train_status or {}).get("holdout_accuracy")
+            ),
+            "holdout_roi": _live_holdout_roi(train_status),
             "champion_roi": (train_status or {}).get("champion_roi"),
             "hit_target": craft.get("hit_target"),
             "train_status": train_status,
@@ -1140,7 +1162,7 @@ def _build_containers(
         {
             "id": "07_craft_roi_sport",
             "title": "7 · Holdout craft ROI by sport",
-            "desc": "Latest frozen-holdout epoch only (not monthly close-price charts below). Negative here gates live picks for that sport.",
+            "desc": "Champion or latest graded holdout slice (not monthly close-price charts below). Empty epochs show champion, not a fake 0%. Negative here still gates live picks.",
             "kind": "sport_grid",
             "sports": craft_sport_cells,
             "chart": "craft_sport_roi",
@@ -1165,9 +1187,17 @@ def _build_containers(
         {
             "id": "09_craft_volume",
             "title": "9 · Paper craft volume by sport",
-            "desc": "Cumulative tickets (boards + 74k paired closes). Ready at 10k/sport. not 12.",
+            "desc": "Cumulative tickets (boards + paired closes). Ready at 10k/sport. Volume only — ROI lives in box 7.",
             "kind": "sport_grid",
-            "sports": craft_sport_cells,
+            "sports": [
+                _sport_cell(
+                    sp,
+                    last_n=cell.get("last_n"),
+                    note=f"lifetime tickets · {(life.get(sp) or {}).get('n') or 0:,}",
+                    **_ready(cell.get("n"), need_craft),
+                )
+                for sp, cell in ((c["sport"], c) for c in craft_sport_cells)
+            ],
             "chart": "craft_sport_volume",
         },
         {

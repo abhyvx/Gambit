@@ -153,3 +153,72 @@ def public_user(row: dict[str, Any]) -> dict[str, Any]:
         "email": row.get("email"),
         "name": row.get("name"),
     }
+
+
+def is_admin(user: dict[str, Any] | None) -> bool:
+    if not user:
+        return False
+    from bet_placer.config import get_settings
+
+    settings = get_settings()
+    emails = {
+        e.strip().lower()
+        for e in (settings.gambit_admin_emails or "").split(",")
+        if e.strip()
+    }
+    return bool(emails) and (user.get("email") or "").strip().lower() in emails
+
+
+def list_accounts_for_admin() -> list[dict[str, Any]]:
+    """Safe account roster: no passwords, no Stake tokens."""
+    with _LOCK:
+        users = _load(_USERS)
+        sessions = _load(_SESSIONS)
+    sess_by_uid: dict[str, int] = {}
+    for s in sessions.values():
+        uid = s.get("user_id")
+        if uid:
+            sess_by_uid[uid] = sess_by_uid.get(uid, 0) + 1
+    out = []
+    for email, row in sorted(users.items(), key=lambda kv: kv[0]):
+        uid = row.get("id")
+        port_path = data_path("portfolios", f"{uid}.json")
+        has_token = False
+        bet_count = 0
+        sync_status = None
+        sync_message = None
+        if port_path.is_file():
+            try:
+                port = json.loads(port_path.read_text(encoding="utf-8"))
+                secrets = port.get("secrets") or {}
+                has_token = bool(secrets.get("stake_api_token"))
+                bets = ((port.get("portfolio") or {}).get("bets") or [])
+                bet_count = len(bets) if isinstance(bets, list) else 0
+                conn = port.get("connection") or {}
+                sync_status = conn.get("last_sync_status")
+                sync_message = conn.get("last_sync_message")
+            except Exception:
+                pass
+        out.append(
+            {
+                "id": uid,
+                "email": email,
+                "name": row.get("name"),
+                "created_at": row.get("created_at"),
+                "sessions": sess_by_uid.get(uid, 0),
+                "has_stake_token": has_token,
+                "bet_count": bet_count,
+                "last_sync_status": sync_status,
+                "last_sync_message": (str(sync_message)[:160] if sync_message else None),
+            }
+        )
+    return out
+
+
+def revoke_user_sessions(user_id: str) -> int:
+    with _LOCK:
+        sessions = _load(_SESSIONS)
+        before = len(sessions)
+        sessions = {k: v for k, v in sessions.items() if v.get("user_id") != user_id}
+        _save(_SESSIONS, sessions)
+        return before - len(sessions)

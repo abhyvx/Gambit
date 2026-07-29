@@ -8,6 +8,7 @@ import GuidePage from './pages/GuidePage'
 import ModelPage from './pages/ModelPage'
 import PortfolioPage from './pages/PortfolioPage'
 import SettingsPage from './pages/SettingsPage'
+import AdminPage from './pages/AdminPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPages'
 import { BankrollProvider } from './context/BankrollContext'
 import { AuthProvider } from './context/AuthContext'
@@ -26,7 +27,9 @@ export default function App() {
               <Route path="worldcup" element={<WorldCupPage />} />
               <Route path="model" element={<ModelPage />} />
               <Route path="portfolio" element={<PortfolioPage />} />
-              <Route path="settings" element={<SettingsPage />} />
+              <Route path="account" element={<SettingsPage />} />
+              <Route path="settings" element={<Navigate to="/app/account" replace />} />
+              <Route path="admin" element={<AdminPage />} />
               <Route path="legal/privacy" element={<PrivacyPage />} />
               <Route path="legal/terms" element={<TermsPage />} />
               <Route path="guide" element={<GuidePage />} />

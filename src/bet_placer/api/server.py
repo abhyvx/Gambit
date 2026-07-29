@@ -190,6 +190,7 @@ async def lifespan(_app: FastAPI):
     _warmup_stake_browser()
     _warmup_model()
     _ensure_craft_training()
+    _warmup_insights()
     yield
     # Tear the browser down cleanly so we don't orphan Chrome (which would lock
     # the profile and break Stake on the next launch).
@@ -823,59 +824,97 @@ _INSIGHTS_TTL = 120.0
 def model_insights():
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
     import time as _time
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-    from bet_placer.ml.model_insights import build_model_insights
-    from bet_placer.ml.craft_store import progress_snapshot
+    from bet_placer.ml.model_insights import (
+        build_model_insights,
+        craft_fallback_desk,
+        load_insights_cache,
+        save_insights_cache,
+    )
 
     global _INSIGHTS_CACHE
     now = _time.time()
     if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
         return _INSIGHTS_CACHE[1]
 
-    def _craft_only(msg: str) -> dict:
-        craft = progress_snapshot()
-        ts = craft.get("train_status") or {}
-        return {
-            "status": "degraded",
-            "total_corpus": 0,
-            "sports": {},
-            "containers": [],
-            "craft": {
-                "n_epochs": craft.get("n_epochs") or 0,
-                "holdout_roi": ts.get("holdout_roi"),
-                "holdout_accuracy": ts.get("holdout_accuracy"),
-                "best_roi": ts.get("best_roi") or (craft.get("best") or {}).get("roi"),
-                "champion_roi": ts.get("champion_roi"),
-                "block": craft.get("block"),
-                "train_status": ts,
-                "target_roi": 0.25,
-                "target_accuracy": 0.60,
-                "hit_target": craft.get("hit_target"),
-            },
-            "curves": {},
-            "insights": [msg],
-        }
+    # Disk cache — instant paint on Render (avoids 502 while full build runs)
+    disk = load_insights_cache(max_age_s=6 * 3600)
+    if disk and (disk.get("containers") or disk.get("curves")):
+        _INSIGHTS_CACHE = (now, disk)
+        _schedule_insights_refresh()
+        return disk
+
+    # Fast craft+evolution desk so graphs never stay blank
+    try:
+        fallback = craft_fallback_desk()
+        if fallback.get("containers"):
+            _INSIGHTS_CACHE = (now, fallback)
+            try:
+                save_insights_cache(fallback)
+            except Exception:
+                pass
+            _schedule_insights_refresh()
+            return fallback
+    except Exception as exc:
+        logger.warning("craft fallback desk failed: %s", exc)
 
     try:
-        # ponytail: free Render can hang on cold disk — never block the HTTP worker forever
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(build_model_insights)
-            try:
-                payload = fut.result(timeout=35)
-            except FuturesTimeout:
-                logger.warning("model insights timed out after 35s")
-                return _craft_only("Desk charts timed out — showing craft snapshot. Retry in a minute.")
+        payload = build_model_insights()
         _INSIGHTS_CACHE = (now, payload)
         return payload
     except Exception as exc:
         logger.warning("model insights failed: %s", exc)
+        return craft_fallback_desk("Model desk warming — craft charts only.")
+
+
+_INSIGHTS_REFRESHING = False
+
+
+def _schedule_insights_refresh() -> None:
+    """Background full rebuild — never blocks HTTP."""
+    global _INSIGHTS_REFRESHING, _INSIGHTS_CACHE
+    if _INSIGHTS_REFRESHING:
+        return
+    _INSIGHTS_REFRESHING = True
+
+    def _go() -> None:
+        global _INSIGHTS_REFRESHING, _INSIGHTS_CACHE
+        import time as _time
         try:
-            from bet_placer.ml.params import load_params
-            payload = build_model_insights(params=load_params(force=False))
-            _INSIGHTS_CACHE = (now, payload)
-            return payload
+            from bet_placer.ml.model_insights import build_model_insights
+            payload = build_model_insights()
+            _INSIGHTS_CACHE = (_time.time(), payload)
+            logger.info("model insights refreshed (%d containers)", len(payload.get("containers") or []))
         except Exception:
-            return _craft_only("Model desk loading — craft snapshot only.")
+            logger.warning("background insights refresh failed", exc_info=True)
+        finally:
+            _INSIGHTS_REFRESHING = False
+
+    threading.Thread(target=_go, daemon=True, name="insights-refresh").start()
+
+
+def _warmup_insights() -> None:
+    def _go() -> None:
+        try:
+            from bet_placer.ml.model_insights import (
+                build_model_insights,
+                craft_fallback_desk,
+                load_insights_cache,
+                save_insights_cache,
+            )
+            import time as _time
+            global _INSIGHTS_CACHE
+            hit = load_insights_cache(max_age_s=6 * 3600)
+            if hit:
+                _INSIGHTS_CACHE = (_time.time(), hit)
+            else:
+                fb = craft_fallback_desk()
+                save_insights_cache(fb)
+                _INSIGHTS_CACHE = (_time.time(), fb)
+            _schedule_insights_refresh()
+        except Exception:
+            logger.warning("insights warmup failed", exc_info=True)
+
+    threading.Thread(target=_go, daemon=True, name="insights-warmup").start()
 
 
 @app.get("/api/model/report")

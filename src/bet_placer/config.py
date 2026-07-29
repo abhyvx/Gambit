@@ -23,19 +23,16 @@ class Settings(BaseSettings):
     stake_browser_headless: bool = True
     # Open Chromium on API startup. Default off — browser launches on first
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
-    stake_browser_warmup_on_startup: bool = False
+    stake_browser_warmup_on_startup: bool = True
 
     # Consensus weighting (how much to consider vs model — never blindly follow)
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
 
-    # Model weights (updated by continuous learning)
-    ensemble_weight_poisson: float = 0.20
-    ensemble_weight_elo: float = 0.15
-    ensemble_weight_xgboost: float = 0.25
-    ensemble_weight_lightgbm: float = 0.20
-    ensemble_weight_neural: float = 0.10
-    ensemble_weight_monte_carlo: float = 0.10
+    # Active ensemble weights
+    ensemble_weight_poisson: float = 0.45
+    ensemble_weight_elo: float = 0.35
+    ensemble_weight_gbm: float = 0.20  # heuristic GBM until factor-graph trainer ships
 
     # Intuition layer cap: max probability adjustment (+/-)
     intuition_max_adjustment: float = 0.08
@@ -46,8 +43,8 @@ class Settings(BaseSettings):
     # Minimum EV threshold to surface a bet
     min_ev_threshold: float = 0.02
 
-    # Minimum confidence to rank
-    min_confidence: float = 0.55
+    # Minimum confidence to rank (slightly soft — blank SKIP boards were the worse bug)
+    min_confidence: float = 0.50
 
     # Maximum stake as % of bankroll (hard cap to protect users)
     max_stake_pct: float = 3.0

@@ -28,6 +28,7 @@ from bet_placer.engine.stake_odds import (
     _round_line,
     _team_match,
     _tokens,
+    build_stake_overlay,
     canonical_stake_market,
     get_stake_overlay_map,
     match_overlay,
@@ -227,6 +228,19 @@ def _categorize(group: str, name: str) -> str:
     return "Other"
 
 
+_EXOTIC_STAKE_MARKET_FRAGMENTS = (
+    "highest scoring half", "halftime/fulltime", "half time/full time",
+    "odd/even", "clean sheet", "exact goals", "team total", "to win to nil",
+    "winning margin", "correct score", "multi goals", "goal range",
+)
+
+
+def _stake_market_rec_eligible(market_name: str) -> bool:
+    """Drop exotic Stake props from auto-rec paths (half winners, team totals, etc.)."""
+    n = (market_name or "").lower()
+    return not any(x in n for x in _EXOTIC_STAKE_MARKET_FRAGMENTS)
+
+
 def _build_from_stake(fixture, match, calibrated, raw, budget_inr, home, away):
     """Annotate EVERY Stake market outcome with our model read."""
     cats: dict[str, dict] = {}
@@ -252,15 +266,20 @@ def _build_from_stake(fixture, match, calibrated, raw, budget_inr, home, away):
                 continue
 
             mapped = _map_stake_outcome(mk.name, oc.name, mk.line, home, away)
+            if mapped is None and not _stake_market_rec_eligible(mk.name):
+                continue
             our_p = None
             read = None
             if mapped:
                 m, s, ln = mapped
                 if m == "player_goal":
+                    from bet_placer.data.team_stars import player_goal_eligible
+                    if not player_goal_eligible(home, away, s):
+                        continue
                     if pm is not None:
                         our_p = pm.rate(mk.name, s)
                     if our_p is None:
-                        our_p, read = _player_prob(s, calibrated, raw)
+                        continue
                 else:
                     our_p, read = _our_prob(m, s, ln, calibrated, raw)
 
@@ -347,6 +366,42 @@ def _build_from_model(match, calibrated, raw, budget_inr, home, away):
             read=read,
             source="model",
         ))
+
+    # Expand thin ESPN boards (often 1X2 only) into Stake-style tabs from model probs.
+    for key, our_p in (raw or {}).items():
+        market, selection, line = key[0], key[1], key[2] if len(key) > 2 else None
+        if market in ("exact_score", "player_goal"):
+            continue
+        dedupe_key = (market, selection, _round_line(line))
+        if dedupe_key in seen:
+            continue
+        if our_p is None or our_p <= 0.05 or our_p >= 0.95:
+            continue
+        # Model fair price + light vig so the Build tab isn't empty off-Stake
+        odds = round(max(1.20, min(25.0, (1.0 / our_p) * 1.06)), 2)
+        seen.add(dedupe_key)
+        try:
+            mtype = MarketType(market)
+        except Exception:
+            continue
+        is_trap = is_generic_trap(_Probe(market, selection, line, odds))
+        verdict = _verdict(our_p, odds, is_trap)
+        cat = _model_category(mtype)
+        entry = cats.setdefault(cat, {"category": cat, "markets": {}})
+        mk_label = _model_market_label(mtype, line)
+        mrow = entry["markets"].setdefault(mk_label, {"market_label": mk_label, "outcomes": []})
+        mrow["outcomes"].append(_outcome_payload(
+            market=market,
+            selection=selection,
+            line=line,
+            label=format_market_label(mtype, selection, line, home, away),
+            odds=odds,
+            our_p=our_p,
+            verdict=verdict,
+            budget_inr=budget_inr,
+            read=None,
+            source="model",
+        ))
     return _finalize_cats(cats)
 
 
@@ -385,7 +440,7 @@ def _pretty_outcome(market_name, outcome_name, line, home, away):
     if market_name == "Asian Total":
         return f"{sel}"
     if market_name == "Both Teams to Score":
-        return f"Both score: {sel}"
+        return f"Both teams to score — {sel.title()}"
     if market_name == "Draw No Bet":
         return f"{sel} (draw = refund)"
     if market_name in ("Total Corners", "Asian Corners"):
@@ -524,7 +579,10 @@ def _refine_verdict(our_p, odds, fair_p, prior) -> dict:
         v["edge_pct"] = None
         return v
     edge = (our_p - fair_p) * 100.0
-    if our_p < 0.12:
+    if our_p < 0.12 and edge >= 1.5:
+        tier, icon, label, tone = "longshot", "🎲", "Long shot, fair enough price", "warn"
+        blurb = "The payout may be fair for the risk, but the outcome is still unlikely. Treat it as a small-stake flyer, not a core bet."
+    elif our_p < 0.12:
         tier, icon, label, tone = "longshot", "🎲", "Long shot", "warn"
         blurb = "Unlikely — fun money only, even if the price looks generous."
     elif our_p >= 0.85 and odds <= 1.2:
@@ -549,108 +607,150 @@ def _refine_verdict(our_p, odds, fair_p, prior) -> dict:
             "blurb": blurb, "ev_pct": ev_pct, "edge_pct": round(edge, 1)}
 
 
-def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
+def build_bet_menu(home: str, away: str, budget_inr: float = 300.0, sport: str | None = None) -> dict:
     """Full annotated bet menu for one match. Real Stake odds when reachable,
-    else our complete modelled catalog. Always returns something usable."""
-    from bet_placer.data.worldcup2026 import get_all_group_matches
-    from bet_placer.engine.worldcup_pipeline import wc_match_to_analysis_match
-
-    wc = _find_wc_match(home, away, get_all_group_matches())
-    if not wc:
-        return {
-            "available": False,
-            "reason": f"Couldn't find {home} vs {away} in the World Cup fixtures.",
-            "categories": [],
-        }
-
-    match = wc_match_to_analysis_match(wc)
+    else our complete modelled catalog. Works for WC + open league boards."""
+    from bet_placer.data.worldcup2026 import get_all_group_matches, get_group_standings
     from bet_placer.engine.all_markets import predict_all_markets
-    from bet_placer.data.worldcup2026 import get_group_standings
-    from bet_placer.engine.worldcup_pipeline import fan_read, _group_stakes_text
-
-    standings = get_group_standings(wc.group, get_all_group_matches())
-    home_pts = next((s["pts"] for s in standings if s["team"] == wc.home), 0)
-    away_pts = next((s["pts"] for s in standings if s["team"] == wc.away), 0)
-    fan_take = fan_read(wc.home, wc.away, home_pts, away_pts, wc.home_must_win, wc.away_must_win)
-    trending_on = (
-        wc.home if wc.public_sentiment_home > 0.15
-        else wc.away if wc.public_sentiment_home < -0.15 else None
+    from bet_placer.engine.worldcup_pipeline import (
+        _group_stakes_text, fan_read, wc_match_to_analysis_match,
     )
+
+    home_n, away_n = home.strip(), away.strip()
+    wc = _find_wc_match(home_n, away_n, get_all_group_matches())
+    if wc:
+        match = wc_match_to_analysis_match(wc)
+        home_n, away_n = wc.home, wc.away
+        standings = get_group_standings(wc.group, get_all_group_matches())
+        home_pts = next((s["pts"] for s in standings if s["team"] == wc.home), 0)
+        away_pts = next((s["pts"] for s in standings if s["team"] == wc.away), 0)
+        fan_take = fan_read(wc.home, wc.away, home_pts, away_pts, wc.home_must_win, wc.away_must_win)
+        trending_on = (
+            wc.home if wc.public_sentiment_home > 0.15
+            else wc.away if wc.public_sentiment_home < -0.15 else None
+        )
+        human_context = {
+            "team_strength": {
+                "home": get_team_rating(wc.home),
+                "away": get_team_rating(wc.away),
+            },
+            "home_must_win": wc.home_must_win,
+            "away_must_win": wc.away_must_win,
+            "morale": {"home": wc.home_morale, "away": wc.away_morale},
+            "narrative": wc.narrative,
+            "public_sentiment_home": wc.public_sentiment_home,
+            "fade_public": abs(wc.public_sentiment_home) > 0.2,
+            "trending_on": trending_on,
+            "fan_take": fan_take,
+            "group_stakes": (
+                f"{wc.stage or 'Knockout'} — elimination game"
+                if wc.is_knockout
+                else _group_stakes_text(wc.group, standings)
+            ),
+            "is_knockout": wc.is_knockout,
+        }
+        meta = {
+            "group": wc.group,
+            "status": wc.status,
+            "kickoff": wc.kickoff.isoformat() if getattr(wc, "kickoff", None) else None,
+            "matchday": wc.matchday,
+            "match_id": wc.id,
+        }
+        open_match = wc.status in ("upcoming", "live")
+    else:
+        resolved = _resolve_league_match(home_n, away_n, sport=sport)
+        if not resolved:
+            return {
+                "available": False,
+                "reason": f"Couldn't find {home_n} vs {away_n} on the open boards.",
+                "categories": [],
+            }
+        match, meta = resolved
+        home_n, away_n = match.home_team, match.away_team
+        human_context = {
+            "team_strength": {
+                "home": get_team_rating(home_n),
+                "away": get_team_rating(away_n),
+            },
+            "home_must_win": False,
+            "away_must_win": False,
+            "morale": {"home": 5, "away": 5},
+            "narrative": match.league,
+            "fan_take": None,
+            "group_stakes": match.league,
+            "is_knockout": False,
+        }
+        open_match = True
+
+    stake_overlay = None
+    if open_match:
+        try:
+            overlay_map = get_stake_overlay_map(launch_browser=False)
+            sfx = match_overlay(home_n, away_n, overlay_map)
+            if sfx is not None:
+                stake_overlay = build_stake_overlay(sfx)
+        except Exception:
+            pass
+    human_context["stake_overlay"] = stake_overlay
+    human_context["stake_priced"] = bool(stake_overlay and stake_overlay.get("available"))
+
     probabilities = predict_all_markets(match)
-    human_context = {
-        "team_strength": {
-            "home": get_team_rating(wc.home),
-            "away": get_team_rating(wc.away),
-        },
-        "home_must_win": wc.home_must_win,
-        "away_must_win": wc.away_must_win,
-        "morale": {"home": wc.home_morale, "away": wc.away_morale},
-        "narrative": wc.narrative,
-        "public_sentiment_home": wc.public_sentiment_home,
-        "fade_public": abs(wc.public_sentiment_home) > 0.2,
-        "trending_on": trending_on,
-        "fan_take": fan_take,
-        "group_stakes": _group_stakes_text(wc.group, standings),
-    }
     calibrated, raw = _model_lookups(match, probabilities, budget_inr, human_context)
 
     fixture = None
     source = "model"
-    if wc.status in ("upcoming", "live"):
+    if open_match:
         try:
-            # Reuse the warm, shared 45s overlay cache (same path the main
-            # pipeline uses) so this stays fast instead of a fresh Stake call.
             overlay_map = get_stake_overlay_map(launch_browser=True)
-            fixture = match_overlay(wc.home, wc.away, overlay_map)
+            fixture = match_overlay(home_n, away_n, overlay_map)
         except Exception as exc:
-            logger.warning("Bet-builder: Stake overlay failed for %s vs %s: %s", home, away, exc)
+            logger.warning("Bet-builder: Stake overlay failed for %s vs %s: %s", home_n, away_n, exc)
 
     if fixture and fixture.markets:
-        categories = _build_from_stake(fixture, match, calibrated, raw, budget_inr, wc.home, wc.away)
+        categories = _build_from_stake(fixture, match, calibrated, raw, budget_inr, home_n, away_n)
         source = "stake"
     else:
-        categories = _build_from_model(match, calibrated, raw, budget_inr, wc.home, wc.away)
+        categories = _build_from_model(match, calibrated, raw, budget_inr, home_n, away_n)
 
-    # De-vig every market → true edge + edge-aware verdicts, then recommend.
     _attach_market_stats(categories)
 
-    # Analyst intuition + recommendations resolved against this same board.
     from bet_placer.engine.analyst_read import analyst_read
     from bet_placer.engine.game_profile import profile_match
     picks: dict = {}
     try:
         gp = profile_match(match, probabilities, human_context)
-        read = analyst_read(wc.home, wc.away, gp, human_context)
+        read = analyst_read(home_n, away_n, gp, human_context)
         flat = _flatten_outcomes(categories)
         mw = {p.selection: p.probability for p in probabilities if p.market == MarketType.MATCH_WINNER}
-        thesis = _match_thesis(flat, wc.home, wc.away, model_probs=mw)
+        thesis = _match_thesis(flat, home_n, away_n, model_probs=mw)
         from bet_placer.engine.smart_picks import build_smart_picks
         picks = build_smart_picks(
-            flat, wc.home, wc.away, match, probabilities, human_context,
-            thesis=thesis, matchday=wc.matchday,
+            flat, home_n, away_n, match, probabilities, human_context,
+            thesis=thesis, matchday=meta.get("matchday"),
         )
         recommended = picks.get("unified_picks") or []
         thesis = picks.get("thesis") or thesis
         parlay = picks.get("parlay_suggestion") or _parlay_advice(recommended)
     except Exception as exc:
-        logger.warning("Analyst read failed for %s vs %s: %s", home, away, exc)
+        logger.warning("Analyst read failed for %s vs %s: %s", home_n, away_n, exc)
         gp, read, recommended, parlay, thesis, picks = None, None, [], None, None, {}
 
     wp = {p.selection: p.probability for p in probabilities if p.market == MarketType.MATCH_WINNER}
     total = (wp.get("home", 0) + wp.get("draw", 0) + wp.get("away", 0)) or 1.0
-
     total_fields = sum(len(m["outcomes"]) for c in categories for m in c["markets"])
     return {
         "available": True,
         "source": source,
-        "home": wc.home,
-        "away": wc.away,
-        "match_name": f"{wc.home} vs {wc.away}",
+        "home": home_n,
+        "away": away_n,
+        "match_name": f"{home_n} vs {away_n}",
         "budget_inr": round(budget_inr),
         "field_count": total_fields,
-        "group": wc.group,
-        "status": wc.status,
-        "kickoff": wc.kickoff.isoformat() if getattr(wc, "kickoff", None) else None,
+        "group": meta.get("group"),
+        "status": meta.get("status") or "upcoming",
+        "kickoff": meta.get("kickoff") or (
+            match.kickoff.isoformat() if getattr(match, "kickoff", None) else None
+        ),
         "win_probability": {
             "home": round(wp.get("home", 0) / total, 3),
             "draw": round(wp.get("draw", 0) / total, 3),
@@ -670,8 +770,68 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
             if source == "stake"
             else "Stake unreachable — modelled prices shown. Verify exact odds on Stake before betting."
         ),
-        "stake_url": "https://stake.com/sports/soccer",
+        "stake_url": (
+            "https://stake.com/sports/basketball" if (sport or "").lower().startswith("basket")
+            else "https://stake.com/sports/cricket" if (sport or "").lower().startswith("cricket")
+            else "https://stake.com/sports/soccer"
+        ),
     }
+
+
+def _resolve_league_match(home: str, away: str, sport: str | None = None):
+    """Find an open league Match by team names (ESPN / Odds API boards)."""
+    from bet_placer.data.providers import UnifiedOddsProvider
+
+    provider = UnifiedOddsProvider()
+    keys: list[str] = []
+    sk = (sport or "").lower()
+    if sk:
+        keys.append(sport)
+    if sk.startswith("basket"):
+        keys.extend(["basketball_all", "basketball_nba", "basketball_wnba"])
+    elif sk.startswith("cricket"):
+        keys.extend(["cricket_all", "cricket_international", "cricket_domestic"])
+    else:
+        keys.extend([
+            "soccer_epl",
+            "soccer_uefa_champs_league",
+            "soccer_spain_la_liga",
+            "soccer_germany_bundesliga",
+            "soccer_italy_serie_a",
+            "soccer_all",
+            "basketball_all",
+            "cricket_all",
+        ])
+    seen = set()
+    for key in keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            fetch = provider.fetch_events(key)
+        except Exception:
+            continue
+        for m in fetch.matches or []:
+            same = _team_match(home, m.home_team) and _team_match(away, m.away_team)
+            flip = _team_match(home, m.away_team) and _team_match(away, m.home_team)
+            if not (same or flip):
+                continue
+            meta = {
+                "group": None,
+                "status": "upcoming",
+                "kickoff": m.kickoff.isoformat() if m.kickoff else None,
+                "matchday": None,
+                "match_id": m.id,
+                "source": fetch.source,
+                "league": getattr(m, "league", None),
+            }
+            return (m if same else _flip_match_sides(m)), meta
+    return None
+
+
+def _flip_match_sides(match):
+    """When user typed away/home flipped, keep board teams as stored."""
+    return match
 
 
 def _find_wc_match(home: str, away: str, matches: list):
@@ -697,23 +857,44 @@ def _flatten_outcomes(categories: list[dict]) -> list[dict]:
     return flat
 
 
+def build_match_flat_board(
+    match,
+    probabilities,
+    budget_inr: float,
+    human_context: dict,
+    home: str,
+    away: str,
+    *,
+    launch_browser: bool = False,
+) -> tuple[list[dict], str]:
+    """Same annotated outcome board as build_bet_menu — use for unified picks."""
+    calibrated, raw = _model_lookups(match, probabilities, budget_inr, human_context)
+    fixture = None
+    source = "model"
+    try:
+        overlay_map = get_stake_overlay_map(launch_browser=launch_browser)
+        fixture = match_overlay(home, away, overlay_map)
+    except Exception as exc:
+        logger.debug("Flat board: Stake overlay unavailable for %s vs %s: %s", home, away, exc)
+
+    if fixture and fixture.markets:
+        categories = _build_from_stake(fixture, match, calibrated, raw, budget_inr, home, away)
+        source = "stake"
+    else:
+        categories = _build_from_model(match, calibrated, raw, budget_inr, home, away)
+    _attach_market_stats(categories)
+    return _flatten_outcomes(categories), source
+
+
 def _strip_accents(s: str) -> str:
     import unicodedata
     return "".join(c for c in unicodedata.normalize("NFKD", s or "") if not unicodedata.combining(c))
 
 
 def _name_match(a: str, b: str) -> bool:
-    """Match players by SURNAME (last token), not first name — so 'Luis Díaz'
-    never matches 'Luis Suárez'."""
-    ak = _name_key(_strip_accents(a))
-    bk = _name_key(_strip_accents(b))
-    if ak == bk:
-        return True
-    at = _strip_accents(a).lower().replace(",", " ").split()
-    bt = _strip_accents(b).lower().replace(",", " ").split()
-    if not at or not bt:
-        return False
-    return at[-1] == bt[-1] and len(at[-1]) > 2
+    """Match players by identity — not surname-only (Lisandro ≠ Lautaro Martínez)."""
+    from bet_placer.data.team_stars import _names_same_player
+    return _names_same_player(a, b)
 
 
 def _find_outcome(flat, market, selection=None, line=None, player=None):
@@ -809,17 +990,29 @@ def _sel_side(sel: str, home: str, away: str):
     s = _strip_accents(sel or "").lower().strip()
     if s in ("home", "away", "draw"):
         return s
-    if "draw" in s or s in ("x", "tie"):
-        return "draw"
     ch = _strip_accents(home).lower()
     ca = _strip_accents(away).lower()
-    if any(w in s for w in ch.split() if len(w) > 3):
-        return "home"
-    if any(w in s for w in ca.split() if len(w) > 3):
-        return "away"
     if _team_match(sel, home):
         return "home"
     if _team_match(sel, away):
+        return "away"
+    if " or " in s:
+        has_home = ch in s or any(w in s for w in ch.split() if len(w) > 3)
+        has_away = ca in s or any(w in s for w in ca.split() if len(w) > 3)
+        if has_home and not has_away:
+            return "home"
+        if has_away and not has_home:
+            return "away"
+    if "draw no bet" in s or " dnb" in s:
+        if ch in s or _team_match(sel, home):
+            return "home"
+        if ca in s or _team_match(sel, away):
+            return "away"
+    if "draw" in s or s in ("x", "tie"):
+        return "draw"
+    if any(w in s for w in ch.split() if len(w) > 3):
+        return "home"
+    if any(w in s for w in ca.split() if len(w) > 3):
         return "away"
     return None
 
@@ -1016,7 +1209,7 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
         hyped = home if d == "home" else away
         return hyped == trending
     AXIS_CAP = {"result": 2, "goals": 2}   # everything else: 1
-    MAX_PICKS = 6
+    MAX_PICKS = 3
     axis_count: dict = {}
     used_labels: set = set()
 

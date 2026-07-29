@@ -95,7 +95,7 @@ function satisfiable(pa, pb) {
   return false
 }
 
-export default function BetBuilder({ home, away, budget }) {
+export default function BetBuilder({ home, away, budget, sport }) {
   const { perMatchBudget } = useBankroll()
   const baseBudget = Math.round(budget || perMatchBudget || 300)
   const [data, setData] = useState(null)
@@ -109,12 +109,11 @@ export default function BetBuilder({ home, away, budget }) {
   const [openMarkets, setOpenMarkets] = useState({})
   const [search, setSearch] = useState('')
   const [activeTab, setActiveTab] = useState('All')
-  const [readOpen, setReadOpen] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true); setError(null); setData(null); setPicksMap({}); setSingleStakes({}); setActiveTab('All')
-    fetchBetBuilder({ home, away, budgetInr: baseBudget })
+    fetchBetBuilder({ home, away, budgetInr: baseBudget, sport })
       .then((d) => {
         if (cancelled) return
         setData(d)
@@ -126,7 +125,7 @@ export default function BetBuilder({ home, away, budget }) {
       .catch((e) => { if (!cancelled) setError(e?.message || 'Could not load the bet menu.') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [home, away, baseBudget])
+  }, [home, away, baseBudget, sport])
 
   // Flatten categories → markets (each its own accordion, Stake-style).
   const allMarkets = useMemo(() => {
@@ -178,7 +177,12 @@ export default function BetBuilder({ home, away, budget }) {
       next[k] = o
       return next
     })
-    setSingleStakes((prev) => (prev[k] != null ? prev : { ...prev, [k]: baseBudget }))
+    setSingleStakes((prev) => {
+      if (prev[k] != null) return prev
+      const n = Object.keys(prev).length + 1
+      const share = Math.max(10, Math.round(baseBudget / Math.max(n, 1) / 10) * 10)
+      return { ...prev, [k]: share }
+    })
   }
 
   const setLegStake = (k, val) => setSingleStakes((prev) => ({ ...prev, [k]: val }))
@@ -437,93 +441,63 @@ export default function BetBuilder({ home, away, budget }) {
             )}
           </div>
 
-          {/* analyst read (collapsible) */}
-          {read && (
+          {/* Market tags + addable picks — no narrative prose */}
+          {(read?.tags?.length > 0 || recommended.length > 0) && (
             <div className="analyst">
-              <button className="analyst-head" onClick={() => setReadOpen((v) => !v)}>
-                <h5>⭐ Our read</h5>
-                <span className="sk-acc-chev">{readOpen ? '⌃' : '⌄'}</span>
-              </button>
-              {readOpen && (
+              {read?.tags?.length > 0 && (
+                <div className="analyst-tags">{read.tags.map((t) => <span key={t} className="atag">{t}</span>)}</div>
+              )}
+              {data.easy_money?.length > 0 && (
+                <div className="easy-money-box is-lock-tier">
+                  <h5>High probability</h5>
+                  <ul className="easy-money-list">
+                    {data.easy_money.slice(0, 4).map((p, i) => (
+                      <li key={`easy-${i}`}>
+                        <strong>{p.label}</strong>
+                        {p.odds != null && <span className="easy-odds"> @ {p.odds}</span>}
+                        {p.our_probability_pct != null && <span> · {p.our_probability_pct}%</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {recommended.length > 0 ? (
                 <>
-                  {read.tags?.length > 0 && (
-                    <div className="analyst-tags">{read.tags.map((t) => <span key={t} className="atag">{t}</span>)}</div>
-                  )}
-                  <p className="analyst-summary">{read.summary}</p>
-                  {data.match_read?.summary && (
-                    <div className={`match-thesis ${data.match_read.easy_money ? 'is-easy' : ''}`}>
-                      <div className="match-thesis-top">
-                        <span className="match-thesis-kicker">The read</span>
-                        {data.match_read.confidence && (
-                          <span className={`conf-badge conf-${data.match_read.confidence.tier}`}>
-                            {data.match_read.easy_money ? '💎 ' : ''}{data.match_read.confidence.label}
-                            {data.match_read.confidence.hit_pct ? ` · ${data.match_read.confidence.hit_pct}% hit` : ''}
-                          </span>
-                        )}
-                      </div>
-                      <p>{data.match_read.summary}</p>
-                      {data.match_read.confidence?.note && (
-                        <span className="match-thesis-note">{data.match_read.confidence.note}</span>
-                      )}
-                    </div>
-                  )}
-                  {(data.easy_money?.length > 0 || data.situational_picks?.length > 0) && (
-                    <div className="easy-money-box">
-                      <h5>💎 Situation picks</h5>
-                      <ul className="easy-money-list">
-                        {(data.situational_picks || data.easy_money || []).map((p, i) => (
-                          <li key={i}>
-                            <span className="easy-tag">{p.tag}</span>
-                            <strong>{p.label}</strong>
-                            {p.odds && <span className="easy-odds"> @ {p.odds}</span>}
-                            <p className="muted">{p.why}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {recommended.length > 0 ? (
-                    <>
-                      <div className="analyst-picks-label">Our picks — tap to add</div>
-                      <div className="analyst-picks">
-                        {recommended.map((p) => {
-                          const sel = !!picksMap[keyOf(p)]
-                          const blocked = blockedKeys.has(keyOf(p))
-                          return (
-                            <button key={keyOf(p)} className={`apick ${sel ? 'sel' : ''} ${blocked ? 'blocked' : ''}`}
-                              disabled={blocked} onClick={() => toggle(p)}>
-                              <div className="apick-top"><span className="apick-tag">{p.tag}</span><span className="apick-odds">{p.odds}x</span></div>
-                              {p.market_label && <div className="apick-mkt">{p.market_label}</div>}
-                              <div className="apick-label">{p.label}{p.our_probability_pct != null && <span className="apick-pct">{p.our_probability_pct}% our model</span>}</div>
-                              <div className="apick-why">{p.why}</div>
-                              <div className="apick-add">{blocked ? 'conflicts with slip' : sel ? '✓ in your slip' : '+ add to slip'}</div>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="no-bet">
-                      <strong>No bet here.</strong>
-                      <span>Nothing on this board beats the price by enough to be worth it. A disciplined skip is a winning play — we only flag genuine edges.</span>
-                    </div>
-                  )}
-                  {data.best_parlay && (
-                    <div className="smart-multi">
-                      <div className="smart-multi-head">
-                        <span>🧮 If you really want a multi</span>
-                        <span className="smart-multi-odds">{data.best_parlay.combined_odds}x</span>
-                      </div>
-                      <div className="smart-multi-legs">
-                        {data.best_parlay.legs.map((l, i) => (
-                          <span key={i} className="smart-leg">{l.label}<small>{l.odds}x</small></span>
-                        ))}
-                      </div>
-                      <p className="smart-multi-msg">{data.best_parlay.message}</p>
-                    </div>
-                  )}
-                  <p className="analyst-note">{read.disclaimer}</p>
+                  <div className="analyst-picks-label">Picks — tap to add</div>
+                  <div className="analyst-picks">
+                    {recommended.map((p) => {
+                      const sel = !!picksMap[keyOf(p)]
+                      const blocked = blockedKeys.has(keyOf(p))
+                      return (
+                        <button key={keyOf(p)} className={`apick ${sel ? 'sel' : ''} ${blocked ? 'blocked' : ''}`}
+                          disabled={blocked} onClick={() => toggle(p)}>
+                          <div className="apick-top"><span className="apick-tag">{p.tag}</span><span className="apick-odds">{p.odds}x</span></div>
+                          {p.market_label && <div className="apick-mkt">{p.market_label}</div>}
+                          <div className="apick-label">{p.label}{p.our_probability_pct != null && <span className="apick-pct">{p.our_probability_pct}%</span>}</div>
+                          <div className="apick-add">{blocked ? 'conflicts with slip' : sel ? '✓ in slip' : '+ add'}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </>
+              ) : (
+                <div className="no-bet">
+                  <strong>No edge on this board.</strong>
+                  <span>Nothing clears the price filter.</span>
+                </div>
+              )}
+              {data.best_parlay && (
+                <div className="smart-multi">
+                  <div className="smart-multi-head">
+                    <span>Optional multi</span>
+                    <span className="smart-multi-odds">{data.best_parlay.combined_odds}x</span>
+                  </div>
+                  <div className="smart-multi-legs">
+                    {data.best_parlay.legs.map((l, i) => (
+                      <span key={i} className="smart-leg">{l.label}<small>{l.odds}x</small></span>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           )}

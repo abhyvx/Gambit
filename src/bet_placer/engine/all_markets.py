@@ -117,7 +117,7 @@ def generate_all_market_odds(match: Match, base_h2h: tuple[float, float, float] 
         add(MarketType.CORNERS, "over", over_c, line=line)
         add(MarketType.CORNERS, "under", 1 - over_c, line=line)
 
-    for line in [2.5, 3.5, 4.5, 5.5]:
+    for line in [1.5, 2.5, 3.5, 4.5, 5.5]:
         over_cards = 1 - poisson.cdf(line, exp_cards)
         add(MarketType.CARDS, "over", over_cards, line=line)
         add(MarketType.CARDS, "under", 1 - over_cards, line=line)
@@ -155,8 +155,162 @@ def generate_all_market_odds(match: Match, base_h2h: tuple[float, float, float] 
     return odds_list
 
 
+def generate_sport_market_odds(match: Match) -> list[MarketOdds]:
+    """Book-shaped prices for every market we model — soccer Poisson or 2-way Elo."""
+    from bet_placer.ml.elo import _sport_from_match
+
+    sport = _sport_from_match(match)
+    if sport in ("basketball", "cricket"):
+        return _odds_from_estimates(_predict_two_way_markets(match, sport), margin=0.045)
+    return generate_all_market_odds(match)
+
+
+def _odds_from_estimates(estimates: list[ProbabilityEstimate], margin: float = 0.05) -> list[MarketOdds]:
+    """Turn model probs into placeable decimal odds (small book margin)."""
+    out: list[MarketOdds] = []
+    for est in estimates:
+        p = float(max(0.02, min(0.98, est.probability)))
+        book = max(1.05, round((1.0 / p) * (1.0 - margin), 2))
+        out.append(MarketOdds(
+            market=est.market,
+            selection=est.selection,
+            line=est.line,
+            best_odds=book,
+            avg_odds=round(book * 0.98, 2),
+            implied_probability=decimal_to_implied(book),
+            bookmaker_count=0,  # model-priced — not a scraped book
+        ))
+    return out
+
+
 def predict_all_markets(match: Match) -> list[ProbabilityEstimate]:
-    """True probabilities for every market."""
+    """True probabilities for every market we understand for this sport."""
+    from bet_placer.ml.elo import _sport_from_match
+
+    sport = _sport_from_match(match)
+    if sport in ("basketball", "cricket"):
+        return _predict_two_way_markets(match, sport)
+    return _predict_soccer_markets(match)
+
+
+def _predict_two_way_markets(match: Match, sport: str) -> list[ProbabilityEstimate]:
+    """Basketball / cricket — moneyline, totals, handicap from Elo + book lean + rest."""
+    from bet_placer.ml.elo import EloModel
+
+    elo = EloModel()
+    raw = elo.predict(match)
+    ph = float(raw["home"])
+    pa = float(raw["away"])
+
+    # Blend toward market moneyline when real books are on the match
+    mh = ma = None
+    for o in match.market_odds or []:
+        if o.market != MarketType.MATCH_WINNER:
+            continue
+        if int(getattr(o, "bookmaker_count", 1) or 0) <= 0:
+            continue
+        if o.selection == "home":
+            mh = float(o.implied_probability or 0)
+        elif o.selection == "away":
+            ma = float(o.implied_probability or 0)
+    if mh and ma and mh + ma > 0.5:
+        s = mh + ma
+        mh, ma = mh / s, ma / s
+        ph = 0.55 * ph + 0.45 * mh
+        pa = 0.55 * pa + 0.45 * ma
+
+    # Rest / congestion from external factors when present
+    ext = getattr(match, "external", None) or getattr(match, "external_factors", None)
+    if ext is not None:
+        rh = int(getattr(ext, "rest_days_home", 7) or 7)
+        ra = int(getattr(ext, "rest_days_away", 7) or 7)
+        # ~1.5% per rest-day gap, capped — tired dogs fade
+        rest_bump = max(-0.04, min(0.04, (rh - ra) * 0.008))
+        ph = max(0.05, min(0.95, ph + rest_bump))
+        pa = 1.0 - ph
+
+    s = ph + pa
+    if s > 0:
+        ph, pa = ph / s, pa / s
+    else:
+        ph = pa = 0.5
+
+    estimates: list[ProbabilityEstimate] = []
+
+    def est(market, sel, prob, line=None, conf=0.62):
+        estimates.append(ProbabilityEstimate(
+            market=market, selection=sel, line=line,
+            probability=float(max(0.02, min(0.98, prob))),
+            confidence=conf,
+            model_contributions={"elo": float(prob)},
+        ))
+
+    est(MarketType.MATCH_WINNER, "home", ph, conf=0.74)
+    est(MarketType.MATCH_WINNER, "away", pa, conf=0.74)
+    est(MarketType.DRAW_NO_BET, "home", ph, conf=0.72)
+    est(MarketType.DRAW_NO_BET, "away", pa, conf=0.72)
+
+    if sport == "basketball":
+        base_total = 222.0
+        # Pace lean: favorites slightly suppress totals when heavy; dogs inflate
+        pace_adj = abs(ph - 0.5) * -4.0
+        exp_total = base_total + (ph - 0.5) * 4 + pace_adj
+        lines = [209.5, 214.5, 219.5, 224.5, 229.5, 234.5]
+        spread_lines = [-12.5, -9.5, -6.5, -3.5, -1.5, 1.5, 3.5, 6.5, 9.5, 12.5]
+        home_margin = (ph - 0.5) * 18
+        home_pts = exp_total * (0.50 + (ph - 0.5) * 0.35)
+        away_pts = exp_total - home_pts
+        for line in (104.5, 108.5, 112.5, 116.5, 120.5):
+            ho = 1.0 / (1.0 + 10 ** ((line - home_pts) / 6.0))
+            ao = 1.0 / (1.0 + 10 ** ((line - away_pts) / 6.0))
+            est(MarketType.OVER_UNDER_GOALS, "home_over", ho, line=line, conf=0.56)
+            est(MarketType.OVER_UNDER_GOALS, "home_under", 1 - ho, line=line, conf=0.56)
+            est(MarketType.OVER_UNDER_GOALS, "away_over", ao, line=line, conf=0.56)
+            est(MarketType.OVER_UNDER_GOALS, "away_under", 1 - ao, line=line, conf=0.56)
+        # 1H moneyline — favorites cover live more often; keep mild
+        est(MarketType.HALF_TIME, "home", 0.50 * ph + 0.25, conf=0.52)
+        est(MarketType.HALF_TIME, "away", 0.50 * pa + 0.25, conf=0.52)
+    else:
+        league = str(getattr(match, "league", "") or getattr(match, "id", "") or "").lower()
+        t20ish = any(k in league for k in ("t20", "ipl", "bbl", "blast", "hundred", "cpl", "psl"))
+        if t20ish:
+            base_total = 165.0
+            lines = [149.5, 154.5, 159.5, 164.5, 169.5, 174.5]
+            spread_lines = [-25.5, -15.5, -5.5, 5.5, 15.5, 25.5]
+            home_margin = (ph - 0.5) * 28
+            team_lines = [79.5, 84.5, 89.5, 94.5]
+        else:
+            base_total = 310.0
+            lines = [279.5, 289.5, 299.5, 309.5, 319.5, 329.5]
+            spread_lines = [-35.5, -20.5, -10.5, 10.5, 20.5, 35.5]
+            home_margin = (ph - 0.5) * 35
+            team_lines = [149.5, 159.5, 169.5, 179.5]
+        exp_total = base_total + (ph - 0.5) * 8
+        home_runs = exp_total * (0.50 + (ph - 0.5) * 0.3)
+        away_runs = exp_total - home_runs
+        for line in team_lines:
+            ho = 1.0 / (1.0 + 10 ** ((line - home_runs) / 8.0))
+            ao = 1.0 / (1.0 + 10 ** ((line - away_runs) / 8.0))
+            est(MarketType.OVER_UNDER_GOALS, "home_over", ho, line=line, conf=0.55)
+            est(MarketType.OVER_UNDER_GOALS, "home_under", 1 - ho, line=line, conf=0.55)
+            est(MarketType.OVER_UNDER_GOALS, "away_over", ao, line=line, conf=0.55)
+            est(MarketType.OVER_UNDER_GOALS, "away_under", 1 - ao, line=line, conf=0.55)
+
+    for line in lines:
+        over_p = 1.0 / (1.0 + 10 ** ((line - exp_total) / 10.0))
+        est(MarketType.OVER_UNDER_GOALS, "over", over_p, line=line, conf=0.60)
+        est(MarketType.OVER_UNDER_GOALS, "under", 1 - over_p, line=line, conf=0.60)
+
+    for line in spread_lines:
+        cover = 1.0 / (1.0 + 10 ** ((line - home_margin) / 7.0))
+        est(MarketType.ASIAN_HANDICAP, "home", cover, line=line, conf=0.62)
+        est(MarketType.ASIAN_HANDICAP, "away", 1 - cover, line=-line, conf=0.62)
+
+    return estimates
+
+
+def _predict_soccer_markets(match: Match) -> list[ProbabilityEstimate]:
+    """Soccer: Poisson goals grid + derived markets."""
     hl, al = expected_goals(match)
     mat = score_matrix(hl, al)
     probs = _derive_all_probs(mat, hl, al)
@@ -216,7 +370,7 @@ def predict_all_markets(match: Match) -> list[ProbabilityEstimate]:
         est(MarketType.CORNERS, "over", over_c, line=line, conf=0.58)
         est(MarketType.CORNERS, "under", 1 - over_c, line=line, conf=0.58)
 
-    for line in [2.5, 3.5, 4.5, 5.5]:
+    for line in [1.5, 2.5, 3.5, 4.5, 5.5]:
         over_cards = 1 - poisson.cdf(line, exp_cards)
         est(MarketType.CARDS, "over", over_cards, line=line, conf=0.55)
         est(MarketType.CARDS, "under", 1 - over_cards, line=line, conf=0.55)

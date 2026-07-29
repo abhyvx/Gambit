@@ -62,12 +62,16 @@ def find_value_bets(
         ev = compute_ev(true_prob, market_odds.best_odds)
         roi = compute_roi(true_prob, market_odds.best_odds)
 
-        # Conviction floor: never surface a bet that's more likely to lose than
-        # win just because the payout is "fair value". The user reads the game to
-        # back what should actually happen, not lottery tickets.
-        if true_prob < 0.50:
+        # Conviction floor: prefer favorites / coin-flips with edge, not long shots.
+        # 0.45 so 2-way sports (BB/cricket) still surface model favorites.
+        if true_prob < 0.45:
             continue
-        if ev < settings.min_ev_threshold:
+        model_priced = int(getattr(market_odds, "bookmaker_count", 1) or 0) == 0
+        if model_priced:
+            # Odds came from our model — require conviction, not phantom +EV.
+            if true_prob < 0.52 and ev < settings.min_ev_threshold:
+                continue
+        elif ev < settings.min_ev_threshold:
             continue
         # A genuine edge in a liquid market is rarely >25%. Anything above that is
         # a miscalibration artefact — never recommend it.

@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   connectPortfolioSession,
   disconnectPortfolioSession,
+  fetchErrorMessage,
   fetchPortfolioState,
   refreshPortfolioSnapshot,
   updatePortfolioPrivacy,
 } from '../api'
+import PortfolioCurve from '../components/PortfolioCurve'
+import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
 
 function fmtTs(ts) {
@@ -20,7 +23,7 @@ function fmtTs(ts) {
 function fmtMoney(n, currency = 'USD') {
   if (n == null) return '—'
   const symbol = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : `${currency} `
-  return `${symbol}${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  return `${symbol}${Math.round(Number(n)).toLocaleString(undefined)}`
 }
 
 export default function PortfolioPage() {
@@ -28,6 +31,7 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
     setErr('')
@@ -60,7 +64,7 @@ export default function PortfolioPage() {
           if (mounted) setState(refreshed)
         }
       } catch (e) {
-        if (mounted) setErr(String(e))
+        if (mounted) setErr(fetchErrorMessage(e, 'Could not load portfolio state.'))
       } finally {
         if (mounted) setLoading(false)
       }
@@ -73,6 +77,9 @@ export default function PortfolioPage() {
   const browser = connection?.browser || {}
   const portfolio = state?.portfolio || {}
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
+  const syncStatus = connection.last_sync_status || 'never'
+  const syncFailed = ['needs_reconnect', 'auth_required', 'never'].includes(syncStatus)
+  const syncMessage = connection.last_sync_message || ''
   const money = (n) => fmtMoney(n, portfolio.display_currency)
 
   const summary = useMemo(() => ([
@@ -86,9 +93,16 @@ export default function PortfolioPage() {
   ]), [portfolio])
 
   const curve = portfolio.cumulative_profit || []
-  const curveMax = Math.max(...curve.map((pt) => Math.abs(pt.running_profit_value || 0)), 1)
   const marketRows = portfolio.ranked_markets || []
   const audit = portfolio.model_audit || {}
+  const overview = portfolio.overview || {}
+  const resultSummary = [
+    { label: 'Wins', value: portfolio.wins ?? 0, cls: 'good' },
+    { label: 'Losses', value: portfolio.losses ?? 0, cls: 'bad' },
+    { label: 'Pushes', value: portfolio.pushes ?? 0, cls: 'push' },
+    { label: 'Cashouts', value: portfolio.cashouts ?? 0, cls: 'cashout' },
+  ]
+  const settledTotal = Math.max(1, (portfolio.wins ?? 0) + (portfolio.losses ?? 0) + (portfolio.pushes ?? 0) + (portfolio.cashouts ?? 0))
 
   const savePrivacy = async (patch = {}) => {
     if (!state) return
@@ -102,7 +116,7 @@ export default function PortfolioPage() {
       })
       setState(next)
     } catch (e) {
-      setErr(String(e))
+      setErr(fetchErrorMessage(e, 'Portfolio privacy update failed.'))
     } finally {
       setBusy('')
     }
@@ -114,8 +128,13 @@ export default function PortfolioPage() {
     try {
       const next = await fn()
       setState(next)
+      const status = next?.connection?.last_sync_status
+      const message = next?.connection?.last_sync_message
+      if (key === 'snapshot' && status && status !== 'imported' && message) {
+        setErr(message)
+      }
     } catch (e) {
-      setErr(String(e))
+      setErr(fetchErrorMessage(e, 'Portfolio action failed.'))
     } finally {
       setBusy('')
     }
@@ -151,6 +170,13 @@ export default function PortfolioPage() {
             className="refresh-btn"
             onClick={() => runAction('snapshot', refreshPortfolioSnapshot)}
             disabled={!portfolioReady || busy === 'snapshot'}
+            title={
+              !portfolioReady
+                ? 'Enable portfolio sync and accept the privacy warning first'
+                : !browser.ready
+                  ? 'Open the Stake login window first'
+                  : 'Import your latest Stake bet history'
+            }
           >
             {busy === 'snapshot' ? 'Refreshing…' : 'Sync portfolio'}
           </button>
@@ -159,6 +185,12 @@ export default function PortfolioPage() {
 
       {err && <div className="portfolio-alert error">{err}</div>}
 
+      {syncFailed && syncMessage && !err && (
+        <div className="portfolio-alert warn">
+          <strong>Stake sync needs attention.</strong> {syncMessage}
+        </div>
+      )}
+
       <section className="portfolio-topline fade-up">
         {summary.map((item) => (
           <div key={item.label} className={`portfolio-kpi ${item.tone || ''}`}>
@@ -166,6 +198,53 @@ export default function PortfolioPage() {
             <strong>{item.value}</strong>
           </div>
         ))}
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>What this means</h2>
+            <p className="muted">
+              Plain-English read on the imported stats, plus what to carry into your next bets.
+            </p>
+          </div>
+        </div>
+        <div className="portfolio-insights">
+          <div className="portfolio-insight">{overview.win_loss_text || 'Import settled bets to see this summary.'}</div>
+          <div className="portfolio-insight">{overview.roi_text || 'ROI summary will appear here.'}</div>
+          <div className="portfolio-insight">{overview.curve_text || 'The curve explanation will appear here.'}</div>
+          <div className="portfolio-insight">{overview.market_text || 'Market-family explanation will appear here.'}</div>
+        </div>
+        {overview.recommendations?.length > 0 && (
+          <div className="portfolio-note">
+            <h3>Next bet recommendations</h3>
+            <div className="portfolio-insights">
+              {overview.recommendations.map((tip, idx) => (
+                <div key={idx} className="portfolio-insight">{tip}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Hit map</h2>
+            <p className="muted">
+              Immediate read on what hit, what missed, and how much of the imported sample was salvaged by pushes or cashouts.
+            </p>
+          </div>
+        </div>
+        <div className="result-strip">
+          {resultSummary.map((item) => (
+            <div key={item.label} className={`result-pill ${item.cls}`}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <small>{Math.round((item.value / settledTotal) * 100)}%</small>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="portfolio-card fade-up">
@@ -182,19 +261,9 @@ export default function PortfolioPage() {
         </div>
 
         {curve.length > 1 ? (
-          <div className="portfolio-curve">
-            {curve.map((pt) => (
-              <div key={`${pt.i}-${pt.label}`} className="curve-col">
-                <div
-                  className={`curve-bar ${(pt.running_profit_value || 0) >= 0 ? 'up' : 'down'}`}
-                  style={{ height: `${Math.max(10, (Math.abs(pt.running_profit_value || 0) / curveMax) * 180)}px` }}
-                  title={`${pt.label}: ${money(pt.running_profit_value)}`}
-                />
-              </div>
-            ))}
-          </div>
+          <PortfolioCurve points={curve} formatMoney={money} />
         ) : (
-          <p className="muted">Sync more than one bet to unlock the performance curve.</p>
+          <p className="muted">Sync more than one bet to show the performance curve.</p>
         )}
 
         <div className="portfolio-note">
@@ -253,7 +322,7 @@ export default function PortfolioPage() {
               Imported bets are now checked against the app's reconstructed board so you can see whether your own action aligned with the model.
             </p>
           </div>
-          <span className={`portfolio-pill ${audit.available ? 'ok' : 'warn'}`}>{audit.available ? 'Auditing live' : 'Needs more matches'}</span>
+          <span className={`portfolio-pill ${audit.available ? 'ok' : 'warn'}`}>{audit.available ? 'Auditing live' : 'Needs better mapping'}</span>
         </div>
         {audit.available && (
           <div className="portfolio-grid compact">
@@ -275,6 +344,14 @@ export default function PortfolioPage() {
             </div>
           </div>
         )}
+        <div className="portfolio-note">
+          <h3>Why accuracy is not jumping fast</h3>
+          <p className="muted">
+            The model report card now grades the actual bets it recommends (loss-minimize, best single,
+            value, parlay) — not just who wins the match. Portfolio sync audits your Stake history against
+            that same board.
+          </p>
+        </div>
         <div className="portfolio-controls">
           <label className="portfolio-check compact">
             <input
@@ -312,7 +389,12 @@ export default function PortfolioPage() {
             {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
           </button>
         </div>
-        <p className="muted">{audit.message || connection.last_sync_message}</p>
+        {audit.message && <p className="muted">{audit.message}</p>}
+        {syncMessage && (
+          <p className={`muted ${syncFailed ? 'sync-status-warn' : ''}`}>
+            Sync status: <strong>{syncStatus}</strong> — {syncMessage}
+          </p>
+        )}
       </section>
 
       <section className="portfolio-card fade-up">
@@ -363,7 +445,7 @@ export default function PortfolioPage() {
                   </div>
                   <div>
                     <span>Payout</span>
-                    <strong>{bet.payout ? `${bet.payout} ${bet.currency}` : '—'}</strong>
+                    <strong>{bet.payout ? `${Math.round(bet.payout)} ${bet.currency}` : '—'}</strong>
                   </div>
                   <div>
                     <span>Odds</span>
@@ -390,6 +472,9 @@ export default function PortfolioPage() {
                         <strong>{leg.verdict_label || 'Model read'}</strong>
                         <span>{leg.label}</span>
                         {leg.edge_pct != null && <small>Edge {leg.edge_pct}% · {Math.round((leg.our_probability || 0) * 100)}% win chance</small>}
+                        {leg.tone === 'good' && <small>Good means the model thought the price was worth backing.</small>}
+                        {leg.tone === 'bad' && <small>Bad means the model thought the payout was too short for the risk.</small>}
+                        {leg.tone === 'neutral' && <small>Neutral means the model saw little edge either way.</small>}
                       </div>
                     ))}
                   </div>

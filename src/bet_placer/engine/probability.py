@@ -14,6 +14,28 @@ class ProbabilityEngine:
         self.intuition = AnalystIntuition()
 
     def analyze_match(self, match: Match) -> AnalysisResult:
+        # No book lines → price from the sport model so EV / slips / leans always have odds.
+        if not (match.market_odds or []):
+            from bet_placer.engine.all_markets import generate_sport_market_odds
+            match.market_odds = generate_sport_market_odds(match)
+        else:
+            # Thin boards (moneyline only): merge in model markets we understand.
+            from bet_placer.engine.all_markets import generate_sport_market_odds
+            have = {(
+                o.market.value if hasattr(o.market, "value") else str(o.market),
+                o.selection,
+                o.line,
+            ) for o in match.market_odds}
+            for o in generate_sport_market_odds(match):
+                key = (
+                    o.market.value if hasattr(o.market, "value") else str(o.market),
+                    o.selection,
+                    o.line,
+                )
+                if key not in have:
+                    match.market_odds.append(o)
+                    have.add(key)
+
         raw_probs = self.ensemble.predict_all(match)
         adjusted_probs = self.intuition.adjust_probabilities(match, raw_probs)
         factors = self.intuition.reasoning_factors(match)

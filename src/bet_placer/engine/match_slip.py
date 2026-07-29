@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from bet_placer.engine.bet_portfolio import build_portfolios
 from bet_placer.engine.factor_engine import analyze_match_factors
-from bet_placer.engine.market_advisor import analyze_all_options, serialize_option
+from bet_placer.engine.market_advisor import resolve_portfolio_options, serialize_option
 
 
 @dataclass
@@ -43,6 +43,8 @@ class MatchBetSlip:
     # legacy
     recommended_singles: list[dict]
     recommended_parlay: dict | None
+    curated_picks: dict | None = None
+    stake_from_cache: bool = False
 
 
 def build_match_slip(
@@ -56,9 +58,12 @@ def build_match_slip(
     human_context: dict,
     verdict: dict,
 ) -> MatchBetSlip:
-    options = analyze_all_options(match, probabilities, budget_per_match_inr, human_context)
+    options = resolve_portfolio_options(
+        match, probabilities, budget_per_match_inr, human_context, home, away,
+    )
     all_serialized = [serialize_option(o) for o in options]
     stake_priced = bool(human_context.get("stake_priced"))
+    stake_from_cache = bool(human_context.get("stake_from_cache"))
     stake_stats = human_context.get("stake_stats") or {}
     stake_repriced_count = int(human_context.get("stake_repriced_count") or 0)
     odds_origin = "stake" if stake_priced else "live_book"
@@ -101,14 +106,36 @@ def build_match_slip(
     skip_recommended = bool(portfolios.get("skip_recommended"))
     skip_reason = portfolios.get("skip_reason")
 
+    # Prefer any strategy with legs over a blank SKIP — user asked for recs, not silence.
+    if (not active.get("legs") or rec_id == "skip") and strategy_plans:
+        for key in ("match_card", "min_loss", "singles_focus", "value", "smart_parlay"):
+            plans = strategy_plans.get(key) or []
+            if isinstance(plans, dict):
+                plans = [plans] if plans.get("legs") else []
+            hit = next((p for p in plans if (p.get("legs") or [])), None)
+            if hit:
+                active = hit
+                rec_id = hit.get("tab_id") or hit.get("id") or key
+                skip_recommended = False
+                break
+
     if not active.get("legs") or rec_id == "skip":
-        slip_verdict = "SKIP_MATCH"
-        headline = f"Skip {match_name}"
-        plain = skip_reason or f"Keep all {budget_per_match_inr:,.0f}. Nothing clears our checks for this game."
+        # Last resort: still CAUTION with empty plan rather than hard SKIP_MATCH noise
+        slip_verdict = "CAUTION"
+        headline = f"Thin board — {match_name}"
+        plain = skip_reason or (
+            f"Model markets are thin for this fixture. "
+            f"Keep most of {budget_per_match_inr:,.0f} or pick from the Odds / Build tabs."
+        )
+        skip_recommended = True
     elif skip_recommended:
         slip_verdict = "CAUTION"
         headline = f"Thin edge — {match_name}"
-        plain = (skip_reason or "Most plans still lean negative on the most-likely outcome.") + " " + _plain_portfolio(active, factors, budget_per_match_inr)
+        plain = (skip_reason or "Nothing here clears our bar on the typical outcome.") + " " + _plain_portfolio(active, factors, budget_per_match_inr)
+    elif rec_id == "match_card":
+        slip_verdict = "BET"
+        headline = f"Your match card — {match_name}"
+        plain = _plain_portfolio(active, factors, budget_per_match_inr)
     elif rec_id == "smart_parlay":
         slip_verdict = "CAUTION"
         headline = f"Smart parlay — {match_name}"
@@ -149,11 +176,13 @@ def build_match_slip(
         bet_slips=portfolios.get("bet_slips", []),
         recommended_slip_id=portfolios.get("recommended_slip_id", rec_id),
         strategy_plans=portfolios.get("strategy_plans", {}),
+        curated_picks=portfolios.get("curated_picks"),
         skip_recommended=skip_recommended,
         skip_reason=skip_reason,
         portfolio_engine=portfolios.get("portfolio_engine", "v1"),
         recommended_singles=recommended_singles,
         recommended_parlay=parlay if parlay and parlay.get("stake_inr") else None,
+        stake_from_cache=stake_from_cache,
     )
 
 
@@ -194,6 +223,11 @@ def _build_human_story(ctx: dict, home: str, away: str) -> list[str]:
         story.append(f"💪 {away} morale: {morale['away']}/10")
     if ctx.get("group_stakes"):
         story.append(f"🏆 {ctx['group_stakes']}")
+    read = ctx.get("analyst_read") or {}
+    if read.get("summary"):
+        story.append(f"📊 {read['summary'][:220]}")
+    if read.get("tags"):
+        story.append(" · ".join(read["tags"][:4]))
     st = ctx.get("stake_stats") or {}
     if ctx.get("stake_priced") and st.get("total_bets"):
         story.append(
@@ -219,6 +253,7 @@ def serialize_slip(slip: MatchBetSlip) -> dict:
         "factor_analysis": slip.factor_analysis,
         "game_profile": slip.game_profile,
         "stake_priced": slip.stake_priced,
+        "stake_from_cache": slip.stake_from_cache,
         "stake_stats": slip.stake_stats,
         "stake_repriced_count": slip.stake_repriced_count,
         "odds_origin": slip.odds_origin,
@@ -232,6 +267,7 @@ def serialize_slip(slip: MatchBetSlip) -> dict:
         "bet_slips": slip.bet_slips,
         "recommended_slip_id": slip.recommended_slip_id,
         "strategy_plans": slip.strategy_plans,
+        "curated_picks": slip.curated_picks,
         "portfolio_engine": getattr(slip, "portfolio_engine", None),
         "skip_recommended": slip.skip_recommended,
         "skip_reason": slip.skip_reason,

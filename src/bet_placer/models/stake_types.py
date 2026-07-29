@@ -21,14 +21,21 @@ class StakeOutcome:
     odds: float
     active: bool = True
     payout_multiplier: float | None = None
+    market_id: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class StakeMarket:
+    id: str
     name: str
     group: str
     outcomes: list[StakeOutcome]
     line: float | None = None
+    specifiers: str = ""
+    template: str = ""
+    status: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

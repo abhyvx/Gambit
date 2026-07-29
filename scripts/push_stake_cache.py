@@ -225,7 +225,8 @@ def main() -> int:
             print(f"using disk cache ({len(fixtures)} fixtures)")
 
     # 3) ESPN 1X2 book lines — keeps cloud Odds/recs priced when Stake CF blocks
-    if not fixtures:
+    # Skip in GHA / when STAKE_SKIP_ESPN=1 so we don't pretend ESPN is Stake
+    if not fixtures and os.getenv("STAKE_SKIP_ESPN", "").strip().lower() not in ("1", "true", "yes"):
         fixtures = _espn_book_fixtures()
         if fixtures:
             source = "espn_book"
@@ -233,8 +234,7 @@ def main() -> int:
 
     if not fixtures:
         print(
-            "No Stake fixtures to push. Open Stake Chrome, finish Cloudflare, "
-            "then re-run. App stays on ESPN/model until then."
+            "No Stake fixtures to push. Run: PYTHONPATH=src python3 scripts/connect_stake_and_push.py"
         )
         return 0
 

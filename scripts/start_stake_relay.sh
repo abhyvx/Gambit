@@ -7,10 +7,14 @@ cd "$ROOT"
 [ -f .env ] && set -a && source .env && set +a
 
 export STAKE_USE_BROWSER=true
+# Visible Chrome required once for Cloudflare — headless alone fails on CF
+export STAKE_BROWSER_HEADLESS="${STAKE_BROWSER_HEADLESS:-false}"
 export STAKE_RELAY_SECRET="${STAKE_RELAY_SECRET:-gambit-relay-v1-abhyvx}"
 export GAMBIT_CLOUD_URL="${GAMBIT_CLOUD_URL:-https://gambit-yqng.onrender.com}"
 # After a good push, seed GitHub release so Render bootstrap survives redeploys
 export STAKE_UPLOAD_RELEASE="${STAKE_UPLOAD_RELEASE:-1}"
+# Prefer real Stake — don't push ESPN shells from the long-running relay
+export STAKE_SKIP_ESPN="${STAKE_SKIP_ESPN:-1}"
 # strip accidental spaces
 GAMBIT_CLOUD_URL="$(echo "$GAMBIT_CLOUD_URL" | tr -d '[:space:]')"
 export GAMBIT_CLOUD_URL
@@ -23,5 +27,6 @@ fi
 source .venv/bin/activate 2>/dev/null || true
 echo "Pushing Stake → $GAMBIT_CLOUD_URL (every ${STAKE_RELAY_INTERVAL:-300}s)"
 echo "If Chrome opens: complete Cloudflare once, do not close the profile window."
+echo "First-time tip: PYTHONPATH=src python3 scripts/connect_stake_and_push.py"
 PYTHONPATH=src python3 scripts/push_stake_cache.py || true
 PYTHONPATH=src python3 scripts/stake_relay.py

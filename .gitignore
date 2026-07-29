@@ -23,7 +23,8 @@ secrets.json
 credentials.json
 
 # ───── Learning data / model caches / scraped data ─────
-data/
+/data/
+src/bet_placer/data/stake_cache.json
 *.sqlite
 *.db
 *.log

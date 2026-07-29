@@ -62,6 +62,11 @@ def find_value_bets(
         ev = compute_ev(true_prob, market_odds.best_odds)
         roi = compute_roi(true_prob, market_odds.best_odds)
 
+        # Conviction floor: never surface a bet that's more likely to lose than
+        # win just because the payout is "fair value". The user reads the game to
+        # back what should actually happen, not lottery tickets.
+        if true_prob < 0.50:
+            continue
         if ev < settings.min_ev_threshold:
             continue
         # A genuine edge in a liquid market is rarely >25%. Anything above that is

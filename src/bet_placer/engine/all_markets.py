@@ -5,10 +5,38 @@ from __future__ import annotations
 import numpy as np
 from scipy.stats import poisson
 
+from bet_placer.data.team_ratings import TEAM_RATINGS, get_team_rating
 from bet_placer.markets.odds import decimal_to_implied
-from bet_placer.ml.poisson import expected_goals, score_matrix
+from bet_placer.ml.params import calibrate_prob
+from bet_placer.ml.poisson import expected_goals, rebalance_1x2, score_matrix
 from bet_placer.models.enums import MarketType
 from bet_placer.models.types import MarketOdds, Match, ProbabilityEstimate
+
+
+def _intel_prop_adjustments(home: str, away: str) -> tuple[float, float]:
+    """Corners/cards expectations from scouting intel — not flat baselines."""
+    from bet_placer.data.football_intel import get_rivalry, get_team_intel
+
+    hi, ai = get_team_intel(home), get_team_intel(away)
+    rivalry = get_rivalry(home, away)
+    cards_exp = 3.8
+    corners_exp = 10.5
+    for intel in (hi, ai):
+        if intel["discipline"] == "hot":
+            cards_exp += 0.55
+        elif intel["discipline"] == "physical":
+            cards_exp += 0.25
+        if intel["style"] == "possession":
+            corners_exp += 0.4
+        if intel["tempo"] == "high":
+            corners_exp += 0.2
+    if rivalry and rivalry.get("intensity", 0) >= 8:
+        cards_exp += 0.8
+    if hi["style"] == "possession" and ai["style"] in ("defensive", "balanced"):
+        corners_exp += 0.6
+    if ai["style"] == "possession" and hi["style"] in ("defensive", "balanced"):
+        corners_exp += 0.6
+    return corners_exp, cards_exp
 
 
 def generate_all_market_odds(match: Match, base_h2h: tuple[float, float, float] | None = None) -> list[MarketOdds]:
@@ -35,15 +63,27 @@ def generate_all_market_odds(match: Match, base_h2h: tuple[float, float, float] 
     # DNB favours the other). When market h2h is supplied we blend it with the
     # model, leaning on the model since the fallback h2h is often a placeholder.
     ph, pd, pa = probs["home"], probs["draw"], probs["away"]
+    md = None
     if base_h2h:
         mh, md, ma = base_h2h
-        w = 0.6  # weight on our model
+        w = 0.55  # lean model but respect the market line
         ph = w * ph + (1 - w) * mh
         pd = w * pd + (1 - w) * md
         pa = w * pa + (1 - w) * ma
         s = ph + pd + pa
         if s > 0:
             ph, pd, pa = ph / s, pd / s, pa / s
+    gap = 20.0
+    if match.home_team in TEAM_RATINGS and match.away_team in TEAM_RATINGS:
+        gap = abs(get_team_rating(match.home_team) - get_team_rating(match.away_team))
+    ph, pd, pa = rebalance_1x2(ph, pd, pa, market_draw=md, rating_gap=gap)
+    # Draw-specific calibration learned from 49k historical games.
+    ph = calibrate_prob(ph, "match_winner", "home") or ph
+    pd = calibrate_prob(pd, "match_winner", "draw") or pd
+    pa = calibrate_prob(pa, "match_winner", "away") or pa
+    s = ph + pd + pa
+    if s > 0:
+        ph, pd, pa = ph / s, pd / s, pa / s
 
     add(MarketType.MATCH_WINNER, "home", ph, margin=0.04)
     add(MarketType.MATCH_WINNER, "draw", pd, margin=0.04)
@@ -69,15 +109,14 @@ def generate_all_market_odds(match: Match, base_h2h: tuple[float, float, float] 
     add(MarketType.BTTS, "yes", probs["btts_yes"])
     add(MarketType.BTTS, "no", probs["btts_no"])
 
-    # Corners
-    exp_corners = 10.5 + (hl + al - 2.5) * 0.8
+    # Corners / cards — intel-adjusted (Uruguay hot, Spain possession, etc.)
+    exp_corners, exp_cards = _intel_prop_adjustments(match.home_team, match.away_team)
+    exp_corners += (hl + al - 2.5) * 0.8
     for line in [8.5, 9.5, 10.5, 11.5]:
         over_c = 1 - poisson.cdf(line, exp_corners)
         add(MarketType.CORNERS, "over", over_c, line=line)
         add(MarketType.CORNERS, "under", 1 - over_c, line=line)
 
-    # Cards
-    exp_cards = 3.8
     for line in [2.5, 3.5, 4.5, 5.5]:
         over_cards = 1 - poisson.cdf(line, exp_cards)
         add(MarketType.CARDS, "over", over_cards, line=line)
@@ -121,6 +160,26 @@ def predict_all_markets(match: Match) -> list[ProbabilityEstimate]:
     hl, al = expected_goals(match)
     mat = score_matrix(hl, al)
     probs = _derive_all_probs(mat, hl, al)
+    gap = 20.0
+    if match.home_team in TEAM_RATINGS and match.away_team in TEAM_RATINGS:
+        gap = abs(get_team_rating(match.home_team) - get_team_rating(match.away_team))
+    # Market draw anchor from priced 1X2 if available
+    md = None
+    for o in match.market_odds or []:
+        if o.market == MarketType.MATCH_WINNER and o.selection == "draw":
+            md = o.implied_probability
+            break
+    ph, pd, pa = rebalance_1x2(
+        probs["home"], probs["draw"], probs["away"],
+        market_draw=md, rating_gap=gap,
+    )
+    ph = calibrate_prob(ph, "match_winner", "home") or ph
+    pd = calibrate_prob(pd, "match_winner", "draw") or pd
+    pa = calibrate_prob(pa, "match_winner", "away") or pa
+    s = ph + pd + pa
+    if s > 0:
+        ph, pd, pa = ph / s, pd / s, pa / s
+    probs = {**probs, "home": ph, "draw": pd, "away": pa}
     estimates: list[ProbabilityEstimate] = []
 
     def est(market, sel, prob, line=None, conf=0.65):
@@ -150,14 +209,15 @@ def predict_all_markets(match: Match) -> list[ProbabilityEstimate]:
     est(MarketType.BTTS, "yes", probs["btts_yes"])
     est(MarketType.BTTS, "no", probs["btts_no"])
 
-    exp_corners = 10.5 + (hl + al - 2.5) * 0.8
+    exp_corners, exp_cards = _intel_prop_adjustments(match.home_team, match.away_team)
+    exp_corners += (hl + al - 2.5) * 0.8
     for line in [8.5, 9.5, 10.5, 11.5]:
         over_c = 1 - poisson.cdf(line, exp_corners)
         est(MarketType.CORNERS, "over", over_c, line=line, conf=0.58)
         est(MarketType.CORNERS, "under", 1 - over_c, line=line, conf=0.58)
 
     for line in [2.5, 3.5, 4.5, 5.5]:
-        over_cards = 1 - poisson.cdf(line, 3.8)
+        over_cards = 1 - poisson.cdf(line, exp_cards)
         est(MarketType.CARDS, "over", over_cards, line=line, conf=0.55)
         est(MarketType.CARDS, "under", 1 - over_cards, line=line, conf=0.55)
 

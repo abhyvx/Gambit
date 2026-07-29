@@ -8,6 +8,7 @@ different game's prices. We never guess.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -29,6 +30,9 @@ _CURATED = {
     "Both Teams to Score": ("Both Teams To Score", 4),
     "Asian Handicap": ("Handicap", 5),
     "Anytime Goalscorer": ("Goalscorers", 6),
+    "First Goalscorer": ("Goalscorers", 6),
+    "Team To Score First": ("Match Result", 1),
+    "Last Goalscorer": ("Goalscorers", 7),
     "Total Bookings": ("Cards", 7),
     "Total Corners": ("Corners", 8),
     "Asian Corners": ("Corners", 8),
@@ -37,6 +41,46 @@ _CURATED = {
 # For totals/handicaps we only show the sensible main lines.
 _TOTAL_LINES = {1.5, 2.5, 3.5}
 _HANDICAP_LINES = {-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0}
+
+# Stake appends these to full-time market names (e.g. "1x2 (90' + Stoppage Time)").
+_STAKE_SUFFIX_RE = re.compile(r"\s*\(90'\s*\+\s*Stoppage Time\)\s*$", re.IGNORECASE)
+_STAKE_VARIANT_RE = re.compile(r"\s*\(\d+up\)\s*$", re.IGNORECASE)
+
+
+def canonical_stake_market(name: str) -> str | None:
+    """Map Stake's live market label to our curated canonical name."""
+    raw = (name or "").strip()
+    if not raw:
+        return None
+    base = _STAKE_SUFFIX_RE.sub("", raw).strip()
+    base = _STAKE_VARIANT_RE.sub("", base).strip()
+    low = base.lower()
+
+    if "&" in base:
+        return None
+    if "corner" in low and not (low.startswith("total corners") or low == "asian corners"):
+        return None
+    if "booking" in low and base not in _CURATED:
+        return None
+    if base.startswith("1st Half") or base.startswith("2nd Half"):
+        return None
+
+    if base in _CURATED:
+        return base
+    for key in _CURATED:
+        if key.lower() == low:
+            return key
+
+    if "team to score" in low or "team 1st" in low or "1st team" in low:
+        return "Team To Score First"
+    if "anytime goalscorer" in low:
+        return "Anytime Goalscorer"
+    if low in ("1st goal",) or low.startswith("1st goal"):
+        return "First Goalscorer"
+    if "last goalscorer" in low or low.startswith("last goal"):
+        return "Last Goalscorer"
+
+    return None
 
 
 def _tokens(name: str) -> set[str]:
@@ -63,7 +107,10 @@ def _team_match(a: str, b: str) -> bool:
 
 def _is_world_cup(fixture: StakeFixture) -> bool:
     league = (fixture.league or "").lower()
-    return "world cup" in league or "wc" == league.strip()
+    name = (fixture.name or "").lower()
+    sport = (fixture.sport or "").lower()
+    blob = f"{league} {name} {sport}"
+    return any(k in blob for k in ("world cup", "fifa", "wc 2026", "2026 world"))
 
 
 def find_stake_fixture(home: str, away: str, scraper: StakeScraper) -> StakeFixture | None:
@@ -80,7 +127,7 @@ def find_stake_fixture(home: str, away: str, scraper: StakeScraper) -> StakeFixt
 
 
 def _clean_label(market: StakeMarket, outcome_name: str, home: str, away: str) -> str:
-    name = market.name
+    name = canonical_stake_market(market.name) or market.name
     sel = outcome_name.strip()
     if name == "1x2":
         return sel  # already a team name or 'Draw'
@@ -104,11 +151,12 @@ def _clean_label(market: StakeMarket, outcome_name: str, home: str, away: str) -
 
 
 def _include_market(market: StakeMarket) -> bool:
-    if market.name not in _CURATED:
+    canon = canonical_stake_market(market.name)
+    if not canon:
         return False
-    if market.name == "Asian Total":
+    if canon == "Asian Total":
         return market.line in _TOTAL_LINES
-    if market.name == "Asian Handicap":
+    if canon == "Asian Handicap":
         return market.line in _HANDICAP_LINES
     return True
 
@@ -120,7 +168,10 @@ def curate_stake_markets(fixture: StakeFixture, budget_inr: float) -> list[dict]
     for mk in fixture.markets:
         if not _include_market(mk):
             continue
-        cat_name, order = _CURATED[mk.name]
+        canon = canonical_stake_market(mk.name)
+        if not canon:
+            continue
+        cat_name, order = _CURATED[canon]
         for oc in mk.outcomes:
             key = (mk.name, mk.line, oc.name)
             if key in seen:
@@ -177,31 +228,45 @@ def _stake_unavailable_reason(exc: Exception) -> str:
 
 def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dict:
     """Best-effort, honest scrape of exact Stake payouts for one match."""
-    global _overlay_fail_ts
-    # If Stake just failed, skip the slow browser launch and degrade fast.
-    if (time.monotonic() - _overlay_fail_ts) < OVERLAY_FAIL_COOLDOWN_SECONDS:
-        return {
-            "available": False,
-            "reason": (
-                "Couldn't reach Stake right now. The plan below uses live "
-                "DraftKings prices — open Stake to confirm exact payouts."
-            ),
-            "categories": [],
-        }
-    try:
-        scraper = StakeScraper(timeout=30)
-        fixture = find_stake_fixture(home, away, scraper)
-    except Exception as exc:  # geo-block, timeout, cloudflare, etc.
-        logger.warning("Stake match lookup failed for %s vs %s: %s", home, away, exc)
-        _overlay_fail_ts = time.monotonic()
-        return {
-            "available": False,
-            "reason": _stake_unavailable_reason(exc),
-            "detail": str(exc)[:200],
-            "categories": [],
-        }
+    global _overlay_fail_ts, _overlay_cache, _overlay_cache_ts
 
-    if not fixture:
+    # Fast path: already-warm overlay cache (no browser launch).
+    try:
+        overlay_map = get_stake_overlay_map(launch_browser=False)
+        fx = match_overlay(home, away, overlay_map)
+        if fx and fx.markets:
+            categories = curate_stake_markets(fx, budget_inr)
+            if categories:
+                return _stake_match_response(fx, categories, source="stake_overlay")
+    except Exception as exc:
+        logger.debug("Stake overlay lookup failed: %s", exc)
+
+    fixture = None
+    try:
+        scraper = StakeScraper(timeout=60, allow_browser_launch=True)
+        fixture = _lookup_stake_fixture(scraper, home, away)
+    except Exception as exc:
+        if _is_profile_lock_error(exc):
+            logger.warning("Stake profile locked for %s vs %s, waiting: %s", home, away, exc)
+            from bet_placer.data.stake_browser import wait_for_browser_ready
+
+            if wait_for_browser_ready(timeout_s=120.0):
+                try:
+                    scraper = StakeScraper(timeout=60, allow_browser_launch=True)
+                    fixture = _lookup_stake_fixture(scraper, home, away)
+                except Exception as retry_exc:
+                    exc = retry_exc
+        if fixture is None:
+            logger.warning("Stake match lookup failed for %s vs %s: %s", home, away, exc)
+            _overlay_fail_ts = time.monotonic()
+            return {
+                "available": False,
+                "reason": _stake_unavailable_reason(exc),
+                "detail": str(exc)[:200],
+                "categories": [],
+            }
+
+    if not fixture or not fixture.markets:
         return {
             "available": False,
             "reason": (
@@ -213,11 +278,30 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
         }
 
     categories = curate_stake_markets(fixture, budget_inr)
+    if not categories:
+        return {
+            "available": False,
+            "reason": f"Found {home} vs {away} on Stake but couldn't map markets.",
+            "categories": [],
+        }
+
+    # Warm the shared cache with this fixture for the main pipeline.
+    with _overlay_cache_lock:
+        _overlay_cache[_overlay_key(home, away)] = fixture
+        _overlay_cache_ts = time.monotonic()
+        _overlay_fail_ts = 0.0
+
+    return _stake_match_response(fixture, categories, source="stake_live")
+
+
+def _stake_match_response(fixture: StakeFixture, categories: list, *, source: str) -> dict:
     return {
         "available": True,
         "fixture_id": fixture.id,
         "matched_name": fixture.name,
         "name": fixture.name,
+        "home": fixture.home_team,
+        "away": fixture.away_team,
         "tournament": fixture.league,
         "status": fixture.status,
         "kickoff": fixture.kickoff.isoformat() if fixture.kickoff else None,
@@ -225,6 +309,7 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
         "total_bets": fixture.total_bet_count,
         "total_bettors": fixture.total_user_count,
         "categories": categories,
+        "source": source,
         "stake_url": "https://stake.com/sports/soccer",
         "note": (
             f"Exact live payouts from Stake — {fixture.name} "
@@ -262,6 +347,22 @@ def _ou_selection(name: str) -> str | None:
     return None
 
 
+def _dc_selection(outcome_name: str, home: str, away: str) -> str | None:
+    """Map Stake double-chance label → home_draw / draw_away / home_away."""
+    toks = _tokens(outcome_name)
+    home_t, away_t, draw_t = _tokens(home), _tokens(away), {"draw", "x"}
+    has_home = bool(toks & home_t)
+    has_away = bool(toks & away_t)
+    has_draw = bool(toks & draw_t)
+    if has_home and has_draw:
+        return "home_draw"
+    if has_away and has_draw:
+        return "draw_away"
+    if has_home and has_away:
+        return "home_away"
+    return None
+
+
 def _name_key(name: str) -> str:
     return "".join(sorted(_tokens(name)))
 
@@ -284,13 +385,15 @@ def build_stake_overlay(fixture: StakeFixture) -> dict:
     home, away = fixture.home_team, fixture.away_team
 
     for mk in fixture.markets:
-        name = mk.name
+        name = canonical_stake_market(mk.name)
+        if not name:
+            continue
         if name == "1x2":
             available_markets.add("match_winner")
             for oc in mk.outcomes:
-                if oc.name == home:
+                if _team_match(oc.name, home):
                     sel = "home"
-                elif oc.name == away:
+                elif _team_match(oc.name, away):
                     sel = "away"
                 elif oc.name.lower() in ("draw", "x"):
                     sel = "draw"
@@ -355,8 +458,34 @@ def build_stake_overlay(fixture: StakeFixture) -> dict:
                 goalscorer_odds[key] = oc.odds
         elif name == "Double Chance":
             available_markets.add("double_chance")
+            for oc in mk.outcomes:
+                sel = _dc_selection(oc.name, home, away)
+                if not sel:
+                    continue
+                overlay[("double_chance", sel, None)] = oc.odds
+                available.add(("double_chance", sel, None))
         elif name == "Draw No Bet":
             available_markets.add("draw_no_bet")
+            for oc in mk.outcomes:
+                if _team_match(oc.name, home):
+                    sel = "home"
+                elif _team_match(oc.name, away):
+                    sel = "away"
+                else:
+                    continue
+                overlay[("draw_no_bet", sel, None)] = oc.odds
+                available.add(("draw_no_bet", sel, None))
+        elif name == "Team To Score First":
+            available_markets.add("team_first_goal")
+            for oc in mk.outcomes:
+                if _team_match(oc.name, home):
+                    sel = "home"
+                elif _team_match(oc.name, away):
+                    sel = "away"
+                else:
+                    continue
+                overlay[("team_first_goal", sel, None)] = oc.odds
+                available.add(("team_first_goal", sel, None))
 
     return {
         "odds": overlay,
@@ -391,8 +520,8 @@ def option_on_stake(market: str, selection: str, line: float | None, overlay: di
 
     # These market types exist on Stake but selections/combos are hard to map
     # 1:1; if Stake lists the market, allow it.
-    if market in ("double_chance", "draw_no_bet"):
-        return market in avail_markets
+    if market in ("double_chance", "draw_no_bet", "team_first_goal"):
+        return market in avail_markets or (market, selection, None) in available
 
     if market in ("match_winner", "btts"):
         return (market, selection, None) in available
@@ -411,15 +540,89 @@ def option_on_stake(market: str, selection: str, line: float | None, overlay: di
     return market in avail_markets
 
 
-def fetch_stake_overlay_map(scraper: StakeScraper | None = None) -> dict[str, StakeFixture]:
-    """One call: map normalized 'home|away' -> WC StakeFixture for all trending."""
-    scraper = scraper or StakeScraper(timeout=9)
+def _is_profile_lock_error(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return "profile is already open" in low or "already in use" in low
+
+
+def _fetch_overlay_map_launching() -> dict[str, StakeFixture]:
+    """Fetch overlay map; if browser is still starting, wait — never kill Chrome."""
+    try:
+        return fetch_stake_overlay_map(launch_browser=True)
+    except Exception as exc:
+        if not _is_profile_lock_error(exc):
+            raise
+        logger.warning("Stake profile locked during overlay fetch, waiting: %s", exc)
+        from bet_placer.data.stake_browser import wait_for_browser_ready
+
+        if wait_for_browser_ready(timeout_s=180.0):
+            return fetch_stake_overlay_map(launch_browser=True)
+        raise
+
+
+def fetch_stake_overlay_map(
+    scraper: StakeScraper | None = None,
+    *,
+    launch_browser: bool = False,
+) -> dict[str, StakeFixture]:
+    """Map WC fixtures on Stake → fixture with markets (trending feed, fast)."""
+    scraper = scraper or StakeScraper(timeout=45, allow_browser_launch=launch_browser)
+    return fetch_fast_stake_overlay(scraper)
+
+
+def fetch_fast_stake_overlay(scraper: StakeScraper) -> dict[str, StakeFixture]:
+    """Trending WC fixtures only — they already ship full market boards.
+
+    Never re-fetch odds when markets are present (the detail query often 400s
+    and blocks the single browser thread for minutes).
+    """
     result: dict[str, StakeFixture] = {}
-    for fx in scraper.fetch_trending_fixtures(sport_slug="soccer"):
+    try:
+        fixtures = scraper.fetch_trending_fixtures(sport_slug="soccer")
+    except Exception as exc:
+        logger.warning("Stake trending fetch failed: %s", exc)
+        return result
+
+    for fx in fixtures:
         if not _is_world_cup(fx):
             continue
-        result[_overlay_key(fx.home_team, fx.away_team)] = fx
+        key = _overlay_key(fx.home_team, fx.away_team)
+        if fx.markets:
+            result[key] = fx
+            continue
+        if not fx.id:
+            result[key] = fx
+            continue
+        try:
+            result[key] = scraper.fetch_fixture_odds(fx.id)
+        except Exception as exc:
+            logger.debug("Stake odds fetch %s failed: %s", key, exc)
+            result[key] = fx
+
+    logger.info("Stake fast overlay: %d WC fixtures", len(result))
     return result
+
+
+def fetch_full_worldcup_overlay(scraper: StakeScraper) -> dict[str, StakeFixture]:
+    """Alias — fast trending overlay + on-demand lookup for one-off matches."""
+    return fetch_fast_stake_overlay(scraper)
+
+
+def _lookup_stake_fixture(scraper: StakeScraper, home: str, away: str) -> StakeFixture | None:
+    """Find a fixture on Stake; keep embedded markets when already present."""
+    fx = find_stake_fixture(home, away, scraper)
+    if not fx:
+        try:
+            fx = scraper.search_fixture_by_teams(home, away)
+        except Exception:
+            fx = None
+    if not fx or fx.markets or not fx.id:
+        return fx
+    try:
+        return scraper.fetch_fixture_odds(fx.id)
+    except Exception as exc:
+        logger.debug("Stake detail fetch %s vs %s failed: %s", home, away, exc)
+        return fx
 
 
 def _overlay_key(home: str, away: str) -> str:
@@ -435,72 +638,108 @@ def _overlay_key(home: str, away: str) -> str:
 # cache it briefly and share it across FastAPI threadpool threads.
 # ---------------------------------------------------------------------------
 
-OVERLAY_CACHE_TTL_SECONDS = 45.0
+OVERLAY_CACHE_TTL_SECONDS = 300.0
 # When Stake is unreachable, don't re-attempt the slow browser launch on every
 # request — back off so the app stays fast and just serves modelled prices.
 OVERLAY_FAIL_COOLDOWN_SECONDS = 90.0
 
-_overlay_cache_lock = threading.Lock()
+_overlay_cache_lock = threading.Condition()
 _overlay_cache: dict[str, StakeFixture] = {}
 _overlay_cache_ts: float = 0.0
 _overlay_fail_ts: float = 0.0
+_overlay_fetching = False
+_overlay_fetch_started: float = 0.0
+OVERLAY_FETCH_MAX_SECONDS = 90.0
+
+
+def _reset_stale_overlay_fetch() -> None:
+    global _overlay_fetching
+    if not _overlay_fetching:
+        return
+    if (time.monotonic() - _overlay_fetch_started) > OVERLAY_FETCH_MAX_SECONDS:
+        logger.warning("Stake overlay fetch timed out — resetting stuck fetch flag")
+        _overlay_fetching = False
+        _overlay_cache_lock.notify_all()
+
+
+def refresh_stake_overlay() -> dict:
+    """Force a fast trending refresh (used by /api/stake/refresh)."""
+    global _overlay_fetching, _overlay_fetch_started
+    with _overlay_cache_lock:
+        _overlay_fetching = False
+        _overlay_fetch_started = 0.0
+        _overlay_cache_lock.notify_all()
+    fetched = get_stake_overlay_map(force_refresh=True, launch_browser=True)
+    return {"fixtures": len(fetched), "status": stake_overlay_status()}
 
 
 def stake_overlay_status() -> dict:
     """Lightweight status for the UI/health: is Stake currently reachable?"""
     now = time.monotonic()
     with _overlay_cache_lock:
+        _reset_stale_overlay_fetch()
         cooling = (now - _overlay_fail_ts) < OVERLAY_FAIL_COOLDOWN_SECONDS
         return {
             "have_data": bool(_overlay_cache),
             "fixtures": len(_overlay_cache),
             "cooling_down": cooling,
+            "fetching": _overlay_fetching,
             "retry_in_s": round(max(0.0, OVERLAY_FAIL_COOLDOWN_SECONDS - (now - _overlay_fail_ts)), 1) if cooling else 0,
         }
 
 
-def get_stake_overlay_map(force_refresh: bool = False) -> dict[str, StakeFixture]:
+def get_stake_overlay_map(
+    force_refresh: bool = False,
+    *,
+    launch_browser: bool = False,
+) -> dict[str, StakeFixture]:
     """Return the trending Stake overlay map, cached for OVERLAY_CACHE_TTL_SECONDS.
 
     Thread-safe across FastAPI threadpool threads. A successful fetch refreshes
     the shared cache. On failure we record the time and back off for
     OVERLAY_FAIL_COOLDOWN_SECONDS so we don't relaunch the (slow) browser on
     every request — the app stays snappy on modelled prices and retries later.
+
+    When launch_browser=False (default), never starts Chromium — only returns
+    cached data. Use launch_browser=True for explicit Stake odds requests.
     """
-    global _overlay_cache, _overlay_cache_ts, _overlay_fail_ts
+    global _overlay_cache, _overlay_cache_ts, _overlay_fail_ts, _overlay_fetching, _overlay_fetch_started
 
     now = time.monotonic()
     with _overlay_cache_lock:
-        # Fresh = we successfully fetched within the TTL — serve it even if the
-        # map came back empty (nothing trending), so we don't re-hit the slow
-        # browser every request.
+        _reset_stale_overlay_fetch()
         if not force_refresh and (now - _overlay_cache_ts) < OVERLAY_CACHE_TTL_SECONDS:
             return dict(_overlay_cache)
-        # Recently failed → skip the slow retry, serve what we have immediately.
         if not force_refresh and (now - _overlay_fail_ts) < OVERLAY_FAIL_COOLDOWN_SECONDS:
             return dict(_overlay_cache)
+        if not launch_browser:
+            return dict(_overlay_cache)
+        while _overlay_fetching:
+            _overlay_cache_lock.wait(timeout=10.0)
+            _reset_stale_overlay_fetch()
+            if not force_refresh and (time.monotonic() - _overlay_cache_ts) < OVERLAY_CACHE_TTL_SECONDS:
+                return dict(_overlay_cache)
+        _overlay_fetching = True
+        _overlay_fetch_started = time.monotonic()
 
-    # Fetch outside the lock so a slow Stake call doesn't block other threads.
     try:
-        fetched = fetch_stake_overlay_map()
+        fetched = _fetch_overlay_map_launching()
     except Exception as exc:
         logger.warning("Stake overlay map fetch failed: %s", exc)
         with _overlay_cache_lock:
             _overlay_fail_ts = time.monotonic()
-            # Serve stale data if we have it; otherwise an empty map (callers
-            # gracefully fall back to DraftKings pricing).
             return dict(_overlay_cache)
+    finally:
+        with _overlay_cache_lock:
+            _overlay_fetching = False
+            _overlay_cache_lock.notify_all()
 
     with _overlay_cache_lock:
-        # Mark the success time even when the result is empty (nothing trending /
-        # no WC fixtures right now). Otherwise we'd re-run the slow browser fetch
-        # on EVERY request — the main cause of the app feeling sluggish.
         _overlay_cache_ts = time.monotonic()
         _overlay_fail_ts = 0.0
         if fetched:
             _overlay_cache = fetched
             return _overlay_cache
-        # Empty fetch: keep any prior good map but still honour the TTL above.
         return dict(_overlay_cache)
 
 

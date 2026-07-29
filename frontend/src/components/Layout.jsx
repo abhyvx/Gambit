@@ -8,6 +8,7 @@ import './Layout.css'
 const NAV = [
   { to: '/app', label: 'Matches', icon: '⚡' },
   { to: '/app/model', label: 'Model', icon: '🧠' },
+  { to: '/app/portfolio', label: 'Portfolio', icon: '🔒' },
   { to: '/app/guide', label: 'How it works', icon: '📖' },
   { to: '/app/settings', label: 'Bankroll', icon: '💰' },
 ]
@@ -38,7 +39,15 @@ export default function Layout() {
   const location = useLocation()
 
   useEffect(() => {
-    checkHealth().then(setStatus).catch(() => setStatus({ status: 'error' }))
+    let cancelled = false
+    const poll = () => {
+      checkHealth()
+        .then((s) => { if (!cancelled) setStatus(s) })
+        .catch(() => { if (!cancelled) setStatus({ status: 'error' }) })
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => { cancelled = true; clearInterval(id) }
   }, [])
 
   const online = status && status.status !== 'error'
@@ -77,7 +86,7 @@ export default function Layout() {
 
         <div className={`sidebar-status ${online ? 'is-online' : 'is-offline'}`}>
           <span className={`dot ${online ? 'live' : 'cached'}`} />
-          <span>{online ? 'WC 2026 engine active' : 'Connecting to engine…'}</span>
+          <span>{online ? 'WC 2026 engine active' : 'Engine starting…'}</span>
         </div>
 
         <p className="sidebar-disclaimer">18+ · Bet only what you can afford to lose.</p>

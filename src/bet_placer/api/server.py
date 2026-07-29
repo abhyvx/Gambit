@@ -7,7 +7,7 @@ import threading
 from contextlib import asynccontextmanager
 
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from bet_placer.api.serializers import serialize_match_result, serialize_pipeline_results, serialize_value_bet
@@ -23,6 +23,24 @@ from bet_placer.engine.probability import ProbabilityEngine, rank_all_bets
 from bet_placer.engine.verdict import MatchVerdictEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _bearer_user(request: Request):
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not token:
+        return None
+    from bet_placer.auth.users import user_from_token
+
+    return user_from_token(token)
+
+
+def _bind_portfolio_user(request: Request):
+    from bet_placer.portfolio.store import set_portfolio_user
+
+    user = _bearer_user(request)
+    set_portfolio_user((user or {}).get("id"))
+    return user
 
 
 def _warmup_stake_browser() -> None:
@@ -264,6 +282,48 @@ _verdict_engine = MatchVerdictEngine()
 _web = WebConsensusFetcher()
 
 
+class AuthBody(BaseModel):
+    email: str
+    password: str
+    name: str | None = None
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    user = _bearer_user(request)
+    return {"user": user}
+
+
+@app.post("/api/auth/signup")
+def auth_signup(body: AuthBody):
+    from bet_placer.auth.users import signup
+
+    try:
+        return signup(email=body.email, password=body.password, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/login")
+def auth_login(body: AuthBody):
+    from bet_placer.auth.users import login
+
+    try:
+        return login(email=body.email, password=body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    from bet_placer.auth.users import logout
+
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    logout(token)
+    return {"ok": True}
+
+
 class PortfolioPrivacyUpdate(BaseModel):
     portfolio_enabled: bool
     risk_acknowledged: bool
@@ -280,6 +340,18 @@ class PortfolioRelayPayload(BaseModel):
     portfolio: dict | None = None
     privacy: dict | None = None
     connection: dict | None = None
+
+
+class StakeTokenConnect(BaseModel):
+    token: str
+
+
+class StakeSyncJobsComplete(BaseModel):
+    secret: str
+    job_id: str
+    bets: list[dict] | None = None
+    error: str | None = None
+    stake_user: dict | None = None
 
 
 @app.get("/api/health")
@@ -547,10 +619,49 @@ def stake_connect():
 
 
 @app.get("/api/portfolio")
-def portfolio_state():
+def portfolio_state(request: Request):
     from bet_placer.portfolio.store import get_portfolio_state
 
+    _bind_portfolio_user(request)
     return get_portfolio_state()
+
+
+@app.post("/api/portfolio/stake-token")
+def portfolio_stake_token(request: Request, body: StakeTokenConnect):
+    """Common-user Stake connect: paste API token from Stake settings."""
+    from bet_placer.portfolio.store import connect_with_stake_token
+
+    user = _bind_portfolio_user(request)
+    try:
+        return connect_with_stake_token(body.token, user_id=(user or {}).get("id"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio/sync-jobs")
+def portfolio_sync_jobs(secret: str = Query(...)):
+    from bet_placer.portfolio.store import list_pending_sync_jobs
+
+    try:
+        return {"jobs": list_pending_sync_jobs(secret)}
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/sync-jobs/complete")
+def portfolio_sync_jobs_complete(body: StakeSyncJobsComplete):
+    from bet_placer.portfolio.store import complete_sync_job
+
+    try:
+        return complete_sync_job(
+            secret=body.secret,
+            job_id=body.job_id,
+            bets=body.bets,
+            error=body.error,
+            stake_user=body.stake_user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/slip/record")
@@ -577,9 +688,10 @@ def slip_settle(payload: dict):
 
 
 @app.post("/api/portfolio/privacy")
-def portfolio_privacy(payload: PortfolioPrivacyUpdate):
+def portfolio_privacy(request: Request, payload: PortfolioPrivacyUpdate):
     from bet_placer.portfolio.store import update_privacy_settings
 
+    _bind_portfolio_user(request)
     return update_privacy_settings(
         portfolio_enabled=payload.portfolio_enabled,
         risk_acknowledged=payload.risk_acknowledged,
@@ -588,23 +700,26 @@ def portfolio_privacy(payload: PortfolioPrivacyUpdate):
 
 
 @app.post("/api/portfolio/connect")
-def portfolio_connect():
+def portfolio_connect(request: Request):
     from bet_placer.portfolio.store import connect_browser_session
 
+    _bind_portfolio_user(request)
     return connect_browser_session()
 
 
 @app.post("/api/portfolio/disconnect")
-def portfolio_disconnect():
+def portfolio_disconnect(request: Request):
     from bet_placer.portfolio.store import disconnect_browser_session
 
+    _bind_portfolio_user(request)
     return disconnect_browser_session()
 
 
 @app.post("/api/portfolio/refresh")
-def portfolio_refresh():
+def portfolio_refresh(request: Request):
     from bet_placer.portfolio.store import refresh_portfolio_snapshot
 
+    _bind_portfolio_user(request)
     try:
         return refresh_portfolio_snapshot()
     except ValueError as exc:
@@ -655,11 +770,12 @@ class PortfolioBetResultUpdate(BaseModel):
 
 
 @app.post("/api/portfolio/confirm-slip")
-def portfolio_confirm_slip(body: PortfolioConfirmSlip):
+def portfolio_confirm_slip(request: Request, body: PortfolioConfirmSlip):
     from threading import Thread
 
     from bet_placer.portfolio.store import confirm_slip_bets, settle_open_portfolio_bets
 
+    _bind_portfolio_user(request)
     try:
         out = confirm_slip_bets(
             legs=body.legs,
@@ -673,9 +789,10 @@ def portfolio_confirm_slip(body: PortfolioConfirmSlip):
 
 
 @app.post("/api/portfolio/bets")
-def portfolio_add_bet(body: PortfolioManualBet):
+def portfolio_add_bet(request: Request, body: PortfolioManualBet):
     from bet_placer.portfolio.store import add_manual_portfolio_bet
 
+    _bind_portfolio_user(request)
     try:
         return add_manual_portfolio_bet(body.model_dump())
     except ValueError as exc:
@@ -683,9 +800,10 @@ def portfolio_add_bet(body: PortfolioManualBet):
 
 
 @app.post("/api/portfolio/bets/{bet_id}/result")
-def portfolio_bet_result(bet_id: str, body: PortfolioBetResultUpdate):
+def portfolio_bet_result(request: Request, bet_id: str, body: PortfolioBetResultUpdate):
     from bet_placer.portfolio.store import update_portfolio_bet_result
 
+    _bind_portfolio_user(request)
     try:
         return update_portfolio_bet_result(bet_id, body.result, body.payout)
     except ValueError as exc:

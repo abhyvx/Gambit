@@ -196,6 +196,7 @@ class StakeScraper:
                 variables,
                 timeout=self.timeout,
                 launch_if_needed=self.allow_browser_launch,
+                access_token=self.api_token or None,
             )
         payload = {"query": query, "variables": variables or {}}
         resp = self.session.post(self.endpoint, json=payload, timeout=self.timeout)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,22 @@ from bet_placer.data.stake_scraper import StakeScraper
 
 _LOCK = Lock()
 _CONSENT_VERSION = "2026-07-02"
+_CURRENT_USER_ID: ContextVar[str | None] = ContextVar("portfolio_user_id", default=None)
+_SYNC_JOBS = data_path("stake_sync_jobs.json")
+
+
+def set_portfolio_user(user_id: str | None) -> None:
+    _CURRENT_USER_ID.set((user_id or "").strip() or None)
+
+
+def _store_path() -> Path:
+    settings = get_settings()
+    if settings.portfolio_store_path:
+        return Path(settings.portfolio_store_path).expanduser()
+    uid = _CURRENT_USER_ID.get()
+    if uid:
+        return data_path("portfolios", f"{uid}.json")
+    return data_path("portfolio_state.json")
 
 
 def _utc_now() -> str:
@@ -280,9 +298,10 @@ def _save_state(state: dict[str, Any]) -> dict[str, Any]:
 def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
     """Attach live browser flags without rewriting login status from CF-ready alone."""
     out = deepcopy(state)
+    out.pop("secrets", None)
     browser = browser_status()
     out["connection"]["browser"] = browser
-    if browser.get("warming") and out["connection"].get("status") not in ("cloud", "authenticated", "relay"):
+    if browser.get("warming") and out["connection"].get("status") not in ("cloud", "authenticated", "relay", "syncing"):
         out["connection"]["status"] = "connecting"
         out["connection"]["connected"] = False
     return out
@@ -708,29 +727,57 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
 
 
 def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
-    from bet_placer.config import stake_network_enabled
+    from bet_placer.config import stake_network_enabled, remote_stake_browser_enabled
 
-    # No live Stake path (no local Chrome, no cloud browser, no token).
+    # Cloud Chrome path (Browserbase) — open live-view login for the user.
+    if remote_stake_browser_enabled():
+        login = wait_until_logged_in(timeout=timeout)
+        browser = browser_status()
+        with _LOCK:
+            state = _load_state()
+            login_url = login.get("login_url") or browser.get("login_url")
+            if login.get("logged_in"):
+                user = login.get("user") or {}
+                who = user.get("name") or user.get("id") or "Stake"
+                state["connection"].update(
+                    {
+                        "status": "authenticated",
+                        "connected": True,
+                        "last_connected_at": _utc_now(),
+                        "last_sync_status": "authenticated",
+                        "last_sync_message": f"Connected as {who}. Tap Sync to refresh your journal.",
+                        "stake_user": {"id": user.get("id"), "name": user.get("name")},
+                        "login_url": login_url,
+                    }
+                )
+            else:
+                state["connection"].update(
+                    {
+                        "status": "awaiting_login",
+                        "connected": False,
+                        "last_sync_status": "auth_required",
+                        "last_sync_message": (
+                            login.get("message")
+                            or "Open the Stake window, sign in, then tap Connect again."
+                        ),
+                        "login_url": login_url,
+                    }
+                )
+            return _merged_status(_save_state(state))
+
     if not stake_network_enabled():
         with _LOCK:
             state = _load_state()
-            has_bets = bool((state.get("portfolio") or {}).get("bets"))
             state["connection"].update(
                 {
                     "status": "setup",
-                    "connected": bool(has_bets),
-                    "last_sync_status": "error" if not has_bets else "imported",
+                    "connected": False,
+                    "last_sync_status": "needs_token",
                     "last_sync_message": (
-                        "Your journal is up to date from the last sync."
-                        if has_bets
-                        else (
-                            "This cloud host cannot open Stake Chrome. "
-                            "On your Mac run: PYTHONPATH=src python3 scripts/stake_login.py "
-                            "(logs you in locally and pushes history here). "
-                            "Or confirm slip bets below — they auto-settle when matches finish."
-                        )
+                        "Paste your Stake API token below (Stake → Settings → Security → API Tokens). "
+                        "No installs. Sync runs through the live odds link."
                     ),
-                    "login_url": None,
+                    "login_url": "https://stake.com/?tab=login&modal=auth",
                 }
             )
             return _merged_status(_save_state(state))
@@ -778,6 +825,176 @@ def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
                 }
             )
         return _merged_status(_save_state(state))
+
+
+def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[str, Any]:
+    """Common-user Stake connect: paste API token (no laptop scripts)."""
+    token = (token or "").strip()
+    if len(token) < 12:
+        raise ValueError("Paste the full Stake API token from Settings → Security → API Tokens.")
+
+    # Try immediate sync when a live browser path exists on this host.
+    from bet_placer.config import stake_network_enabled
+
+    if stake_network_enabled():
+        try:
+            scraper = StakeScraper(api_token=token, use_browser=True, allow_browser_launch=True, timeout=60)
+            bets = []
+            for offset in range(0, 150, 50):
+                batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
+                if not batch:
+                    break
+                bets.extend(batch)
+                if len(batch) < 50:
+                    break
+            with _LOCK:
+                state, _ = _ensure_privacy_defaults(_load_state())
+                summary = _summarize_bets(bets)
+                state["portfolio"] = summary
+                state["connection"].update(
+                    {
+                        "status": "authenticated",
+                        "connected": True,
+                        "last_connected_at": _utc_now(),
+                        "last_sync_at": _utc_now(),
+                        "last_sync_status": "imported",
+                        "last_sync_message": f"Imported {len(bets)} bets from your Stake API token.",
+                        "has_stake_token": True,
+                    }
+                )
+                state["secrets"] = {"stake_api_token": token}
+                return _merged_status(_save_state(state))
+        except Exception:
+            pass
+
+    # Queue for the odds-link machine (already pushes Stake prices to cloud).
+    job_id = secrets.token_hex(8)
+    with _LOCK:
+        state, _ = _ensure_privacy_defaults(_load_state())
+        state["secrets"] = {"stake_api_token": token}
+        state["connection"].update(
+            {
+                "status": "syncing",
+                "connected": False,
+                "last_sync_at": _utc_now(),
+                "last_sync_status": "queued",
+                "last_sync_message": (
+                    "Token saved. Import is queued on the live odds link — "
+                    "usually finishes within a few minutes. Keep this tab open."
+                ),
+                "has_stake_token": True,
+                "login_url": "https://stake.com/settings/security",
+            }
+        )
+        out = _merged_status(_save_state(state))
+        _enqueue_sync_job(
+            {
+                "id": job_id,
+                "user_id": user_id or _CURRENT_USER_ID.get(),
+                "token": token,
+                "status": "pending",
+                "created_at": _utc_now(),
+            }
+        )
+        return out
+
+
+def _enqueue_sync_job(job: dict[str, Any]) -> None:
+    jobs = []
+    if _SYNC_JOBS.is_file():
+        try:
+            jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
+        except Exception:
+            jobs = []
+    if not isinstance(jobs, list):
+        jobs = []
+    # Replace pending job for same user
+    uid = job.get("user_id")
+    jobs = [j for j in jobs if not (j.get("status") == "pending" and j.get("user_id") == uid)]
+    jobs.append(job)
+    _SYNC_JOBS.parent.mkdir(parents=True, exist_ok=True)
+    _SYNC_JOBS.write_text(json.dumps(jobs[-40:], indent=2), encoding="utf-8")
+
+
+def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
+    settings = get_settings()
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise ValueError("Invalid relay secret")
+    if not _SYNC_JOBS.is_file():
+        return []
+    try:
+        jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [j for j in (jobs or []) if j.get("status") == "pending" and j.get("token")]
+
+
+def complete_sync_job(
+    *,
+    secret: str,
+    job_id: str,
+    bets: list[dict[str, Any]] | None = None,
+    error: str | None = None,
+    stake_user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise ValueError("Invalid relay secret")
+
+    jobs = []
+    if _SYNC_JOBS.is_file():
+        try:
+            jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
+        except Exception:
+            jobs = []
+    job = next((j for j in jobs if j.get("id") == job_id), None)
+    if not job:
+        raise ValueError("Job not found")
+
+    uid = job.get("user_id")
+    token = _CURRENT_USER_ID.set(uid)
+    try:
+        with _LOCK:
+            state, _ = _ensure_privacy_defaults(_load_state())
+            if error:
+                job["status"] = "error"
+                job["error"] = str(error)[:240]
+                state["connection"].update(
+                    {
+                        "status": "setup",
+                        "connected": False,
+                        "last_sync_at": _utc_now(),
+                        "last_sync_status": "error",
+                        "last_sync_message": f"Stake sync failed: {str(error)[:180]}",
+                    }
+                )
+            else:
+                summary = _summarize_bets(bets or [])
+                if stake_user:
+                    summary["profile"] = {**(summary.get("profile") or {}), **stake_user}
+                state["portfolio"] = summary
+                state["connection"].update(
+                    {
+                        "status": "authenticated",
+                        "connected": True,
+                        "last_connected_at": _utc_now(),
+                        "last_sync_at": _utc_now(),
+                        "last_sync_status": "imported",
+                        "last_sync_message": f"Imported {len(bets or [])} bets from your Stake account.",
+                        "stake_user": stake_user,
+                        "has_stake_token": True,
+                    }
+                )
+                job["status"] = "done"
+                job["bet_count"] = len(bets or [])
+            _save_state(state)
+            for j in jobs:
+                if j.get("id") == job_id:
+                    j.update(job)
+            _SYNC_JOBS.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
+            return _merged_status(state)
+    finally:
+        _CURRENT_USER_ID.reset(token)
 
 
 def disconnect_browser_session() -> dict[str, Any]:

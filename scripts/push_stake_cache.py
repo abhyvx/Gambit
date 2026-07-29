@@ -236,16 +236,84 @@ def main() -> int:
         print(
             "No Stake fixtures to push. Run: PYTHONPATH=src python3 scripts/connect_stake_and_push.py"
         )
+        try:
+            _process_portfolio_sync_jobs(cloud, secret)
+        except Exception as exc:
+            print(f"portfolio sync jobs: {exc}")
         return 0
 
     try:
         out = _post(cloud, secret, fixtures)
         print(f"OK source={source} ingested={out.get('ingested')} status={out.get('status')}")
         _upload_release(_disk_path())
-        return 0
     except Exception as exc:
         print(f"relay POST failed: {exc}", file=sys.stderr)
-        return 1
+
+    # Also drain portfolio Stake token sync jobs queued by cloud users.
+    try:
+        _process_portfolio_sync_jobs(cloud, secret)
+    except Exception as exc:
+        print(f"portfolio sync jobs: {exc}")
+    return 0
+
+
+def _process_portfolio_sync_jobs(cloud: str, secret: str) -> None:
+    import requests
+    from bet_placer.data.stake_scraper import StakeScraper
+
+    r = requests.get(
+        f"{cloud}/api/portfolio/sync-jobs",
+        params={"secret": secret},
+        timeout=30,
+    )
+    r.raise_for_status()
+    jobs = (r.json() or {}).get("jobs") or []
+    if not jobs:
+        return
+    print(f"portfolio sync jobs: {len(jobs)} pending")
+    for job in jobs:
+        jid = job.get("id")
+        token = job.get("token")
+        try:
+            scraper = StakeScraper(
+                api_token=token,
+                use_browser=True,
+                allow_browser_launch=True,
+                timeout=90,
+            )
+            bets = []
+            for offset in range(0, 150, 50):
+                batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
+                if not batch:
+                    break
+                bets.extend(batch)
+                if len(batch) < 50:
+                    break
+            user = None
+            try:
+                data = scraper._graphql("query { user { id name } }")
+                user = data.get("user")
+            except Exception:
+                pass
+            cr = requests.post(
+                f"{cloud}/api/portfolio/sync-jobs/complete",
+                json={
+                    "secret": secret,
+                    "job_id": jid,
+                    "bets": bets,
+                    "stake_user": user,
+                },
+                timeout=60,
+            )
+            cr.raise_for_status()
+            print(f"  job {jid}: imported {len(bets)} bets")
+        except Exception as exc:
+            requests.post(
+                f"{cloud}/api/portfolio/sync-jobs/complete",
+                json={"secret": secret, "job_id": jid, "error": str(exc)[:240]},
+                timeout=30,
+            )
+            print(f"  job {jid}: failed {exc}")
 
 
 if __name__ == "__main__":

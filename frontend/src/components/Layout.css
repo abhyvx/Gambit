@@ -78,6 +78,79 @@
   color: var(--text);
   white-space: nowrap;
 }
+.user-chip.auth-chip {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.user-chip.auth-chip:hover { background: var(--bg-elevated); }
+
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.auth-modal {
+  width: min(420px, 100%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px 20px 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+}
+.auth-modal h2 { margin: 0 0 6px; font-size: 1.25rem; }
+.auth-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.auth-form label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-sm);
+}
+.auth-form input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.auth-error { color: #f07178; margin: 0; font-size: var(--fs-sm); }
+.auth-switch {
+  margin-top: 12px;
+  background: none;
+  border: 0;
+  color: var(--blue-bright);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  padding: 0;
+}
+
+.stake-token-box {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+.stake-token-box input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+.stake-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .user-chip-link { text-decoration: none; color: inherit; }
 .user-chip-link:hover { border-color: var(--blue-bright); }
 .user-chip.is-on strong { color: var(--green); } /* money / bankroll on */

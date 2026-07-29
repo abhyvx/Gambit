@@ -2,6 +2,7 @@ import { NavLink, Outlet, Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { checkHealth } from '../api/index'
 import { useBankroll, formatINR } from '../context/BankrollContext'
+import { useAuth } from '../context/AuthContext'
 import AgeGate from './AgeGate'
 import EntryScreen from './EntryScreen'
 import GambitLogo from './GambitLogo'
@@ -25,6 +26,7 @@ export default function Layout() {
   } = useBankroll()
   const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
+  const { user, openAuth, logout } = useAuth()
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +69,17 @@ export default function Layout() {
               <small>API</small>
               <strong>{online ? 'Live' : 'Down'}</strong>
             </div>
+            {user ? (
+              <button type="button" className="user-chip auth-chip is-on" onClick={logout} title="Sign out">
+                <small>Account</small>
+                <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
+              </button>
+            ) : (
+              <button type="button" className="user-chip auth-chip" onClick={() => openAuth('login')}>
+                <small>Account</small>
+                <strong>Sign in</strong>
+              </button>
+            )}
             <button
               type="button"
               className={`user-chip slip-toggle-chip ${slipOpen ? 'is-on' : ''}`}

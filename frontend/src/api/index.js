@@ -1,5 +1,30 @@
 const API = '/api'
 
+const AUTH_KEY = 'gambit_auth_token'
+
+export function getAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(AUTH_KEY, token)
+    else localStorage.removeItem(AUTH_KEY)
+  } catch { /* private mode */ }
+}
+
+function authHeaders(extra = {}) {
+  const token = getAuthToken()
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
+
 function fetchErrorMessage(err, fallback) {
   if (err?.name === 'TimeoutError' || String(err).includes('TimeoutError')) {
     return 'Request timed out. Wait, then click Reload.'
@@ -208,7 +233,10 @@ export async function connectStakeSession() {
 }
 
 export async function fetchPortfolioState() {
-  const r = await fetch(`${API}/portfolio`, { signal: AbortSignal.timeout(20000) })
+  const r = await fetch(`${API}/portfolio`, {
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(20000),
+  })
   if (!r.ok) throw new Error(`Portfolio state failed (${r.status})`)
   return r.json()
 }
@@ -216,7 +244,7 @@ export async function fetchPortfolioState() {
 export async function updatePortfolioPrivacy(payload) {
   const r = await fetch(`${API}/portfolio/privacy`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   })
   if (!r.ok) throw new Error(`Portfolio privacy update failed (${r.status})`)
@@ -224,19 +252,30 @@ export async function updatePortfolioPrivacy(payload) {
 }
 
 export async function connectPortfolioSession() {
-  const r = await fetch(`${API}/portfolio/connect`, { method: 'POST', signal: AbortSignal.timeout(300000) })
+  const r = await fetch(`${API}/portfolio/connect`, {
+    method: 'POST',
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(300000),
+  })
   if (!r.ok) throw new Error(`Portfolio connect failed (${r.status})`)
   return r.json()
 }
 
 export async function disconnectPortfolioSession() {
-  const r = await fetch(`${API}/portfolio/disconnect`, { method: 'POST' })
+  const r = await fetch(`${API}/portfolio/disconnect`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
   if (!r.ok) throw new Error(`Portfolio disconnect failed (${r.status})`)
   return r.json()
 }
 
 export async function refreshPortfolioSnapshot() {
-  const r = await fetch(`${API}/portfolio/refresh`, { method: 'POST', signal: AbortSignal.timeout(120000) })
+  const r = await fetch(`${API}/portfolio/refresh`, {
+    method: 'POST',
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(120000),
+  })
   if (!r.ok) {
     const raw = await r.text()
     let msg = `Portfolio refresh failed (${r.status})`
@@ -251,10 +290,29 @@ export async function refreshPortfolioSnapshot() {
   return r.json()
 }
 
+export async function connectStakeApiToken(token) {
+  const r = await fetch(`${API}/portfolio/stake-token`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ token }),
+    signal: AbortSignal.timeout(120000),
+  })
+  if (!r.ok) {
+    const raw = await r.text()
+    let msg = `Stake token connect failed (${r.status})`
+    try {
+      const data = JSON.parse(raw)
+      if (data?.detail) msg = typeof data.detail === 'string' ? data.detail : msg
+    } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
 export async function confirmPortfolioSlip({ legs, multiStake, multiOdds } = {}) {
   const r = await fetch(`${API}/portfolio/confirm-slip`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       legs: legs || [],
       multi_stake: multiStake != null && multiStake !== '' ? Number(multiStake) : null,
@@ -277,7 +335,7 @@ export async function confirmPortfolioSlip({ legs, multiStake, multiOdds } = {})
 export async function addManualPortfolioBet(payload) {
   const r = await fetch(`${API}/portfolio/bets`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30000),
   })
@@ -296,11 +354,54 @@ export async function addManualPortfolioBet(payload) {
 export async function updatePortfolioBetResult(betId, result, payout = null) {
   const r = await fetch(`${API}/portfolio/bets/${encodeURIComponent(betId)}/result`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ result, payout }),
     signal: AbortSignal.timeout(20000),
   })
   if (!r.ok) throw new Error(`Could not update bet (${r.status})`)
+  return r.json()
+}
+
+export async function authSignup({ email, password, name }) {
+  const r = await fetch(`${API}/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name }),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Sign up failed (${r.status})`)
+  }
+  const data = await r.json()
+  setAuthToken(data.token)
+  return data
+}
+
+export async function authLogin({ email, password }) {
+  const r = await fetch(`${API}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Sign in failed (${r.status})`)
+  }
+  const data = await r.json()
+  setAuthToken(data.token)
+  return data
+}
+
+export async function authLogout() {
+  try {
+    await fetch(`${API}/auth/logout`, { method: 'POST', headers: authHeaders() })
+  } catch { /* ignore */ }
+  setAuthToken('')
+}
+
+export async function fetchAuthMe() {
+  const r = await fetch(`${API}/auth/me`, { headers: authHeaders() })
+  if (!r.ok) return { user: null }
   return r.json()
 }
 

@@ -394,7 +394,7 @@ export async function fetchModelInsights({ force = false } = {}) {
     const hit = peekModelInsights()
     if (hit) return hit
   }
-  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(25000) })
+  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
   const data = await r.json()
   _insightsCache.ts = Date.now()

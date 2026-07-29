@@ -114,7 +114,7 @@ export default function Layout() {
 
               {!legs?.length && (
                 <p className="muted slip-empty">
-                  Add picks from a board or Recs → Add to bet slip. Mark won/lost so the model learns.
+                  Add picks from a board or Recs. Confirm I placed this tracks them in Portfolio; finished matches settle won/lost automatically.
                 </p>
               )}
 

@@ -505,14 +505,15 @@ def stake_connect():
         overlay = stake_overlay_status()
         n = overlay.get("fixtures", 0)
         return {
-            "connected": bool(overlay.get("have_data")),
+            "connected": False,
             "browser": {"ready": False, "cloud": True},
             "overlay": overlay,
             "fixtures": n,
             "message": (
-                f"Using {n} cached Stake matches. Live prices refresh when the odds link is online."
+                f"Showing {n} cached Stake prices (odds link). "
+                "Account login is not available on this host — use Portfolio Confirm or scripts/stake_login.py on your Mac."
                 if overlay.get("have_data")
-                else "Stake prices will appear once the odds feed is connected."
+                else "Stake prices appear once the odds feed is connected. Account login needs your Mac script or Browserbase."
             ),
         }
     from bet_placer.data.stake_browser import browser_status, warmup_visible
@@ -655,14 +656,18 @@ class PortfolioBetResultUpdate(BaseModel):
 
 @app.post("/api/portfolio/confirm-slip")
 def portfolio_confirm_slip(body: PortfolioConfirmSlip):
-    from bet_placer.portfolio.store import confirm_slip_bets
+    from threading import Thread
+
+    from bet_placer.portfolio.store import confirm_slip_bets, settle_open_portfolio_bets
 
     try:
-        return confirm_slip_bets(
+        out = confirm_slip_bets(
             legs=body.legs,
             multi_stake=body.multi_stake,
             multi_odds=body.multi_odds,
         )
+        Thread(target=settle_open_portfolio_bets, daemon=True).start()
+        return out
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -946,6 +951,12 @@ def model_craft():
     """Overall craft training progress for the Model page visuals."""
     from bet_placer.ml.craft_store import progress_snapshot
     return progress_snapshot()
+
+
+@app.get("/api/model/craft-progress")
+def model_craft_progress_alias():
+    """Alias for older frontend builds that hit /craft-progress."""
+    return model_craft()
 
 
 _INSIGHTS_CACHE: tuple[float, dict] | None = None

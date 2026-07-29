@@ -89,7 +89,7 @@ export function BankrollProvider({ children }) {
     setLegStakes((prev) => ({ ...prev, [id]: next }))
     const leg = (legs || []).find((l) => l.id === id)
     const stake = Number(next)
-    if (leg && stake >= 10 && Number(leg.odds) > 1 && !legResults[id]) {
+    if (leg && stake >= 1 && Number(leg.odds) > 1 && !legResults[id]) {
       recordSlipLegs([{ ...leg, stake }]).catch(() => {})
     }
   }
@@ -119,10 +119,10 @@ export function BankrollProvider({ children }) {
       return [...prev, leg]
     })
     if (ok && queued) {
-      // Fire-and-forget: park for craft learning once stake is real
-      const stake = Number(queued.stake)
-      if (stake >= 10 && Number(queued.odds) > 1) {
-        recordSlipLegs([{ ...queued, stake }]).catch(() => {})
+      // Track every rec for the model (unit stake until amount is set).
+      const stake = Math.max(Number(queued.stake) || 0, 1)
+      if (Number(queued.odds) > 1) {
+        recordSlipLegs([{ ...queued, stake, gem_kind: queued.gem_kind || 'rec' }]).catch(() => {})
       }
     }
     return ok

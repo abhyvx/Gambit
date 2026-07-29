@@ -1072,6 +1072,11 @@ def complete_sync_job(
                 if j.get("id") == job_id:
                     j.update(job)
             _SYNC_JOBS.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
+            try:
+                from bet_placer.auth.persist import write_users_bundle
+                write_users_bundle()
+            except Exception:
+                pass
             return _merged_status(state)
     finally:
         _CURRENT_USER_ID.reset(token)

@@ -448,7 +448,7 @@ export default function PortfolioPage() {
         </div>
         {audit.message && <p className="muted">{audit.message}</p>}
         {syncMessage && (
-          <p className={`muted ${syncFailed ? 'sync-status-warn' : ''}`}>
+          <p className={`muted ${showAttention ? 'sync-status-warn' : ''}`}>
             Sync status: <strong>{syncStatus}</strong> - {syncMessage}
           </p>
         )}

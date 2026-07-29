@@ -435,8 +435,14 @@ function InsightContainer({ c, curves, sportKeys }) {
           {c.gates?.monthly?.sports && Object.entries(c.gates.monthly.sports).map(([sp, g]) => (
             <div className="stat-cell" key={`m-${sp}`}>
               <span className="stat-label">{sp} monthly</span>
-              <strong className={`stat-value ${g.ok ? 'delta-up' : ''}`}>{g.ok ? 'OK' : 'RED'}</strong>
-              <small>{g.mean_roi != null ? roiPct(g.mean_roi) : (g.reason || '…')}</small>
+              <strong className={`stat-value ${g.ok ? 'delta-up' : (g.mean_roi != null && Number(g.mean_roi) < 0 ? 'delta-down' : '')}`}>
+                {g.ok ? 'OK' : (g.mean_roi != null && Number(g.mean_roi) < 0 ? 'RED' : 'OPEN')}
+              </strong>
+              <small>
+                {g.mean_roi != null
+                  ? roiPct(g.mean_roi)
+                  : (g.reason === 'thin_epochs' || g.reason === 'thin_months' ? 'building series' : (g.reason || '…'))}
+              </small>
             </div>
           ))}
         </div>

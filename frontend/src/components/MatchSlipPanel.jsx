@@ -55,24 +55,32 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
   const [optionIndex, setOptionIndex] = useState(0)
   const [stake, setStake] = useState(null)
   const [stakeLoading, setStakeLoading] = useState(false)
-  const categories = slip?.options_by_category || {}
+
+  const loadStake = () => {
+    if (!home || !away || status === 'completed') return
+    setStakeLoading(true)
+    setStake(null)
+    fetchStakeOdds({ home, away, budgetInr: perMatchBudget })
+      .then(setStake)
+      .catch(() => setStake({ available: false, reason: 'Stake not connected yet.', categories: [] }))
+      .finally(() => setStakeLoading(false))
+  }
+
+  useEffect(() => {
+    loadStake()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [home, away, perMatchBudget, status])
 
   useEffect(() => {
     if (slip?.recommended_strategy) setStrategyKey(slip.recommended_strategy)
     setOptionIndex(0)
   }, [slip?.match_id, slip?.recommended_strategy])
 
-  useEffect(() => {
-    if (!home || !away || status === 'completed') return
-    let cancelled = false
-    setStakeLoading(true)
-    setStake(null)
-    fetchStakeOdds({ home, away, budgetInr: perMatchBudget })
-      .then((d) => { if (!cancelled) setStake(d) })
-      .catch(() => { if (!cancelled) setStake({ available: false, reason: 'Stake request failed from this network.', categories: [] }) })
-      .finally(() => { if (!cancelled) setStakeLoading(false) })
-    return () => { cancelled = true }
-  }, [home, away, perMatchBudget, status])
+  const categories = slip?.options_by_category || {}
+
+  const stakeLive = Boolean(
+    slip?.stake_priced || (stake?.available && (stake?.categories?.length > 0)),
+  )
 
   if (!slip && status === 'completed') {
     return (
@@ -121,6 +129,34 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
         <div className="fan-take-box">
           <h5>🗣️ Fan read</h5>
           <p>{fanPrediction}</p>
+        </div>
+      )}
+
+      {(slip?.easy_money?.length > 0 || slip?.situational_picks?.length > 0) && (
+        <div className="easy-money-box">
+          <h5>💎 Situation picks — {home} vs {away}</h5>
+          <p className="muted situational-sub">
+            Each bet ties to a story about this game — scorers, form, grudges, must-win pressure, not generic templates.
+          </p>
+          <ul className="easy-money-list">
+            {(slip.situational_picks || slip.easy_money || []).map((p, i) => (
+              <li key={i}>
+                <span className="easy-tag">{p.tag}</span>
+                <strong>{p.label}</strong>
+                {p.odds && <span className="easy-odds"> @ {p.odds}</span>}
+                {p.our_probability_pct != null && (
+                  <span className="easy-prob"> · ~{p.our_probability_pct}%</span>
+                )}
+                <p className="muted">{p.why || p.reason}</p>
+              </li>
+            ))}
+          </ul>
+          {slip.parlay_suggestion?.legs?.length >= 2 && (
+            <p className="muted parlay-hint">
+              Parlay idea ({slip.parlay_suggestion.combined_odds}x, ~{slip.parlay_suggestion.combined_probability_pct}% combined):{' '}
+              {slip.parlay_suggestion.legs.map((l) => l.label).join(' + ')}
+            </p>
+          )}
         </div>
       )}
 
@@ -232,11 +268,13 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
             </div>
           )}
 
-          <div className={`odds-origin-banner ${slip.stake_priced ? 'origin-stake' : 'origin-book'}`}>
+          <div className={`odds-origin-banner ${stakeLive ? 'origin-stake' : 'origin-book'}`}>
             <span className="origin-dot" aria-hidden />
-            {slip.stake_priced
-              ? `Only Stake-placeable bets — ${slip.stake_repriced_count} markets matched at real Stake prices`
-              : "Live-book estimate — verify each pick exists on Stake before betting"}
+            {stakeLive
+              ? `Stake payouts${slip?.stake_repriced_count ? ` — ${slip.stake_repriced_count} markets matched` : ''}`
+              : stakeLoading
+                ? 'Connecting to Stake… leave the Chrome window open if it appears'
+                : 'Live-book estimate — open match to load Stake payouts'}
           </div>
 
           {strategyKey === 'min_loss' && strategy?.reserve_inr != null && (
@@ -379,7 +417,10 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
               <span className="fallback-icon" aria-hidden>🔒</span>
               <h5>Live Stake payouts unavailable</h5>
               <p>{stake.reason || "We couldn't reach Stake from this network for this game. Your plan above still uses our best available pricing."}</p>
-              <a className="stake-open-btn" href="https://stake.com/sports/soccer" target="_blank" rel="noreferrer">
+              <button type="button" className="stake-open-btn" onClick={loadStake} disabled={stakeLoading}>
+                {stakeLoading ? 'Loading…' : 'Retry Stake'}
+              </button>
+              <a className="stake-open-btn secondary" href="https://stake.com/sports/soccer" target="_blank" rel="noreferrer">
                 Open Stake →
               </a>
             </div>

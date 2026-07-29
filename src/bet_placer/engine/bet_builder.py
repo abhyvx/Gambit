@@ -28,6 +28,7 @@ from bet_placer.engine.stake_odds import (
     _round_line,
     _team_match,
     _tokens,
+    canonical_stake_market,
     get_stake_overlay_map,
     match_overlay,
 )
@@ -127,7 +128,9 @@ def _dc_selection(outcome_name: str, home: str, away: str) -> str | None:
 
 def _map_stake_outcome(market_name, outcome_name, line, home, away):
     """Map a Stake (market, outcome) to our (market_value, selection, line)."""
-    name = market_name
+    name = canonical_stake_market(market_name)
+    if not name:
+        return None
     sel = outcome_name.strip()
     low = sel.lower()
     if name == "1x2":
@@ -562,6 +565,17 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
 
     match = wc_match_to_analysis_match(wc)
     from bet_placer.engine.all_markets import predict_all_markets
+    from bet_placer.data.worldcup2026 import get_group_standings
+    from bet_placer.engine.worldcup_pipeline import fan_read, _group_stakes_text
+
+    standings = get_group_standings(wc.group, get_all_group_matches())
+    home_pts = next((s["pts"] for s in standings if s["team"] == wc.home), 0)
+    away_pts = next((s["pts"] for s in standings if s["team"] == wc.away), 0)
+    fan_take = fan_read(wc.home, wc.away, home_pts, away_pts, wc.home_must_win, wc.away_must_win)
+    trending_on = (
+        wc.home if wc.public_sentiment_home > 0.15
+        else wc.away if wc.public_sentiment_home < -0.15 else None
+    )
     probabilities = predict_all_markets(match)
     human_context = {
         "team_strength": {
@@ -570,6 +584,13 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
         },
         "home_must_win": wc.home_must_win,
         "away_must_win": wc.away_must_win,
+        "morale": {"home": wc.home_morale, "away": wc.away_morale},
+        "narrative": wc.narrative,
+        "public_sentiment_home": wc.public_sentiment_home,
+        "fade_public": abs(wc.public_sentiment_home) > 0.2,
+        "trending_on": trending_on,
+        "fan_take": fan_take,
+        "group_stakes": _group_stakes_text(wc.group, standings),
     }
     calibrated, raw = _model_lookups(match, probabilities, budget_inr, human_context)
 
@@ -579,7 +600,7 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
         try:
             # Reuse the warm, shared 45s overlay cache (same path the main
             # pipeline uses) so this stays fast instead of a fresh Stake call.
-            overlay_map = get_stake_overlay_map()
+            overlay_map = get_stake_overlay_map(launch_browser=True)
             fixture = match_overlay(wc.home, wc.away, overlay_map)
         except Exception as exc:
             logger.warning("Bet-builder: Stake overlay failed for %s vs %s: %s", home, away, exc)
@@ -596,22 +617,24 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
     # Analyst intuition + recommendations resolved against this same board.
     from bet_placer.engine.analyst_read import analyst_read
     from bet_placer.engine.game_profile import profile_match
+    picks: dict = {}
     try:
         gp = profile_match(match, probabilities, human_context)
-        read = analyst_read(wc.home, wc.away, gp)
+        read = analyst_read(wc.home, wc.away, gp, human_context)
         flat = _flatten_outcomes(categories)
-        thesis = _match_thesis(flat, wc.home, wc.away)
-        recommended = _resolve_recommendations(flat, thesis, read, wc.home, wc.away)
-        # "Easy money" = we're confident AND a genuine-value pick exists (price edge,
-        # not just a short favourite). Otherwise it's a lean or a skip.
-        if thesis:
-            has_value = any("Value" in (p.get("tag") or "") for p in recommended)
-            tier = (thesis.get("confidence") or {}).get("tier")
-            thesis["easy_money"] = bool(tier in ("lock", "strong") and has_value)
-        parlay = _parlay_advice(recommended)
+        mw = {p.selection: p.probability for p in probabilities if p.market == MarketType.MATCH_WINNER}
+        thesis = _match_thesis(flat, wc.home, wc.away, model_probs=mw)
+        from bet_placer.engine.smart_picks import build_smart_picks
+        picks = build_smart_picks(
+            flat, wc.home, wc.away, match, probabilities, human_context,
+            thesis=thesis, matchday=wc.matchday,
+        )
+        recommended = picks.get("unified_picks") or []
+        thesis = picks.get("thesis") or thesis
+        parlay = picks.get("parlay_suggestion") or _parlay_advice(recommended)
     except Exception as exc:
         logger.warning("Analyst read failed for %s vs %s: %s", home, away, exc)
-        gp, read, recommended, parlay, thesis = None, None, [], None, None
+        gp, read, recommended, parlay, thesis, picks = None, None, [], None, None, {}
 
     wp = {p.selection: p.probability for p in probabilities if p.market == MarketType.MATCH_WINNER}
     total = (wp.get("home", 0) + wp.get("draw", 0) + wp.get("away", 0)) or 1.0
@@ -637,6 +660,8 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0) -> dict:
         "analyst_read": read,
         "match_read": thesis,
         "recommended_picks": recommended,
+        "easy_money": (picks or {}).get("easy_money", []),
+        "smart_picks": (picks or {}).get("smart_picks", []),
         "best_parlay": parlay,
         "parlay_caution": _PARLAY_CAUTION,
         "categories": categories,
@@ -756,7 +781,8 @@ def _team_match_loose(team: str, text: str) -> bool:
 
 _REC_ELIGIBLE_MARKETS = {
     "match_winner", "double_chance", "draw_no_bet", "over_under_goals",
-    "btts", "asian_handicap", "corners", "cards",
+    "btts", "asian_handicap", "corners", "cards", "player_goal",
+    "team_first_goal", "half_time",
 }
 
 
@@ -821,16 +847,41 @@ def _axis_dir(o, home, away):
         return ("corners", "over" if "over" in s else "under")
     if m == "cards":
         return ("cards", "over" if "over" in s else "under")
+    if m == "player_goal":
+        return ("scorer", o.get("selection", "")[:20])
+    if m == "half_time":
+        return ("half", _sel_side(o.get("selection", ""), home, away) or "draw")
     return (m or "other", "-")
 
 
-def _match_thesis(flat, home, away) -> dict:
+def _match_thesis(flat, home, away, model_probs: dict | None = None) -> dict:
     """Study THIS match: who we favour, the goals lean, the BTTS lean — derived
     from the calibrated full-match markets. Recommendations must agree with it."""
     res = {}
     for o in flat:
         if o.get("market") == "match_winner" and o.get("our_probability") is not None:
             res[_axis_dir(o, home, away)[1]] = o["our_probability"]
+
+    # Scenario detection uses the MODEL (pre-blend), not the market-shrunk board —
+    # otherwise a 72% favourite looks like a coin-flip after blending and we miss
+    # easy-money spots (e.g. England to score first).
+    if model_probs:
+        mh = model_probs.get("home", res.get("home", 0))
+        ma = model_probs.get("away", res.get("away", 0))
+        md = model_probs.get("draw", res.get("draw", 0))
+    else:
+        mh, ma, md = res.get("home", 0), res.get("away", 0), res.get("draw", 0)
+        for o in flat:
+            if o.get("market") != "match_winner":
+                continue
+            side = _axis_dir(o, home, away)[1]
+            if o.get("model_prob") is not None and side in ("home", "away", "draw"):
+                if side == "home":
+                    mh = o["model_prob"]
+                elif side == "away":
+                    ma = o["model_prob"]
+                else:
+                    md = o["model_prob"]
 
     def core_prob(market, line, side):
         for o in flat:
@@ -847,26 +898,48 @@ def _match_thesis(flat, home, away) -> dict:
             btts_yes = o.get("our_probability")
             break
 
-    fav = max(res, key=res.get) if res else None
-    fav_pct = res.get(fav) if fav else None
-    result_dir = fav if (fav in ("home", "away") and fav_pct and fav_pct >= 0.45) else None
+    fav = max(("home", mh), ("away", ma), ("draw", md), key=lambda x: x[1])[0]
+    fav_pct = mh if fav == "home" else ma if fav == "away" else md
+    draw_pct = md
+    top_side = max(mh, ma)
+    # Draw scenario only when the MODEL says it's genuinely tight — not when
+    # market blending shrinks a clear favourite toward 50%.
+    draw_scenario = bool(
+        draw_pct >= 0.27
+        and top_side < 0.56
+        and draw_pct >= top_side - 0.08
+    )
+    if draw_scenario:
+        result_dir = None
+    elif top_side >= 0.45 and fav in ("home", "away"):
+        result_dir = "home" if mh >= ma else "away"
+    else:
+        result_dir = None
     goals_dir = ("over" if (over25 is not None and over25 >= 0.58)
                  else "under" if (over25 is not None and over25 <= 0.42) else None)
     btts_dir = ("yes" if (btts_yes is not None and btts_yes >= 0.58)
                 else "no" if (btts_yes is not None and btts_yes <= 0.42) else None)
 
     fav_name = home if result_dir == "home" else away if result_dir == "away" else None
-    if result_dir and fav_pct and fav_pct >= 0.62:
-        lead = f"We make {fav_name} clear favourites (~{round(fav_pct*100)}%)."
+    fav_pct_display = top_side if fav_name else fav_pct
+    if draw_scenario:
+        lead = (
+            f"Draw is live (~{round(draw_pct * 100)}%) — forcing a winner is how we "
+            f"keep missing these. Safer: double chance or low-scoring angles."
+        )
+    elif result_dir and fav_pct_display and fav_pct_display >= 0.62:
+        lead = f"We make {fav_name} clear favourites (~{round(fav_pct_display*100)}%)."
     elif result_dir:
-        lead = f"Slight lean to {fav_name} (~{round(fav_pct*100)}%), but it's close."
+        lead = f"Slight lean to {fav_name} (~{round(fav_pct_display*100)}%), but it's close."
     else:
         lead = "Too close to call — no side has a real edge."
     goal_txt = ("Leaning a higher-scoring game." if goals_dir == "over"
                 else "Leaning a tight, low-scoring game." if goals_dir == "under" else "")
-    conf = _confidence_for(fav_pct)
+    conf = _confidence_for(fav_pct_display if result_dir else None)
     return {
-        "favorite": fav_name, "favorite_pct": round(fav_pct * 100) if fav_pct else None,
+        "favorite": fav_name, "favorite_pct": round(fav_pct_display * 100) if fav_pct_display else None,
+        "draw_pct": round(draw_pct * 100) if draw_pct else None,
+        "draw_scenario": draw_scenario,
         "result_dir": result_dir, "goals_dir": goals_dir, "btts_dir": btts_dir,
         "over25_pct": round(over25 * 100) if over25 is not None else None,
         "btts_yes_pct": round(btts_yes * 100) if btts_yes is not None else None,
@@ -929,7 +1002,19 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
         p = o.get("our_probability")
         return p is not None and abs(p - implied(o)) <= 0.22
 
-    strong_fav = (thesis.get("favorite_pct") or 0) >= 60
+    strong_fav = (thesis.get("favorite_pct") or 0) >= 60 and not thesis.get("draw_scenario")
+    draw_scenario = bool(thesis.get("draw_scenario"))
+    trending = (read or {}).get("trending_on")
+    fade_public = (read or {}).get("fade_public")
+
+    def crowd_hype_pick(o):
+        if not fade_public or not trending:
+            return False
+        axis, d = _axis_dir(o, home, away)
+        if axis != "result" or d not in ("home", "away"):
+            return False
+        hyped = home if d == "home" else away
+        return hyped == trending
     AXIS_CAP = {"result": 2, "goals": 2}   # everything else: 1
     MAX_PICKS = 6
     axis_count: dict = {}
@@ -954,14 +1039,19 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
             return False
         if axis_count.get(axis, 0) >= AXIS_CAP.get(axis, 1):
             return False
+        # Total Goals and BTTS are strongly correlated (both read the scoreline
+        # shape). Recommending "Over 2.5" AND "BTTS No" together is double-dipping
+        # the same favourite-blowout thesis — it's what made every game look the
+        # same. Allow only ONE scoreline-shape pick so the slate stays varied.
+        if axis in ("goals", "btts"):
+            if any(_axis_dir(p, home, away)[0] in ("goals", "btts") for p in picks):
+                return False
         if axis == "btts":
             gdir = thesis.get("goals_dir") or axis_dir.get("goals")
             if d == "no" and gdir == "over" and not strong_fav:
                 return False
             if d == "yes" and gdir == "under":
                 return False
-        if axis == "goals" and d == "over" and axis_dir.get("btts") == "no" and not strong_fav:
-            return False
         if axis in ("corners", "cards") and any(
                 _axis_dir(p, home, away)[0] in ("corners", "cards") for p in picks):
             return False
@@ -974,22 +1064,74 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
         used_labels.add(dedup_key(o))
         picks.append({**o, "why": why, "tag": tag, "reason": why})
 
+    # Corners/cards are peripheral: they are NOT the scenario the user is reading
+    # the game for, and a small "edge" on them is usually our error. They never
+    # lead a slate and must clear a much higher bar than a scenario market.
+    PERIPHERAL = {"corners", "cards"}
+
+    def is_peripheral(o):
+        return o.get("market") in PERIPHERAL
+
+    def has_core_pick():
+        return any(not is_peripheral(p) for p in picks)
+
+    # Floor at a coin-flip: we never recommend a bet that's more likely to LOSE
+    # than win just because the payout looks "fair". Conviction first.
     pool = [o for o in flat
             if _is_rec_eligible(o, home, away) and plausible(o) and o.get("odds", 0) >= 1.25
-            and (o.get("our_probability") or 0) >= 0.30]
+            and (o.get("our_probability") or 0) >= 0.50]
 
-    # 1) VALUE — genuine, *sane* edge (a sharp book is never off by >10%). Keep a
-    #    probability floor so we never lead with a sub-coin-flip longshot.
-    value = sorted(
-        [o for o in pool
-         if 1.5 <= (o.get("edge_pct") or -99) <= 10
-         and (o.get("verdict") or {}).get("ev_pct", -99) >= 1.0
-         and (o.get("our_probability") or 0) >= 0.45],
-        key=lambda o: -(o.get("edge_pct") or -99),
-    )
+    # 0) DRAW SCENARIO — we've been 0% on drawn games by always forcing a side.
+    #    Lead with double chance / draw / under — not naked winner picks.
+    if draw_scenario:
+        for o in sorted(
+            [o for o in pool if o.get("market") == "double_chance"
+             and (o.get("our_probability") or 0) >= 0.60],
+            key=lambda o: -(o.get("our_probability") or 0),
+        ):
+            if len(picks) >= MAX_PICKS:
+                break
+            if aligned(o):
+                pct = round((o.get("our_probability") or 0) * 100)
+                push(o, f"Draw is live in this game — {pct}% on the safer double-chance line "
+                        "instead of forcing a winner.", "🛡️ Draw cover")
+        for o in sorted(
+            [o for o in pool if o.get("market") == "match_winner"
+             and (o.get("selection") or "").lower() == "draw"
+             and (o.get("our_probability") or 0) >= 0.26],
+            key=lambda o: -(o.get("edge_pct") or 0),
+        ):
+            if len(picks) >= MAX_PICKS:
+                break
+            if aligned(o) and value_ok(o):
+                pct = round((o.get("our_probability") or 0) * 100)
+                push(o, f"Draw priced as a live outcome (~{pct}%) — we've missed too many "
+                        "of these backing favourites.", "🤝 Draw")
+
+    # 1) VALUE — genuine, *sane* edge (a sharp book is never off by >12%). The
+    #    probability floor means we never lead with a sub-coin-flip longshot, and
+    #    corners/cards need a real edge + a clear majority chance to qualify.
+    def value_ok(o):
+        edge = o.get("edge_pct")
+        if edge is None:
+            return False
+        ev = (o.get("verdict") or {}).get("ev_pct", -99)
+        p = o.get("our_probability") or 0
+        if is_peripheral(o):
+            return 3.0 <= edge <= 12.0 and ev >= 2.0 and p >= 0.58
+        return 1.5 <= edge <= 12.0 and ev >= 1.0 and p >= 0.50
+
+    value = sorted([o for o in pool if value_ok(o)],
+                   key=lambda o: (is_peripheral(o), -(o.get("edge_pct") or -99)))
     for o in value:
         if len(picks) >= MAX_PICKS:
             break
+        if crowd_hype_pick(o):
+            continue
+        if draw_scenario and o.get("market") == "match_winner" and _axis_dir(o, home, away)[1] in ("home", "away"):
+            continue  # don't stack naked winner in draw games
+        if is_peripheral(o) and not has_core_pick():
+            continue   # corners/cards never lead — a scenario pick comes first
         if aligned(o):
             edge = round(o.get("edge_pct") or 0)
             pct = round((o.get("our_probability") or 0) * 100)
@@ -997,26 +1139,35 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
             push(o, f"Genuine value{scope} — our model makes this ~{edge}% better than the fair "
                     f"price, and it still lands ~{pct}% of the time.", "💰 Value")
 
-    # 2) MODEL LEAN — thesis-aligned, fairly priced (not -EV), broadening the slate
-    #    across more of the board. Honest: our read, not a guaranteed price edge.
-    leans = sorted(
+    # 2) CONVICTION — the 'easy money' spots: we're genuinely confident (clear
+    #    majority chance) on a market tied to how the GAME plays out (who wins,
+    #    the handicap, goals, BTTS), at a fair price. No peripheral filler, and
+    #    nothing that's basically a coin-flip dressed up as "fair value".
+    conviction = sorted(
         [o for o in pool
-         if (o.get("verdict") or {}).get("ev_pct", -99) >= -3
-         and (o.get("our_probability") or 0) >= 0.50],
+         if not is_peripheral(o)
+         and (o.get("our_probability") or 0) >= 0.60
+         and (o.get("verdict") or {}).get("ev_pct", -99) >= -1.5],
         key=lambda o: -(o.get("our_probability") or 0),
     )
-    for o in leans:
+    for o in conviction:
         if len(picks) >= MAX_PICKS:
             break
+        if crowd_hype_pick(o):
+            continue
+        if draw_scenario and o.get("market") in ("match_winner", "asian_handicap", "draw_no_bet"):
+            axis, d = _axis_dir(o, home, away)
+            if axis == "result" and d in ("home", "away"):
+                continue
         axis, _d = _axis_dir(o, home, away)
-        # only lean on a primary axis the thesis actually has a view on
+        # only back a primary axis the thesis actually has a view on
         if axis in ("result", "goals", "btts") and not thesis.get(f"{axis}_dir") \
            and not _team_total(o):
             continue
         if aligned(o):
             pct = round((o.get("our_probability") or 0) * 100)
-            push(o, f"Our read for this match — about {pct}% by our model, at a fair price. "
-                    "Solid, but no extra value in the odds.", "📌 Model lean")
+            push(o, f"We're genuinely confident here — about {pct}% by our model. Fairly priced, "
+                    "but a high-conviction spot worth backing.", "🎯 Strong lean")
 
     # 3) PLAYER read — optional fun shout, never contradicts, clearly caveated.
     if picks and len(picks) < MAX_PICKS:

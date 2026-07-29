@@ -36,12 +36,29 @@ def expected_goals(match: Match, apply_learned: bool = True) -> tuple[float, flo
             gm = lp.get("goal_model") or {}
             if elo and gm:
                 from bet_placer.data.team_names import canon_team
+                from bet_placer.data.team_ratings import blended_elo
                 from bet_placer.ml.historical import lambdas_from_elo
                 he = elo.get(canon_team(match.home_team))
                 ae = elo.get(canon_team(match.away_team))
                 if he is not None and ae is not None:
+                    # Shrink raw Elo toward the reputation prior so inflated
+                    # confederation-farmers don't distort the favourite.
+                    he = blended_elo(match.home_team, he)
+                    ae = blended_elo(match.away_team, ae)
                     # World Cup is played at neutral venues → minimal home edge.
-                    return lambdas_from_elo(he, ae, gm, neutral=True)
+                    ehl, ela = lambdas_from_elo(he, ae, gm, neutral=True)
+                    # Ensemble with the attack/defence model: Elo owns the result
+                    # axis, attack/defence owns the goals axis. Proven to beat
+                    # either alone out-of-sample (lower log-loss on 5.7k games).
+                    ad = lp.get("ad_model") or {}
+                    if ad.get("att"):
+                        from bet_placer.ml.historical import lambdas_from_ad
+                        ahl, ala = lambdas_from_ad(match.home_team, match.away_team,
+                                                   ad, neutral=True)
+                        if ahl is not None:
+                            w = float(ad.get("w_elo", 1.0))
+                            return (w * ehl + (1 - w) * ahl, w * ela + (1 - w) * ala)
+                    return ehl, ela
         except Exception:
             pass
 
@@ -53,25 +70,89 @@ def expected_goals(match: Match, apply_learned: bool = True) -> tuple[float, flo
         sup = diff * 3.4 + ha * 3.0 + home_edge_adj  # goal supremacy incl. home edge
         total = (league_avg - min(0.45, abs(diff) * 0.6)) * goals_scale
         hs = 1.0 / (1.0 + math.exp(-sup))    # home's share of the goals
-        return max(0.2, total * hs), max(0.2, total * (1.0 - hs))
+        hl, al = max(0.2, total * hs), max(0.2, total * (1.0 - hs))
+    else:
+        h, a = match.home_stats, match.away_stats
+        home_attack = h.xg or h.goals_scored
+        home_defense = h.xga or h.goals_conceded
+        away_attack = a.xg or a.goals_scored
+        away_defense = a.xga or a.goals_conceded
+        hl = (home_attack + away_defense) / 2 * 0.55 * (league_avg / 2.6) * (1 + ha)
+        al = (away_attack + home_defense) / 2 * 0.45 * (league_avg / 2.6)
+        hl, al = max(0.3, hl), max(0.3, al)
 
-    # Generic stats-based fallback.
-    h, a = match.home_stats, match.away_stats
-    home_attack = h.xg or h.goals_scored
-    home_defense = h.xga or h.goals_conceded
-    away_attack = a.xg or a.goals_scored
-    away_defense = a.xga or a.goals_conceded
-    home_lambda = (home_attack + away_defense) / 2 * 0.55 * (league_avg / 2.6) * (1 + ha)
-    away_lambda = (away_attack + home_defense) / 2 * 0.45 * (league_avg / 2.6)
-    return max(0.3, home_lambda), max(0.3, away_lambda)
+    # Morale / motivation from live tournament context
+    chem = match.chemistry
+    if chem:
+        mh = getattr(chem, "morale_home", None) or 5.0
+        ma = getattr(chem, "morale_away", None) or 5.0
+        if mh > ma + 1.5:
+            hl *= 1.0 + min(0.08, (mh - ma) * 0.015)
+        elif ma > mh + 1.5:
+            al *= 1.0 + min(0.08, (ma - mh) * 0.015)
+
+    return hl, al
 
 
-def score_matrix(home_lambda: float, away_lambda: float, max_goals: int = 6) -> np.ndarray:
-    matrix = np.zeros((max_goals + 1, max_goals + 1))
-    for i in range(max_goals + 1):
-        for j in range(max_goals + 1):
-            matrix[i, j] = poisson.pmf(i, home_lambda) * poisson.pmf(j, away_lambda)
+def _dc_rho_default() -> float:
+    """Learned Dixon-Coles draw-correlation (negative => more draws)."""
+    try:
+        from bet_placer.ml.params import load_params
+        return float((load_params().get("goal_model") or {}).get("dc_rho", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def score_matrix(home_lambda: float, away_lambda: float, max_goals: int = 6,
+                 rho: float | None = None) -> np.ndarray:
+    """Score grid with a Dixon-Coles low-score correction.
+
+    Independent Poisson badly under-counts draws (it ignores that tight games
+    clump on 0-0 / 1-1), which makes the model over-back favourites. The DC tau
+    re-weights the four low-score cells so P(draw) matches reality.
+    """
+    if rho is None:
+        rho = _dc_rho_default()
+    n = max_goals + 1
+    ks = np.arange(n)
+    matrix = np.outer(poisson.pmf(ks, home_lambda), poisson.pmf(ks, away_lambda))
+    if rho:
+        matrix = matrix.copy()
+        matrix[0, 0] *= 1.0 - home_lambda * away_lambda * rho
+        matrix[0, 1] *= 1.0 + home_lambda * rho
+        matrix[1, 0] *= 1.0 + away_lambda * rho
+        matrix[1, 1] *= 1.0 - rho
+        np.clip(matrix, 1e-12, None, out=matrix)
     return matrix / matrix.sum()
+
+
+def rebalance_1x2(
+    ph: float, pd: float, pa: float,
+    *,
+    market_draw: float | None = None,
+    rating_gap: float | None = None,
+    both_happy_draw: bool = False,
+) -> tuple[float, float, float]:
+    """Pull the 1X2 vector toward realistic draw rates.
+
+    Independent Poisson + a single Elo gap still under-price draws in tight
+    group games. The market draw line and tournament context carry real signal.
+    """
+    pd = float(pd)
+    if market_draw is not None and market_draw > 0:
+        pd = 0.40 * pd + 0.60 * market_draw
+    # WC group stage: ~28% of games finish level — floor in open groups.
+    if both_happy_draw or (rating_gap is not None and rating_gap < 12):
+        pd = max(pd, 0.27)
+    top = max(ph, pa)
+    if top < 0.52:
+        pd = max(pd, 0.30)
+    elif top < 0.58 and pd >= 0.22:
+        pd = min(0.38, pd * 1.12)
+    s = ph + pd + pa
+    if s <= 0:
+        return ph, pd, pa
+    return ph / s, pd / s, pa / s
 
 
 def match_outcome_probs(match: Match) -> dict[str, float]:

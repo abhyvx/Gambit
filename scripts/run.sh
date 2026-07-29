@@ -25,7 +25,7 @@ WEB_PID=$!
 trap "kill $API_PID $WEB_PID 2>/dev/null" EXIT
 
 echo ""
-echo "  Dashboard: http://127.0.0.1:5173"
-echo "  API docs:  http://127.0.0.1:8000/docs"
+echo "  ▶ Open Gambit: http://127.0.0.1:5173"
+echo "  (API runs in the background — you only need the link above)"
 echo ""
 wait

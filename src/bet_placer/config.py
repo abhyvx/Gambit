@@ -18,9 +18,12 @@ class Settings(BaseSettings):
     # Set STAKE_USE_BROWSER=false to disable Stake scraping entirely (no popup,
     # falls back to ESPN/DraftKings model prices — ideal for cloud hosting).
     stake_use_browser: bool = True
-    # Run that browser with no visible window (no popup on your laptop). Once the
-    # persistent profile has solved Cloudflare once, headless reuse usually works.
-    stake_browser_headless: bool = False
+    # Run Chromium without a visible window (STAKE_BROWSER_HEADLESS=0 for headful).
+    # Once the persistent profile has solved Cloudflare once, headless reuse works.
+    stake_browser_headless: bool = True
+    # Open Chromium on API startup. Default off — browser launches on first
+    # explicit Stake odds / bet-builder request instead (avoids popup spam).
+    stake_browser_warmup_on_startup: bool = False
 
     # Consensus weighting (how much to consider vs model — never blindly follow)
     consensus_weight_bettors: float = 0.12
@@ -54,6 +57,9 @@ class Settings(BaseSettings):
 
     # Default bankroll for stake recommendations (INR for students)
     default_bankroll: float = 2000.0
+
+    # Optional local JSON store for private Stake portfolio consent/cache.
+    portfolio_store_path: str = ""
 
 
 @lru_cache

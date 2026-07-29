@@ -23,12 +23,23 @@ def profile_match(
     over25 = next((p.probability for p in probabilities if p.market == MarketType.OVER_UNDER_GOALS and p.line == 2.5 and p.selection == "over"), 0.5)
     btts = next((p.probability for p in probabilities if p.market == MarketType.BTTS and p.selection == "yes"), 0.5)
 
-    fav_home = mw.get("home", 0) > max(mw.get("away", 0), mw.get("draw", 0))
-    fav_prob = max(mw.get("home", 0), mw.get("away", 0))
+    p_home, p_draw, p_away = mw.get("home", 0), mw.get("draw", 0), mw.get("away", 0)
+    top_side = max(("home", p_home), ("away", p_away), ("draw", p_draw), key=lambda x: x[1])
+    fav_home = top_side[0] == "home"
+    fav_prob = top_side[1] if top_side[0] != "draw" else max(p_home, p_away)
+    draw_live = p_draw >= 0.26 or (top_side[0] != "draw" and p_draw >= top_side[1] - 0.07)
     rating_gap = abs(hs - aw)
     chaotic = ctx.get("home_must_win") or ctx.get("away_must_win")
+    fade_public = ctx.get("fade_public")
+    trending = ctx.get("trending_on")
 
-    if rating_gap >= 15 and fav_prob >= 0.55:
+    if draw_live and rating_gap < 14:
+        style = "tight"
+        narrative = (
+            f"Draw is a live outcome (~{round(p_draw*100)}%) — safer to play double chance "
+            f"or unders than force a winner pick."
+        )
+    elif rating_gap >= 15 and fav_prob >= 0.55 and not draw_live:
         style = "dominant_favorite"
         narrative = f"{'{home}' if fav_home else '{away}'} should control this — pick result markets tied to them, not random overs."
     elif total_xg >= 2.8 and over25 >= 0.52:
@@ -55,10 +66,15 @@ def profile_match(
         "total_xg": round(total_xg, 2),
         "over_25_prob": round(over25, 2),
         "btts_prob": round(btts, 2),
+        "draw_prob": round(p_draw, 2),
+        "draw_live": draw_live,
         "favorite": home if fav_home else away,
         "favorite_prob": round(fav_prob, 2),
         "rating_gap": round(rating_gap, 1),
         "chaotic": chaotic,
+        "fade_public": fade_public,
+        "trending_on": trending,
+        "fan_take": ctx.get("fan_take"),
         "min_bet_probability": 0.58,
         "parlay_min_leg_probability": 0.58,
         "parlay_min_combined": 0.32,
@@ -114,11 +130,15 @@ def game_fit_score(opt, profile: dict, home: str, away: str) -> float:
             score += 8
     elif style == "tight":
         if opt.market == "double_chance":
-            score += 25
+            score += 28
         if opt.market == "draw_no_bet":
-            score += 18
+            score += 15
         if opt.market == "match_winner" and opt.selection == "draw":
-            score += 8
+            score += 18
+        if opt.market == "over_under_goals" and opt.selection == "under" and opt.line == 2.5:
+            score += 12
+        if opt.market == "match_winner" and opt.selection in ("home", "away"):
+            score -= 15  # discourage naked winner in coin-flip games
 
     if opt.market == "player_goal" and opt.our_probability >= 0.35:
         score += 8

@@ -41,7 +41,9 @@ _TOTAL_LINES = (1.5, 2.5, 3.5)
 # --------------------------------------------------------------------------- #
 
 def _match_pred(match, apply_learned: bool):
-    from bet_placer.ml.poisson import expected_goals, score_matrix
+    from bet_placer.ml.poisson import expected_goals, rebalance_1x2, score_matrix
+    from bet_placer.ml.params import calibrate_prob
+    from bet_placer.data.team_ratings import TEAM_RATINGS, get_team_rating
 
     hl, al = expected_goals(match, apply_learned=apply_learned)
     M = score_matrix(hl, al, max_goals=10)
@@ -52,6 +54,16 @@ def _match_pred(match, apply_learned: bool):
     p_home = float(M[H > A].sum())
     p_draw = float(M[H == A].sum())
     p_away = float(M[H < A].sum())
+    gap = 20.0
+    if match.home_team in TEAM_RATINGS and match.away_team in TEAM_RATINGS:
+        gap = abs(get_team_rating(match.home_team) - get_team_rating(match.away_team))
+    p_home, p_draw, p_away = rebalance_1x2(p_home, p_draw, p_away, rating_gap=gap)
+    p_home = calibrate_prob(p_home, "match_winner", "home") or p_home
+    p_draw = calibrate_prob(p_draw, "match_winner", "draw") or p_draw
+    p_away = calibrate_prob(p_away, "match_winner", "away") or p_away
+    s = p_home + p_draw + p_away
+    if s > 0:
+        p_home, p_draw, p_away = p_home / s, p_draw / s, p_away / s
     btts = 1.0 - float(M[0, :].sum()) - float(M[:, 0].sum()) + float(M[0, 0])
 
     events = [
@@ -126,6 +138,118 @@ def build_backtest(apply_learned: bool = False):
             rows.append({"group": grp, "selection": sel, "p": p,
                          "y": _grade(sel, hs, aws), "match": f"{wc.home}-{wc.away}"})
     return rows, matches
+
+
+# --------------------------------------------------------------------------- #
+# Live scorecard — how the model is calling REAL finished World Cup games,
+# whether it's beating the bookmaker, and whether accuracy is trending up.
+# --------------------------------------------------------------------------- #
+
+def _result_of(hs: int, aws: int) -> str:
+    return "home" if hs > aws else "away" if aws > hs else "draw"
+
+
+def _conf_tier(p: float) -> str:
+    if p >= 0.70:
+        return "lock"
+    if p >= 0.62:
+        return "strong"
+    if p >= 0.55:
+        return "lean"
+    return "coinflip"
+
+
+def _market_fav(wc) -> str | None:
+    odds = {"home": getattr(wc, "home_odds", 0), "draw": getattr(wc, "draw_odds", 0),
+            "away": getattr(wc, "away_odds", 0)}
+    odds = {k: v for k, v in odds.items() if v and v > 1.0}
+    return min(odds, key=odds.get) if odds else None
+
+
+def worldcup_scorecard() -> dict:
+    """Grade the live model against every finished World Cup game and package it
+    for the dashboard: per-game hit/miss, accuracy by matchday/stage (the trend
+    that shows it improving), accuracy by confidence tier, a cumulative learning
+    curve, and a head-to-head vs simply backing the bookmaker's favourite."""
+    from bet_placer.data.wc_stages import stage_label, stage_short
+    from bet_placer.engine.worldcup_pipeline import wc_match_to_analysis_match
+
+    finished = sorted(_finished_matches(),
+                      key=lambda w: getattr(w, "kickoff", None) or datetime.now(timezone.utc))
+    games = []
+    for wc in finished:
+        try:
+            m = wc_match_to_analysis_match(wc)
+            hl, al, events = _match_pred(m, apply_learned=True)
+        except Exception:
+            continue
+        hs, aws = int(wc.home_score), int(wc.away_score)
+        res = [e for e in events if e[0] == "result"]
+        if not res:
+            continue
+        top = max(res, key=lambda e: e[2])
+        pick, pick_p = top[1], float(top[2])
+        actual = _result_of(hs, aws)
+        mfav = _market_fav(wc)
+        team = wc.home if pick == "home" else wc.away if pick == "away" else "Draw"
+        md = getattr(wc, "matchday", None)
+        games.append({
+            "matchday": md,
+            "stage": getattr(wc, "stage", None) or stage_short(md),
+            "stage_label": stage_label(md),
+            "is_knockout": getattr(wc, "is_knockout", False),
+            "kickoff": wc.kickoff.isoformat() if getattr(wc, "kickoff", None) else None,
+            "home": wc.home, "away": wc.away, "score": f"{hs}-{aws}",
+            "our_pick": pick, "our_pick_team": team, "our_pick_pct": round(pick_p * 100),
+            "confidence": _conf_tier(pick_p),
+            "actual": actual, "hit": bool(pick == actual),
+            "market_fav": mfav,
+            "market_fav_hit": bool(mfav == actual) if mfav else None,
+            "pred_total": round(hl + al, 1), "actual_total": hs + aws,
+        })
+
+    n = len(games)
+    acc = round(sum(g["hit"] for g in games) / n, 3) if n else None
+
+    bymd: dict = {}
+    for g in games:
+        bymd.setdefault(g["matchday"], []).append(g["hit"])
+    by_matchday = [{"matchday": md, "n": len(v), "accuracy": round(sum(v) / len(v), 3)}
+                   for md, v in sorted(bymd.items(), key=lambda kv: (kv[0] is None, kv[0]))]
+
+    bystage: dict = {}
+    stage_order: dict = {}
+    for g in games:
+        key = g.get("stage_label") or stage_label(g.get("matchday"))
+        bystage.setdefault(key, []).append(g["hit"])
+        stage_order[key] = g.get("matchday") or 0
+    by_stage = [{"stage": st, "n": len(v), "accuracy": round(sum(v) / len(v), 3)}
+                for st, v in sorted(bystage.items(), key=lambda kv: stage_order.get(kv[0], 99))]
+
+    byconf: dict = {}
+    for g in games:
+        byconf.setdefault(g["confidence"], []).append(g["hit"])
+    by_confidence = [{"tier": t, "n": len(byconf[t]),
+                      "accuracy": round(sum(byconf[t]) / len(byconf[t]), 3)}
+                     for t in ("lock", "strong", "lean", "coinflip") if t in byconf]
+
+    cumulative, hits = [], 0
+    for i, g in enumerate(games, 1):
+        hits += g["hit"]
+        cumulative.append({"i": i, "accuracy": round(hits / i, 3),
+                           "label": f"{g['home']} v {g['away']}"})
+
+    mkt = [g for g in games if g["market_fav_hit"] is not None]
+    market_acc = round(sum(g["market_fav_hit"] for g in mkt) / len(mkt), 3) if mkt else None
+
+    return {
+        "n_games": n, "accuracy": acc, "market_accuracy": market_acc,
+        "beats_market": (acc is not None and market_acc is not None and acc >= market_acc),
+        "by_matchday": by_matchday, "by_stage": by_stage, "by_confidence": by_confidence,
+        "cumulative": cumulative,
+        "games": list(reversed(games)),   # newest first for display
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -209,6 +333,7 @@ def train(verbose: bool = False) -> dict:
     if hist:
         params["elo"] = hist["elo"]
         params["goal_model"] = hist["goal_model"]
+        params["ad_model"] = hist.get("ad_model", {})
         params["calibration"] = hist["calibration"]
         params["goals_scale"] = 1.0      # goal model is fit directly; no extra scaling
         params["home_edge_adj"] = 0.0

@@ -340,10 +340,9 @@ function rejectAntiThesisPlan(plan, home, away) {
   const h = home.toLowerCase()
   const a = away.toLowerCase()
   const blob = JSON.stringify(plan).toLowerCase()
-  if (blob.includes(`draw or ${a}`) && !blob.includes(`draw or ${h}`)) return true
-  if (blob.includes('draw & no') && !blob.includes(h)) return true
+  // Only drop clear both-sides / correct-score nonsense — not every away pick
   if (blob.includes(`${h}/${a}`) || blob.includes(`${a}/${h}`)) return true
-  if (blob.includes(`${a} to win`) && !blob.includes(`${h} to win`)) return true
+  if (blob.includes(`${h} to win`) && blob.includes(`${a} to win`) && !blob.includes('double')) return true
   return false
 }
 
@@ -390,24 +389,46 @@ function resolveCuratedPicks(slip, home = '', away = '') {
     seen.add(key)
   }
 
-  const singles = normalizePlans(slip, 'singles_focus')
-  for (const s of singles.slice(0, 1)) {
-    const key = legSetKey(s) || s.option_id
-    if (seen.has(key)) continue
-    picks.push(annotatePlan(s, pathPickerLabel(s), 'Single bet'))
-    seen.add(key)
+  for (const key of ['singles_focus', 'min_loss', 'value', 'smart_parlay']) {
+    for (const s of normalizePlans(slip, key).slice(0, key === 'singles_focus' ? 2 : 1)) {
+      const k = legSetKey(s) || s.option_id
+      if (seen.has(k)) continue
+      picks.push(annotatePlan(s, pathPickerLabel(s), key === 'singles_focus' ? 'Single bet' : key))
+      seen.add(k)
+    }
   }
 
-  const sgms = normalizePlans(slip, 'smart_parlay')
-  for (const sgm of sgms) {
-    const key = legSetKey(sgm) || sgm.option_id
-    if (seen.has(key)) continue
-    picks.push(annotatePlan(sgm, pathPickerLabel(sgm), 'Stake SGM'))
-    seen.add(key)
+  // Fall back: turn easy-money / unified singles into viewable plans
+  if (!picks.length) {
+    for (const em of (slip?.easy_money || []).slice(0, 3)) {
+      const fake = {
+        legs: [{ ...em, stake_inr: em.stake_inr || 0, label: em.label }],
+        total_stake_inr: em.stake_inr || 0,
+        tab_id: 'singles_focus',
+        worth_label: em.tag || 'High probability',
+        why: em.why || em.reason,
+      }
+      picks.push(annotatePlan(fake, em.label || 'High probability', 'High probability'))
+    }
+    for (const u of (slip?.unified_picks || []).slice(0, 2)) {
+      const fake = {
+        legs: [{ ...u, stake_inr: u.stake_inr || 0, label: u.label }],
+        total_stake_inr: u.stake_inr || 0,
+        tab_id: 'singles_focus',
+        worth_label: u.tag || 'Situational',
+        why: u.why,
+      }
+      const k = legSetKey(fake)
+      if (seen.has(k)) continue
+      picks.push(annotatePlan(fake, u.label || 'Situational', 'Situational'))
+      seen.add(k)
+    }
   }
-  return sortPathsForDropdown(
-    picks.filter(Boolean).filter((p) => !rejectAntiThesisPlan(p, home, away) && !rejectGarbageCombo(p)),
-  )
+
+  const filtered = picks.filter(Boolean).filter((p) => !rejectGarbageCombo(p) && !rejectAntiThesisPlan(p, home, away))
+  // ponytail: if filters wipe the desk, show unfiltered core plans rather than "No clean edge"
+  const out = filtered.length ? filtered : picks.filter(Boolean)
+  return sortPathsForDropdown(out)
 }
 
 function annotatePlan(plan, label, typeLabel) {
@@ -430,7 +451,7 @@ function annotatePlan(plan, label, typeLabel) {
 
 function PlanSlipView({
   plan, slip, targetCashout, stakeLive, stakeLoading, showWhy, onToggleWhy, showTickets = true,
-  home = '', away = '',
+  home = '', away = '', onAddToSlip,
 }) {
   if (!plan?.legs?.length) {
     return (
@@ -480,6 +501,15 @@ function PlanSlipView({
           </button>
         )}
         {showWhy && plan.why && <p className="pick-why-text muted">{plan.why}</p>}
+        {typeof onAddToSlip === 'function' && (
+          <button
+            type="button"
+            className="btn-secondary pick-add-slip"
+            onClick={() => onAddToSlip(plan, activeLegs)}
+          >
+            Add to bet slip
+          </button>
+        )}
       </div>
 
       <div className={`odds-origin-banner ${stakeLive ? 'origin-stake' : 'origin-book'}`}>
@@ -645,9 +675,12 @@ function OptionPicker({ plans, index, onSelect, heading, id = 'path-select' }) {
 }
 
 export default function MatchSlipPanel({ slip, home, away, fanPrediction, status, score, sport }) {
-  const { perMatchBudget, updatePerMatchBudget, targetCashout, updateTargetCashout, bettorStyle } = useBankroll()
+  const {
+    perMatchBudget, updatePerMatchBudget, targetCashout, updateTargetCashout, bettorStyle, addLeg,
+  } = useBankroll()
   const [budgetDraft, setBudgetDraft] = useState(String(perMatchBudget))
   const [targetDraft, setTargetDraft] = useState(String(targetCashout))
+  const [addedNote, setAddedNote] = useState(null)
 
   useEffect(() => { setBudgetDraft(String(perMatchBudget)) }, [perMatchBudget])
   useEffect(() => { setTargetDraft(String(targetCashout)) }, [targetCashout])
@@ -774,8 +807,16 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     setTargetIndex(0)
     setOptionIndex(0)
     setShowWhy(false)
-    if (slip?.recommended_strategy) setStrategyKey(slip.recommended_strategy)
-  }, [slip?.match_id, slip?.recommended_slip_id, targetCashout])
+    const src = liveSlip || slip
+    const rec = src?.recommended_strategy
+    const valid = STRATEGY_KEYS.some((s) => s.key === rec)
+    if (valid) {
+      setStrategyKey(rec)
+      return
+    }
+    const firstWithPlans = STRATEGY_KEYS.find((s) => normalizePlans(src, s.key).length)?.key
+    setStrategyKey(firstWithPlans || 'min_loss')
+  }, [slip?.match_id, slip?.recommended_slip_id, liveSlip?.match_id, liveSlip?.recommended_slip_id, targetCashout])
 
   useEffect(() => {
     setPickIndex((i) => clampPlanIndex(i, resolveCuratedPicks(liveSlip || slip, home, away)))
@@ -851,6 +892,35 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     }
   }
 
+  const addPlanToSlip = (plan, legs) => {
+    const eventId = activeSlip?.match_id || `${home}-${away}`
+    let added = 0
+    for (const leg of (legs || plan?.legs || [])) {
+      const odds = Number(leg.odds) || 0
+      if (!(odds > 1)) continue
+      const label = leg.label || leg.selection || 'Pick'
+      const id = `rec-${eventId}-${leg.market || 'mkt'}-${leg.selection || label}-${odds}`
+      const ok = addLeg({
+        id,
+        eventId,
+        home,
+        away,
+        label,
+        market: leg.market || 'match_winner',
+        marketName: leg.market_label || leg.market || '',
+        selection: leg.selection || label,
+        odds,
+        stake: Number(leg.stake_inr) >= 10 ? Number(leg.stake_inr) : undefined,
+        sportKey: sport,
+        our_probability: leg.our_probability,
+        gem_kind: plan?.pick_type || plan?.tab_id || 'rec',
+      })
+      if (ok) added += 1
+    }
+    setAddedNote(added ? `Added ${added} ticket${added === 1 ? '' : 's'} to bet slip` : 'Could not add. Check odds or slip rules.')
+    window.setTimeout(() => setAddedNote(null), 2500)
+  }
+
   const TABS = [
     { id: 'recs', label: 'Recs' },
     { id: 'target', label: 'Target' },
@@ -887,22 +957,22 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
         </div>
       )}
 
+      {addedNote && <p className="muted recs-empty-note" role="status">{addedNote}</p>}
+
       {stakeCached && tab !== 'stake' && (
-        <div className="skip-banner skip-caution stake-verify-banner stake-cache-banner">
-          <strong>Cached Stake lines</strong>
-          <p>Showing last known Stake prices for this match. Open the Odds tab to refresh live lines.</p>
-        </div>
+        <p className="muted recs-empty-note">Cached Stake lines. Open Odds to refresh.</p>
       )}
 
-      {!stakeLive && !stakeCached && tab !== 'stake' && (
+      {!stakeLive && !stakeCached && tab !== 'stake' && picks.length > 0 && (
+        <p className="muted recs-empty-note">
+          {activeSlip.odds_note || 'Model prices. Verify on Stake before betting.'}
+        </p>
+      )}
+
+      {!stakeLive && !stakeCached && tab !== 'stake' && !picks.length && (
         <div className="skip-banner skip-caution stake-verify-banner">
-          <strong>{picks.length ? 'Model odds' : 'Verify on Stake'}</strong>
-          <p>
-            {activeSlip.odds_note ||
-              (picks.length
-                ? 'Plans use model prices. Connect Stake on the Odds tab to verify lines before betting.'
-                : 'No Stake lines loaded yet. Open the Odds tab to connect, then refresh recs.')}
-          </p>
+          <strong>Verify on Stake</strong>
+          <p>No Stake lines loaded yet. Open the Odds tab to connect, then refresh recs.</p>
         </div>
       )}
 
@@ -967,12 +1037,19 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
                 onToggleWhy={() => setShowWhy(!showWhy)}
                 home={home}
                 away={away}
+                onAddToSlip={addPlanToSlip}
               />
             </>
           ) : (
             <div className="skip-note skip-note-hard">
-              <strong>No clean edge yet.</strong>
-              <p>{activeSlip.skip_reason || `Using estimates for now. Check Target or All plans for the best cached or model routes.`}</p>
+              <strong>No priced path yet</strong>
+              <p>
+                {activeSlip.skip_reason
+                  || 'Open All plans / Build for Stake markets, or tap Odds to refresh lines.'}
+              </p>
+              {(activeSlip.easy_money?.length > 0 || activeSlip.unified_picks?.length > 0) && (
+                <p className="muted">High-probability / situational picks are listed above when available.</p>
+              )}
             </div>
           )}
         </div>
@@ -1020,6 +1097,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
                 onToggleWhy={() => setShowWhy(!showWhy)}
                 home={home}
                 away={away}
+                onAddToSlip={addPlanToSlip}
               />
             </>
           ) : (

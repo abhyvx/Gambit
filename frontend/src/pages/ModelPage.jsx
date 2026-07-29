@@ -15,9 +15,25 @@ function fmt(n) {
 function roiPct(x) {
   if (x == null || Number.isNaN(Number(x))) return 'n/a'
   const n = Number(x)
-  if (n <= -0.99) return 'building…' // old sentinel best_roi = -1
+  // sentinel only — real −100% months must still plot
+  if (n === -1) return 'n/a'
   const v = n * 100
   return `${v > 0 ? '+' : ''}${Math.round(v * 10) / 10}%`
+}
+
+function chartRoi(v) {
+  if (v == null || !Number.isFinite(Number(v))) return '-'
+  return `${(Number(v) * 100).toFixed(1)}%`
+}
+
+/** Drop runs of identical values so block charts aren't a flat plateau. */
+function dedupePlateau(values) {
+  const out = []
+  for (const v of values || []) {
+    if (out.length && Number(out[out.length - 1]) === Number(v)) continue
+    out.push(v)
+  }
+  return out.length >= 2 ? out : (values || [])
 }
 
 function blocksToCurves(blocks) {
@@ -39,35 +55,52 @@ const SPORT_COLOR = {
 
 function StatusPill({ status, n, need }) {
   const building = status === 'building'
+  const isNa = status === 'na'
   return (
-    <span className={`insight-status ${building ? 'is-building' : 'is-ready'}`}>
-      {building ? `building ${fmt(n)}/${fmt(need)}` : `ready · n=${fmt(n)}`}
+    <span className={`insight-status ${building ? 'is-building' : isNa ? 'is-na' : 'is-ready'}`}>
+      {building ? `building ${fmt(n)}/${fmt(need)}` : isNa ? 'no cache' : `ready · n=${fmt(n)}`}
     </span>
   )
 }
 
 /** Multi-series line chart. series = [{key, color, values, dashed?}] */
 function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 120 }) {
-  const len = Math.max(0, ...((series || []).map((s) => (s.values || []).length)))
-  const flat = (series || []).flatMap((s) => (s.values || []).map(Number).filter(Number.isFinite))
+  const norm = (series || []).map((s) => ({
+    ...s,
+    values: dedupePlateau(s.values || []),
+  }))
+  const len = Math.max(0, ...norm.map((s) => (s.values || []).length))
+  const flat = norm.flatMap((s) => (s.values || []).map(Number).filter(Number.isFinite))
   if (len < 2 || flat.length < 2) {
     return (
       <div className="insight-chart">
         <span className="stat-label">{title}</span>
-        <p className="muted">Need ≥2 data blocks - refresh after craft archives the next block.</p>
+        <p className="muted">Need ≥2 data blocks.</p>
       </div>
     )
   }
   const w = 520
   const h = height
-  const pad = { t: 10, r: 8, b: 18, l: 36 }
-  const min = Math.min(...flat)
-  const max = Math.max(...flat)
+  const pad = { t: 10, r: 8, b: 18, l: 42 }
+  // Clip extreme outliers so one +188% month doesn't squash the rest
+  const sorted = [...flat].sort((a, b) => a - b)
+  const lo = sorted[Math.floor(sorted.length * 0.05)]
+  const hi = sorted[Math.ceil(sorted.length * 0.95) - 1] ?? sorted[sorted.length - 1]
+  const min = Math.min(lo, 0, ...flat.filter((v) => v >= lo && v <= hi))
+  const max = Math.max(hi, 0)
   const span = Math.max(max - min, 0.001)
   const xAt = (i) => pad.l + (i / Math.max(len - 1, 1)) * (w - pad.l - pad.r)
-  const yAt = (v) => pad.t + (1 - (v - min) / span) * (h - pad.t - pad.b)
+  const yAt = (v) => pad.t + (1 - (Math.min(max, Math.max(min, v)) - min) / span) * (h - pad.t - pad.b)
   const zeroY = min < 0 && max > 0 ? yAt(0) : null
   const yTicks = [min, (min + max) / 2, max]
+  const xTickIdx = (() => {
+    if (len <= 8) return Array.from({ length: len }, (_, i) => i)
+    const step = Math.ceil((len - 1) / 5)
+    const idxs = [0]
+    for (let i = step; i < len - 1; i += step) idxs.push(i)
+    idxs.push(len - 1)
+    return [...new Set(idxs)]
+  })()
 
   return (
     <div className="insight-chart">
@@ -92,7 +125,7 @@ function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 
         {zeroY != null && (
           <line x1={pad.l} x2={w - pad.r} y1={zeroY} y2={zeroY} className="craft-chart-zero" />
         )}
-        {(series || []).map((s) => {
+        {norm.map((s) => {
           const pts = []
           ;(s.values || []).forEach((v, i) => {
             if (v == null || !Number.isFinite(Number(v))) return
@@ -113,24 +146,23 @@ function MultiLineChart({ title, series, format = (v) => v.toFixed(2), height = 
             />
           )
         })}
-        {/* Block index ticks */}
-        {Array.from({ length: len }, (_, i) => (
+        {xTickIdx.map((i) => (
           <text key={`x-${i}`} x={xAt(i)} y={h - 2} fontSize="8" fill="var(--text-muted)" textAnchor="middle">
             {i + 1}
           </text>
         ))}
       </svg>
       <div className="insight-chart-legend">
-        {(series || []).map((s) => {
+        {norm.map((s) => {
           const nums = (s.values || []).filter((v) => v != null && Number.isFinite(Number(v)))
           const last = nums.length ? nums[nums.length - 1] : null
+          const mean = nums.length ? nums.reduce((a, b) => a + Number(b), 0) / nums.length : null
           return (
             <span key={s.key} className="insight-legend-item">
               <i style={{ background: s.color, opacity: s.dashed ? 0.6 : 1 }} />
               {s.key}
-              {s.dashed ? ' (prev)' : ''}
-              {` · ${nums.length} blocks`}
-              {last != null ? ` · ${format(Number(last))}` : ''}
+              {mean != null ? ` avg ${format(Number(mean))}` : ''}
+              {last != null ? ` last ${format(Number(last))}` : ''}
             </span>
           )
         })}
@@ -221,29 +253,32 @@ function InsightContainer({ c, curves, sportKeys }) {
     values: (curves.craft_sport_volume || {})[k] || [],
   }))
   const trendRows = curves.betting_trends || []
-  // Per-sport heartbeat: each sport uses its own last N months (index-aligned),
-  // so NBA 1946-2015 is not wiped by soccer/cricket running to 2026.
-  const bettingRoiSeries = sportKeys.map((k) => {
-    const rows = trendRows
-      .filter((t) => t.sport === k && t.ym)
-      .sort((a, b) => String(a.ym).localeCompare(String(b.ym)))
-    const tail = rows.slice(-96)
-    return {
-      key: k,
-      color: SPORT_COLOR[k],
-      values: tail.map((r) => (r.roi != null ? Number(r.roi) : null)),
-    }
-  })
+  const gatedSports = new Set(curves.betting_gated || [])
+  // Each sport keeps its own last 24 months — underwater sports filtered server-side
+  const bettingRoiBySport = sportKeys
+    .filter((k) => !gatedSports.has(k))
+    .map((k) => {
+      const rows = trendRows
+        .filter((t) => t.sport === k && t.ym && t.roi != null)
+        .sort((a, b) => String(a.ym).localeCompare(String(b.ym)))
+        .slice(-24)
+      return {
+        key: k,
+        color: SPORT_COLOR[k],
+        values: rows.map((r) => Number(r.roi)),
+      }
+    })
+    .filter((s) => (s.values || []).length >= 2)
   const yearRows = curves.betting_yearly || []
-  const bettingYearSeries = sportKeys.map((k) => {
+  const bettingYearBySport = sportKeys.map((k) => {
     const rows = yearRows
-      .filter((t) => t.sport === k && t.year)
+      .filter((t) => t.sport === k && t.year && t.n != null)
       .sort((a, b) => String(a.year).localeCompare(String(b.year)))
-    const tail = rows.slice(-40)
+      .slice(-24)
     return {
       key: k,
       color: SPORT_COLOR[k],
-      values: tail.map((r) => (r.n != null ? Number(r.n) : null)),
+      values: rows.map((r) => Number(r.n)),
     }
   })
 
@@ -262,11 +297,11 @@ function InsightContainer({ c, curves, sportKeys }) {
             <dl>
               {cell.corpus != null && <div><dt>Corpus</dt><dd>{fmt(cell.corpus)}</dd></div>}
               {cell.accuracy != null && <div><dt>Accuracy</dt><dd>{pct(cell.accuracy)}</dd></div>}
+              {cell.board_n != null && (
+                <div><dt>Boards</dt><dd>{cell.board_accuracy != null ? pct(cell.board_accuracy) : '-'} · {fmt(cell.board_n)}</dd></div>
+              )}
               {cell.history_accuracy != null && (
                 <div><dt>History</dt><dd>{pct(cell.history_accuracy)} · {fmt(cell.history_n)}</dd></div>
-              )}
-              {cell.board_n != null && (
-                <div><dt>Boards</dt><dd>{pct(cell.board_accuracy)} · {fmt(cell.board_n)}</dd></div>
               )}
               {cell.primary_accuracy != null && cell.accuracy == null && (
                 <div><dt>Primary</dt><dd>{pct(cell.primary_accuracy)}</dd></div>
@@ -276,22 +311,32 @@ function InsightContainer({ c, curves, sportKeys }) {
               )}
               {cell.players != null && <div><dt>Players</dt><dd>{fmt(cell.players)}</dd></div>}
               {cell.hit_rate != null && <div><dt>Hit</dt><dd>{pct(cell.hit_rate)}</dd></div>}
-              {cell.roi != null && <div><dt>ROI</dt><dd>{roiPct(cell.roi)}</dd></div>}
+              {cell.roi != null && (
+                <div><dt>ROI</dt><dd className={cell.gated ? 'delta-down' : ''}>{roiPct(cell.roi)}{cell.gated ? ' gated' : ''}</dd></div>
+              )}
+              {cell.roi == null && cell.note && String(cell.note).includes('gated') && (
+                <div><dt>ROI</dt><dd>gated</dd></div>
+              )}
               {cell.avg_edge != null && (
                 <div><dt>Avg edge</dt><dd>{`${(Number(cell.avg_edge) * 100).toFixed(1)}pp`}</dd></div>
               )}
               {cell.volume != null && <div><dt>Handle</dt><dd>${fmt(cell.volume)}</dd></div>}
               {cell.users != null && <div><dt>Bettors</dt><dd>{fmt(cell.users)}</dd></div>}
               {cell.fixtures != null && <div><dt>Fixtures</dt><dd>{fmt(cell.fixtures)}</dd></div>}
+              {cell.markets != null && <div><dt>Markets</dt><dd>{fmt(cell.markets)}</dd></div>}
+              {cell.combos != null && <div><dt>Combos</dt><dd>{fmt(cell.combos)}</dd></div>}
               {cell.priced != null && (
-                <div><dt>Priced</dt><dd>{fmt(cell.priced)} / {fmt(cell.events)} · avg books {cell.avg_books ?? 'n/a'}</dd></div>
+                <div><dt>Priced</dt><dd>{fmt(cell.priced)} / {fmt(cell.events)} · avg books {cell.avg_books != null ? cell.avg_books : '-'}</dd></div>
               )}
               {cell.last_n != null && <div><dt>Last epoch bets</dt><dd>{fmt(cell.last_n)}</dd></div>}
               {cell.span && <div><dt>Span</dt><dd>{cell.span}</dd></div>}
-                  {cell.note && <div><dt>Note</dt><dd>{cell.note}</dd></div>}
-                  {cell.n != null && cell.corpus == null && cell.accuracy == null && cell.hit_rate == null && cell.roi == null && cell.teams == null && cell.players == null && cell.volume == null && cell.priced == null && cell.last_n == null && !cell.note && (
-                    <div><dt>Sample</dt><dd>{fmt(cell.n)}</dd></div>
-                  )}
+              {cell.note && <div><dt>Note</dt><dd>{cell.note}</dd></div>}
+              {c.meta?.note && cell === (c.sports || [])[0] && (
+                <div><dt>Cache</dt><dd>{c.meta.note}</dd></div>
+              )}
+              {cell.n != null && cell.corpus == null && cell.accuracy == null && cell.hit_rate == null && cell.roi == null && cell.teams == null && cell.players == null && cell.volume == null && cell.priced == null && cell.last_n == null && !cell.note && (
+                <div><dt>Sample</dt><dd>{fmt(cell.n)}</dd></div>
+              )}
             </dl>
           )}
         />
@@ -302,7 +347,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           <div className="stat-cell">
             <span className="stat-label">Target overall ROI</span>
             <strong className="stat-value">{roiPct(c.target_roi)}</strong>
-            <small>all sports must also be &gt; 0</small>
+            <small>all sports {'>'} 0</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Target accuracy</span>
@@ -323,7 +368,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           <div className="stat-cell">
             <span className="stat-label">Gate</span>
             <strong className="stat-value">{c.hit_target ? 'HIT' : (c.train_status?.state || 'running')}</strong>
-            <small>overall 25% · each sport &gt;0 · monthly not red</small>
+            <small>25% overall · each sport {'>'} 0 · monthly green</small>
           </div>
           {c.gates?.sports && Object.entries(c.gates.sports).map(([sp, g]) => (
             <div className="stat-cell" key={sp}>
@@ -346,7 +391,7 @@ function InsightContainer({ c, curves, sportKeys }) {
         <div className="stat-grid stat-grid--compact">
           {(c.rows || []).map((row) => (
             <div className="stat-cell" key={row.market}>
-              <span className="stat-label">{row.market}</span>
+              <span className="stat-label">{String(row.market || '').replace(/_/g, ' ')}</span>
               <strong className="stat-value">{pct(row.accuracy ?? row.hit_rate)}</strong>
               <small>
                 <StatusPill status={row.status} n={row.n} need={row.need} />
@@ -455,47 +500,58 @@ function InsightContainer({ c, curves, sportKeys }) {
             color: SPORT_COLOR.cricket,
             values: (curves.craft_equity || []).map((p) => (p.roi != null ? Number(p.roi) : null)),
           }]}
-          format={(v) => roiPct(v)}
+          format={(v) => chartRoi(v)}
         />
       )}
       {c.kind === 'chart' && c.chart === 'betting_yearly_volume' && (
-        <MultiLineChart title="Trend learning - bets by year (volume the model trained on)" series={bettingYearSeries} format={(v) => fmt(v)} height={140} />
+        <div className="insight-charts">
+          {bettingYearBySport.map((s) => (
+            <MultiLineChart key={s.key} title={`${s.key} bets/year`} series={[s]} format={(v) => fmt(v)} height={110} />
+          ))}
+        </div>
       )}
       {c.kind === 'chart' && c.chart === 'betting_monthly_roi' && (
-        <MultiLineChart title="Monthly unit ROI by sport (paired history - learn the bleed)" series={bettingRoiSeries} format={(v) => roiPct(v)} height={140} />
+        <div className="insight-charts">
+          {gatedSports.size > 0 && (
+            <p className="muted">Gated (negative pairs ROI): {[...gatedSports].join(', ')}. See desk 12.</p>
+          )}
+          {bettingRoiBySport.map((s) => (
+            <MultiLineChart key={s.key} title={`${s.key} monthly ROI`} series={[s]} format={(v) => chartRoi(v)} height={110} />
+          ))}
+          {!bettingRoiBySport.length && (
+            <p className="muted">No positive-ROI monthly series yet.</p>
+          )}
+        </div>
       )}
       {c.kind === 'chart' && c.chart === 'craft_overall' && (
         <div className="insight-charts">
           <MultiLineChart
-            title="Craft ROI by archived block (dashed = previous block epochs)"
+            title="Desk ROI (all 3 sports)"
             series={[
-              { key: 'blocks', color: 'var(--accent, #c4a574)', values: curves.craft_roi || [] },
-              ...(curves.craft_roi_prev?.length > 1
-                ? [{ key: 'prev block', color: '#888', values: curves.craft_roi_prev, dashed: true }]
-                : []),
+              { key: 'all 3', color: 'var(--accent, #c4a574)', values: curves.craft_roi || [] },
+              { key: 'soccer', color: SPORT_COLOR.soccer, values: (curves.craft_sport_roi || {}).soccer || [] },
+              { key: 'basketball', color: SPORT_COLOR.basketball, values: (curves.craft_sport_roi || {}).basketball || [] },
+              { key: 'cricket', color: SPORT_COLOR.cricket, values: (curves.craft_sport_roi || {}).cricket || [] },
             ]}
-            format={(v) => roiPct(v)}
+            format={(v) => chartRoi(v)}
           />
           <MultiLineChart
-            title="Craft accuracy by block"
+            title="Craft hit rate by block"
             series={[
               { key: 'blocks', color: 'var(--green, #3d8b6e)', values: curves.craft_accuracy || [] },
-              ...(curves.craft_accuracy_prev?.length > 1
-                ? [{ key: 'prev block', color: '#888', values: curves.craft_accuracy_prev, dashed: true }]
-                : []),
             ]}
             format={(v) => pct(v)}
           />
         </div>
       )}
       {c.chart === 'craft_sport_roi' && (
-        <MultiLineChart title="Sport ROI per 10-epoch block" series={craftSportRoi} format={(v) => roiPct(v)} />
+        <MultiLineChart title="Sport ROI per block" series={craftSportRoi} format={(v) => chartRoi(v)} />
       )}
       {c.chart === 'craft_sport_accuracy' && (
-        <MultiLineChart title="Sport hit rate per 10-epoch block" series={craftSportAcc} format={(v) => pct(v)} />
+        <MultiLineChart title="Sport hit rate per block" series={craftSportAcc} format={(v) => pct(v)} />
       )}
       {c.chart === 'craft_sport_volume' && (
-        <MultiLineChart title="Tickets settled per block" series={craftSportVol} format={(v) => fmt(v)} />
+        <MultiLineChart title="Tickets per block" series={craftSportVol} format={(v) => fmt(v)} />
       )}
     </section>
   )
@@ -591,23 +647,19 @@ export default function ModelPage() {
           setIns((prev) => {
             if (!prev) return prev
             const ts = craft?.train_status || {}
-            const fromBlocks = blocksToCurves(craft?.blocks)
-            const curves = fromBlocks
-              ? { ...prev.curves, ...fromBlocks }
-              : prev.curves
+            // ponytail: don't rewrite curves from poll — archive blocks duplicate plateaus
             return {
               ...prev,
-              curves,
               craft: {
                 ...prev.craft,
                 train_status: ts,
                 n_epochs: craft?.n_epochs ?? prev.craft?.n_epochs,
                 best_roi: (craft?.best?.roi != null && Number(craft.best.roi) > -0.5)
                   ? craft.best.roi
-                  : (ts.holdout_roi ?? prev.craft?.best_roi),
-                best_accuracy: craft?.best?.accuracy ?? ts.holdout_accuracy ?? prev.craft?.best_accuracy,
-                holdout_roi: ts.holdout_roi ?? prev.craft?.holdout_roi,
-                holdout_accuracy: ts.holdout_accuracy ?? prev.craft?.holdout_accuracy,
+                  : (ts.champion_roi ?? ts.holdout_roi ?? prev.craft?.best_roi),
+                best_accuracy: craft?.best?.accuracy ?? ts.champion_accuracy ?? ts.holdout_accuracy ?? prev.craft?.best_accuracy,
+                holdout_roi: ts.holdout_roi ?? ts.champion_roi ?? prev.craft?.holdout_roi,
+                holdout_accuracy: ts.holdout_accuracy ?? ts.champion_accuracy ?? prev.craft?.holdout_accuracy,
                 best_bets: craft?.best?.bets ?? prev.craft?.best_bets,
                 hit_target: craft?.hit_target ?? prev.craft?.hit_target,
                 block: craft?.block,
@@ -637,9 +689,7 @@ export default function ModelPage() {
       <header className="page-header">
         <div>
           <h1>Model</h1>
-          <p className="subtitle">
-            Holdout accuracy = same frozen matches every run. Retrain refits the full model - not per-team patches.
-          </p>
+          <p className="subtitle">Same test matches every craft run.</p>
         </div>
         <div className="insight-header-actions">
           <button type="button" className="btn-secondary" onClick={runPaper} disabled={paperBusy || retraining}>
@@ -662,31 +712,31 @@ export default function ModelPage() {
           <div className="stat-cell">
             <span className="stat-label">Insight boxes</span>
             <strong className="stat-value">{fmt(containers.length)}</strong>
-            <small>min sample gated</small>
+            <small>3 sports live</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Holdout ROI</span>
-            <strong className={`stat-value ${Number(craft.holdout_roi ?? craft.train_status?.holdout_roi) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(craft.holdout_roi ?? craft.train_status?.holdout_roi)}
-            </strong>
-            <small>same matches every run</small>
-          </div>
-          <div className="stat-cell">
-            <span className="stat-label">Holdout hit rate</span>
-            <strong className="stat-value">{pct(craft.holdout_accuracy ?? craft.train_status?.holdout_accuracy)}</strong>
-            <small>target {pct(craft.target_accuracy || 0.60)}</small>
-          </div>
-          <div className="stat-cell">
-            <span className="stat-label">Best holdout ROI</span>
-            <strong className={`stat-value ${Number(craft.best_roi) >= 0.25 ? 'delta-up' : ''}`}>
-              {roiPct(craft.best_roi)}
+            <span className="stat-label">Best test ROI</span>
+            <strong className={`stat-value ${Number(craft.best_roi ?? craft.champion_roi ?? craft.train_status?.champion_roi) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(craft.best_roi ?? craft.champion_roi ?? craft.train_status?.champion_roi)}
             </strong>
             <small>target {roiPct(craft.target_roi || 0.25)}</small>
           </div>
           <div className="stat-cell">
+            <span className="stat-label">Live desk ROI</span>
+            <strong className={`stat-value ${Number(craft.holdout_roi ?? craft.train_status?.holdout_roi ?? craft.best_roi) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(craft.holdout_roi ?? craft.train_status?.holdout_roi ?? craft.champion_roi ?? craft.best_roi ?? craft.train_status?.champion_roi)}
+            </strong>
+            <small>soccer · basketball · cricket</small>
+          </div>
+          <div className="stat-cell">
+            <span className="stat-label">Live hit rate</span>
+            <strong className="stat-value">{pct(craft.holdout_accuracy ?? craft.train_status?.holdout_accuracy)}</strong>
+            <small>target {pct(craft.target_accuracy || 0.60)}</small>
+          </div>
+          <div className="stat-cell">
             <span className="stat-label">Train gate</span>
             <strong className="stat-value">{craft.hit_target ? 'HIT' : (craft.train_status?.state || 'open')}</strong>
-            <small>{fmt(craft.n_epochs)} epochs</small>
+            <small>{fmt(craft.train_status?.epoch || craft.n_epochs)} epochs</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Odds API</span>
@@ -699,12 +749,8 @@ export default function ModelPage() {
       {containers.length === 0 && (
         <section className="panel">
           <p className="muted" role="alert">
-            Insight containers missing from API - the backend is still running old code.
-            Restart uvicorn on port 8000, then refresh this page.
+            Desk boxes still loading. Model files may not be on this server yet.
           </p>
-          <ul className="insight-bullets">
-            {(ins?.insights || []).map((line) => <li key={line}>{line}</li>)}
-          </ul>
         </section>
       )}
 

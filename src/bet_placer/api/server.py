@@ -152,13 +152,14 @@ def _ensure_craft_training() -> None:
                 logger.info("Craft gates already cleared — not restarting")
                 return
             set_meta("train_status", {
+                **status,
                 "state": "running",
                 "epoch": int(status.get("epoch") or 0),
                 "target_roi": TARGET_ROI,
                 "target_accuracy": TARGET_ACC,
                 "unlimited": True,
                 "owner": "api",
-                "note": "≥10k/sport · overall≥25% · each sport ROI>0 · monthly not red",
+                "note": "holdout gates: overall≥25% · sport ROI>0 · hit≥60%",
             })
             try:
                 result = train_until_roi(
@@ -402,20 +403,42 @@ def stake_relay(body: StakeRelayPayload):
 
 @app.post("/api/stake/refresh")
 def stake_refresh():
-    """Pull latest Stake trending (local browser only — cloud uses model prices)."""
+    """Pull latest Stake trending locally, or return relay/disk cache on cloud."""
     from bet_placer.engine.stake_odds import refresh_stake_overlay
-    return refresh_stake_overlay()
+    result = refresh_stake_overlay()
+    if result.get("skipped"):
+        # Cloud: keep working on relay/disk cache + ESPN/model prices
+        result["message"] = (
+            "Live Stake scrape is off on this host. "
+            "Using relay/cache when present, otherwise ESPN or model prices."
+        )
+    return result
 
 
 @app.post("/api/stake/connect")
 def stake_connect():
-    """Open visible Chrome for Cloudflare/login, then pull Stake odds."""
+    """Open visible Chrome for Cloudflare/login, then pull Stake odds (laptop only)."""
     from bet_placer.config import get_settings, stake_network_enabled
     if not stake_network_enabled():
-        raise HTTPException(
-            status_code=503,
-            detail="Stake connect requires STAKE_USE_BROWSER=true — only works on your laptop, not cloud deploy.",
-        )
+        from bet_placer.engine.stake_odds import stake_overlay_status, warm_stake_cache_from_disk
+        warm_stake_cache_from_disk()
+        overlay = stake_overlay_status()
+        return {
+            "connected": bool(overlay.get("have_data")),
+            "browser": {"ready": False, "cloud": True},
+            "overlay": overlay,
+            "fixtures": overlay.get("fixtures", 0),
+            "message": (
+                f"Cloud mode: {overlay.get('fixtures', 0)} cached Stake matches from relay. "
+                "Live Connect needs a laptop with STAKE_USE_BROWSER=true, or the GitHub Stake relay."
+                if overlay.get("have_data")
+                else (
+                    "Cloud mode cannot open Stake Chrome. "
+                    "Odds still work from ESPN/model prices. "
+                    "For live Stake lines, run the GitHub Stake relay or laptop relay script."
+                )
+            ),
+        }
     from bet_placer.data.stake_browser import browser_status, warmup_visible
     from bet_placer.engine.stake_odds import refresh_stake_overlay, stake_overlay_status
 
@@ -451,6 +474,29 @@ def portfolio_state():
     from bet_placer.portfolio.store import get_portfolio_state
 
     return get_portfolio_state()
+
+
+@app.post("/api/slip/record")
+def slip_record(payload: dict):
+    """Park bet-slip legs into the paper book so craft can learn when they settle."""
+    from bet_placer.ml.slip_learn import record_slip_tickets
+
+    legs = payload.get("legs") if isinstance(payload, dict) else None
+    return record_slip_tickets(legs or [])
+
+
+@app.post("/api/slip/settle")
+def slip_settle(payload: dict):
+    """Mark a slip ticket won/lost and blend into craft / strategy weights."""
+    from bet_placer.ml.slip_learn import settle_slip_ticket
+
+    tid = (payload or {}).get("id") or (payload or {}).get("ticket_id")
+    won = bool((payload or {}).get("won"))
+    sport = (payload or {}).get("sport")
+    out = settle_slip_ticket(str(tid or ""), won=won, sport=sport)
+    if not out.get("ok"):
+        raise HTTPException(status_code=404, detail=out.get("error") or "ticket_not_found")
+    return out
 
 
 @app.post("/api/portfolio/privacy")
@@ -743,7 +789,36 @@ def model_craft():
 def model_insights():
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
     from bet_placer.ml.model_insights import build_model_insights
-    return build_model_insights()
+
+    try:
+        return build_model_insights()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("model insights failed: %s", exc)
+        try:
+            from bet_placer.ml.model_insights import build_model_insights
+            from bet_placer.ml.params import load_params
+            return build_model_insights(params=load_params(force=False))
+        except Exception:
+            from bet_placer.ml.craft_store import progress_snapshot
+            craft = progress_snapshot()
+            ts = craft.get("train_status") or {}
+            return {
+                "status": "degraded",
+                "total_corpus": 0,
+                "sports": {},
+                "containers": [],
+                "craft": {
+                    "n_epochs": craft.get("n_epochs") or 0,
+                    "holdout_roi": ts.get("holdout_roi"),
+                    "holdout_accuracy": ts.get("holdout_accuracy"),
+                    "train_status": ts,
+                    "target_roi": 0.25,
+                    "target_accuracy": 0.60,
+                },
+                "curves": {},
+                "insights": ["Model desk loading — craft snapshot only."],
+            }
 
 
 @app.get("/api/model/report")

@@ -953,6 +953,21 @@ def _profit_route_quality(p: dict) -> int:
     return -3
 
 
+def _core_market_score(slip: dict) -> int:
+    """Prefer 1X2 / ML / DNB / OU / BTTS / AH — demote cards/corners props as top rec."""
+    core = {
+        "match_winner", "double_chance", "draw_no_bet", "over_under_goals",
+        "btts", "asian_handicap", "h2h", "moneyline",
+    }
+    niche = {"cards", "corners", "player_goal", "team_first_goal", "half_time", "situation"}
+    legs = slip.get("legs") or []
+    if not legs:
+        return 0
+    c = sum(1 for l in legs if str(l.get("market") or "").lower() in core)
+    n = sum(1 for l in legs if str(l.get("market") or "").lower() in niche)
+    return c * 3 - n * 4
+
+
 def _stern_rec_rank(p: dict) -> tuple:
     """Higher = safer / better top rec."""
     hp = float(p.get("hit_probability") or 0)
@@ -969,6 +984,7 @@ def _stern_rec_rank(p: dict) -> tuple:
     n_legs = len(legs)
     spread_bonus = 0
     return (
+        _core_market_score(p),
         spread_bonus,
         _profit_route_quality(p),
         anchor_p,
@@ -977,6 +993,7 @@ def _stern_rec_rank(p: dict) -> tuple:
         1 if _card_has_target_route(p, tgt) else 0,
         1 if _stern_primary_eligible(p) else 0,
         1 if tab == "min_loss" else 0,
+        1 if tab == "singles_focus" else 0,
         1 if anchor_p >= CONFIDENT_WIN else 0,
         hp,
         likely / budget,
@@ -1229,6 +1246,7 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
     if full_target:
         full_target.sort(
             key=lambda p: (
+                _core_market_score(p),
                 _profit_route_quality(p),
                 _best_win_prob(p),
                 -len(p.get("legs") or []),

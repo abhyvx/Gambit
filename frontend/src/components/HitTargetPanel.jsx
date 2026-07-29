@@ -14,23 +14,22 @@ function rejectAntiThesisPlan(plan, home, away) {
   const h = home.toLowerCase()
   const a = away.toLowerCase()
   const blob = JSON.stringify(plan).toLowerCase()
-  if (blob.includes(`draw or ${a}`) && !blob.includes(`draw or ${h}`)) return true
-  if (blob.includes('draw & no') && !blob.includes(h)) return true
   if (blob.includes(`${h}/${a}`) || blob.includes(`${a}/${h}`)) return true
-  if (blob.includes(`${a} to win`) && !blob.includes(`${h} to win`)) return true
+  if (blob.includes(`${h} to win`) && blob.includes(`${a} to win`) && !blob.includes('double')) return true
   return false
 }
 
 function filterPlans(raw, home, away) {
-  return (raw || []).filter((p) => {
+  const base = (raw || []).filter((p) => {
     const t = p?.plan_type
     if (!t || !ALLOWED_TYPES.has(t)) return false
-    if (rejectAntiThesisPlan(p, home, away)) return false
     const lbl = `${p.plan_type_label || ''} ${p.path_headline || ''}`.toLowerCase()
     if (lbl.includes('same-game multi') && t !== 'stake_combo') return false
     if (lbl.includes('sgm') && t !== 'stake_combo' && !lbl.includes('stake combo')) return false
     return true
-  }).slice(0, 12)
+  })
+  const aligned = base.filter((p) => !rejectAntiThesisPlan(p, home, away))
+  return (aligned.length ? aligned : base).slice(0, 12)
 }
 
 function planMeta(p) {
@@ -110,10 +109,13 @@ export default function HitTargetPanel({ home, away, status, autoLoad = false, s
     setBudgetDraft(String(perMatchBudget))
   }, [perMatchBudget])
 
-  const findPath = useCallback(() => {
+  const findPath = useCallback((overrideTarget) => {
     if (!home || !away || status === 'completed') return
     const budget = Math.max(1, Math.min(100000, Number(budgetDraft) || perMatchBudget))
-    const target = Math.max(100, Math.min(100000, Number(targetDraft) || targetCashout))
+    const target = Math.max(
+      budget + 1,
+      Math.min(100000, Number(overrideTarget ?? targetDraft) || targetCashout),
+    )
     setBudgetDraft(String(budget))
     setTargetDraft(String(target))
     updatePerMatchBudget(budget)
@@ -122,10 +124,27 @@ export default function HitTargetPanel({ home, away, status, autoLoad = false, s
     setError(null)
     fetchHitTarget({
       home, away, budgetInr: budget, targetCashoutInr: target,
-      goal: bettorStyle?.goal, risk: bettorStyle?.risk, structure: bettorStyle?.structure,
+      goal: bettorStyle?.goal || 'hit_target', risk: bettorStyle?.risk, structure: bettorStyle?.structure,
       sport,
     })
       .then((res) => {
+        // Auto-step down to what the board can actually pay
+        const maxPay = Number(res?.max_achievable_inr || 0)
+        if (res?.impossible && maxPay > budget + 20 && !overrideTarget) {
+          const stepped = Math.max(budget + 50, Math.floor(maxPay * 0.92))
+          if (stepped < target) {
+            setTargetDraft(String(stepped))
+            updateTargetCashout(stepped)
+            return fetchHitTarget({
+              home, away, budgetInr: budget, targetCashoutInr: stepped,
+              goal: 'hit_target', risk: bettorStyle?.risk, structure: bettorStyle?.structure,
+              sport,
+            }).then((res2) => {
+              setData({ ...res2, auto_adjusted_from: target, auto_adjusted_to: stepped })
+              setOpenIdx(0)
+            })
+          }
+        }
         setData(res)
         setOpenIdx(0)
       })
@@ -256,13 +275,28 @@ export default function HitTargetPanel({ home, away, status, autoLoad = false, s
       )}
 
       {!loading && !error && data?.impossible && (
-        <div className="skip-banner skip-hard">
-          <strong>Can&apos;t reach {formatINR(targetNum)} with this budget</strong>
-          <p>{data.impossible_reason || data.summary}</p>
+        <div className="skip-banner skip-caution">
+          <strong>Can&apos;t reach {formatINR(targetNum)} with ₹{budgetNum} budget</strong>
+          <p>{data.impossible_reason || data.summary || 'Odds on this board are too short for that multiple.'}</p>
           {data.max_achievable_inr != null && (
-            <p className="muted">Max payout: {formatINR(data.max_achievable_inr)}</p>
+            <p className="muted">Max payout on priced markets: {formatINR(data.max_achievable_inr)}</p>
+          )}
+          {Number(data.max_achievable_inr) > budgetNum + 20 && (
+            <button
+              type="button"
+              className="stake-open-btn"
+              onClick={() => findPath(Math.floor(Number(data.max_achievable_inr) * 0.92))}
+            >
+              Find paths to {formatINR(Math.floor(Number(data.max_achievable_inr) * 0.92))}
+            </button>
           )}
         </div>
+      )}
+
+      {!loading && !error && data?.auto_adjusted_from && plans.length > 0 && (
+        <p className="muted hit-target-idle">
+          Target stepped from {formatINR(data.auto_adjusted_from)} → {formatINR(data.auto_adjusted_to)} so a path exists on this board.
+        </p>
       )}
 
       {!loading && !error && plans.length > 0 && !data?.impossible && (

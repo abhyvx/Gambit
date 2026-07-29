@@ -31,6 +31,26 @@ function poolFromCaches() {
   return rows
 }
 
+/** Stamp Stake handle/bettors onto board rows so Top matches rank by popularity. */
+function enrichWithPopularity(rows, bets) {
+  const byId = new Map()
+  for (const b of bets || []) {
+    if (b.event_id == null) continue
+    const cur = byId.get(b.event_id) || {}
+    byId.set(b.event_id, {
+      handle_usd: Math.max(Number(cur.handle_usd) || 0, Number(b.handle_usd) || 0) || undefined,
+      bettors: Math.max(Number(cur.bettors) || 0, Number(b.bettors) || 0) || undefined,
+      books: Math.max(Number(cur.books) || 0, Number(b.books) || 0) || undefined,
+    })
+  }
+  if (!byId.size) return rows
+  return rows.map((ev) => {
+    const pop = byId.get(ev.id)
+    if (!pop) return ev
+    return { ...ev, ...pop, extra: { ...(ev.extra || {}), ...pop } }
+  })
+}
+
 export default function HomePage() {
   const navigate = useNavigate()
   const [pool, setPool] = useState(() => poolFromCaches())
@@ -99,9 +119,12 @@ export default function HomePage() {
       })
     })
 
-    fetchMarketTop(4)
+    fetchMarketTop(8)
       .then((r) => {
-        if (!cancelled) setMarketBets(r.bets || [])
+        if (cancelled) return
+        const bets = r.bets || []
+        setMarketBets(bets)
+        setPool((prev) => enrichWithPopularity(prev, bets))
       })
       .catch(() => { if (!cancelled) setMarketBets([]) })
       .finally(() => { if (!cancelled) setMarketLoading(false) })
@@ -143,6 +166,7 @@ export default function HomePage() {
 
       <section className="featured-rail">
         <div className="section-label">Top matches</div>
+        <p className="section-sub">Most popular across soccer, basketball, and cricket.</p>
         {featuredLoading && !featured.length && <BoardBuffer rows={4} label="Loading fixtures…" />}
         {!featured.length && !featuredLoading && <p className="muted">No live or upcoming fixtures right now.</p>}
         {!!featured.length && (
@@ -170,14 +194,14 @@ export default function HomePage() {
 
       <section className="top-picks-block">
         <div className="section-label">Top bets</div>
-        <p className="section-sub">Open matches only. Ranked by handle / books - tap a ticket for payout.</p>
+        <p className="section-sub">Hot singles and combos. Amount is optional.</p>
         {marketLoading && !marketBets.length && <BoardBuffer rows={3} label="Loading market…" />}
         {!marketLoading && !marketBets.length && (
           <p className="muted">No open priced markets with volume right now.</p>
         )}
         <div className="bet-ticket-list">
           {marketBets.map((b, i) => (
-            <TopBetTicket key={`${b.event_id}-${i}`} bet={b} onOpenMatch={openMatch} />
+            <TopBetTicket key={`${b.event_id}-${b.market}-${b.selection}-${i}`} bet={b} onOpenMatch={openMatch} />
           ))}
         </div>
       </section>

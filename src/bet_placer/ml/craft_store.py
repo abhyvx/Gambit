@@ -75,6 +75,27 @@ def set_meta(key: str, value: Any) -> None:
     con.close()
 
 
+def allowed_sports() -> set[str]:
+    """Live picks: all three sports. Weak sports use a higher confidence floor in smart_picks."""
+    return {"soccer", "basketball", "cricket"}
+
+
+def sport_min_probability(sport: str, default: float = 0.60) -> float:
+    """Higher floor for sports still failing holdout — still offered, not banned."""
+    from bet_placer.ml.craft_train import FLOOR_P, TARGET_ACC
+
+    led = (get_meta("sport_ledger") or {}).get(sport) or {}
+    ts = get_meta("train_status") or {}
+    sp_min = (ts.get("sport_min_p") or {}).get(sport)
+    if sp_min is not None:
+        return max(FLOOR_P, float(sp_min))
+    if led.get("ok") is False or (led.get("roi") is not None and float(led["roi"]) <= 0):
+        return min(0.78, max(FLOOR_P, TARGET_ACC + 0.05))
+    if led.get("hit_rate") is not None and float(led["hit_rate"]) < TARGET_ACC:
+        return min(0.78, max(FLOOR_P, TARGET_ACC + 0.05))
+    return max(FLOOR_P, float(default))
+
+
 def get_meta(key: str, default=None):
     con = connect()
     row = con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -167,9 +188,13 @@ def archive_block(block_size: int = 10) -> dict[str, Any]:
     if prev:
         set_meta("craft_block_prev", prev)
     set_meta("craft_block", block)
-    # Append to short history of blocks
+    # Append to short history of blocks — skip flat duplicates
     hist = list(get_meta("craft_blocks") or [])
-    hist.append({k: block[k] for k in ("at", "epochs", "mean_roi", "mean_acc", "label")})
+    entry = {k: block[k] for k in ("at", "epochs", "mean_roi", "mean_acc", "label")}
+    if hist and entry.get("mean_roi") is not None and hist[-1].get("mean_roi") is not None:
+        if abs(float(hist[-1]["mean_roi"]) - float(entry["mean_roi"])) < 1e-6:
+            return block
+    hist.append(entry)
     set_meta("craft_blocks", hist[-24:])
     return block
 
@@ -177,6 +202,7 @@ def archive_block(block_size: int = 10) -> dict[str, Any]:
 def progress_snapshot(limit_epochs: int = 80) -> dict[str, Any]:
     """Overall craft progress for the Model page — aggregates only."""
     con = connect()
+    n_epochs_total = int(con.execute("SELECT COUNT(*) FROM epochs").fetchone()[0] or 0)
     epochs = [
         dict(r)
         for r in con.execute(
@@ -191,15 +217,25 @@ def progress_snapshot(limit_epochs: int = 80) -> dict[str, Any]:
     ]
     status = get_meta("train_status") or {}
     best = get_meta("best_roi") or {}
-    # Hide sentinel / invalid bests from UI (-1 init or sub-floor accuracy)
+    # Hide sentinel / invalid bests from UI (-1 init, sub-floor accuracy, or one-sport crowns)
     if best.get("roi") is not None:
         try:
             br = float(best.get("roi"))
             ba = float(best.get("accuracy") or 0)
-            if br < -0.5 or ba < 0.60:
+            by_sp = best.get("by_sport") or {}
+            sports_n = sum(1 for sp in ("soccer", "basketball", "cricket") if int((by_sp.get(sp) or {}).get("n") or 0) >= 40)
+            if br < -0.5 or ba < 0.60 or sports_n < 3:
                 best = {}
         except (TypeError, ValueError):
             best = {}
+    champ = get_meta("craft_champion") or {}
+    if champ.get("by_sport"):
+        try:
+            from bet_placer.ml.craft_train import _sports_all_present
+            if not _sports_all_present(champ.get("by_sport") or {}):
+                champ = {}
+        except Exception:
+            pass
     block = get_meta("craft_block") or {}
     block_prev = get_meta("craft_block_prev") or {}
     blocks = get_meta("craft_blocks") or []
@@ -217,11 +253,14 @@ def progress_snapshot(limit_epochs: int = 80) -> dict[str, Any]:
     rois = [float(e["roi"]) for e in epochs if e.get("roi") is not None]
     accs = [float(e["accuracy"]) for e in epochs if e.get("accuracy") is not None]
     latest = epochs[-1] if epochs else {}
+    # Align with craft_train.MIN_BETS — 10k was unreachable on holdout desks
+    from bet_placer.ml.craft_train import MIN_BETS, TARGET_ROI
     return {
         "source": "boards+paired_closes",
         "epochs": epochs,
         "equity_curve": equity[-120:],
-        "n_epochs": len(epochs),
+        "n_epochs": n_epochs_total,
+        "n_epochs_window": len(epochs),
         "latest": {
             "epoch": latest.get("epoch"),
             "roi": latest.get("roi"),
@@ -242,14 +281,14 @@ def progress_snapshot(limit_epochs: int = 80) -> dict[str, Any]:
         "block": block,
         "block_prev": block_prev,
         "blocks": blocks,
-        "target_roi": 0.25,
+        "target_roi": TARGET_ROI,
         "target_accuracy": 0.60,
         "hit_target": bool(
             best.get("roi") is not None
-            and float(best.get("roi") or 0) >= 0.25
+            and float(best.get("roi") or 0) >= TARGET_ROI
             and float(best.get("accuracy") or 0) >= 0.60
-            and int(best.get("bets") or 0) >= 10_000
+            and int(best.get("bets") or 0) >= MIN_BETS
         ),
         "holdout": get_meta("craft_holdout_v2") or {},
-        "champion": best if best.get("holdout") else (get_meta("craft_champion") or {}),
+        "champion": best if best.get("holdout") else champ,
     }

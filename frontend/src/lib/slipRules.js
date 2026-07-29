@@ -59,6 +59,7 @@ export function canAddLeg(legs, next) {
 }
 
 export function legFromBet(b, stake) {
+  const kind = b.ticket_kind || (b.market === 'stake_combo' ? 'combo' : 'single')
   return {
     id: `${b.event_id}-${b.market || 'match_winner'}-${b.selection}`,
     eventId: String(b.event_id),
@@ -74,5 +75,7 @@ export function legFromBet(b, stake) {
     sportKey: b.sport_key,
     league: b.league,
     stake: stake || null,
+    ticketKind: kind,
+    legs: Array.isArray(b.legs) ? b.legs : null,
   }
 }

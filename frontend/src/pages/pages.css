@@ -4142,6 +4142,27 @@
   text-transform: uppercase;
   color: var(--text-dim);
 }
+.bet-ticket-v-kind {
+  margin-left: auto;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--blue, #1475e1);
+}
+.bet-ticket-v.is-combo {
+  border-color: rgba(20, 117, 225, 0.28);
+}
+.bet-ticket-v-legs {
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+.bet-ticket-v-legs li {
+  margin: 0 0 2px;
+}
 .bet-ticket-v-match {
   display: flex;
   flex-direction: column;

@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react'
 import { canAddLeg, combinedOdds, slipMode } from '../lib/slipRules'
+import { recordSlipLegs, settleSlipLeg } from '../api/index'
 
 const DEFAULT_STYLE = {
   goal: 'value',
@@ -35,14 +36,32 @@ export function BankrollProvider({ children }) {
   })
   const [targetCashout, setTargetCashout] = useState(() => {
     const saved = localStorage.getItem('target_cashout_inr')
-    return saved ? Number(saved) : 1000
+    if (saved) return Number(saved)
+    const budget = Number(localStorage.getItem('per_match_budget_inr') || 200)
+    return Math.max(300, Math.round(budget * 2.5))
   })
   const [bettorStyle, setBettorStyleState] = useState(loadStyle)
 
   const [legs, setLegs] = useState([])
   const [legStakes, setLegStakes] = useState({}) // legId -> free-typed string
+  const [legResults, setLegResults] = useState({}) // legId -> 'won' | 'lost'
   const [multiStake, setMultiStakeState] = useState('')
   const [slipMsg, setSlipMsg] = useState(null)
+  const [slipOpen, setSlipOpenState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('slip_rail_open')
+      // Default closed so the board isn't squeezed by an empty rail
+      return saved == null ? false : saved === '1'
+    } catch {
+      return false
+    }
+  })
+
+  const setSlipOpen = (next) => {
+    const open = typeof next === 'function' ? next(slipOpen) : Boolean(next)
+    setSlipOpenState(open)
+    try { localStorage.setItem('slip_rail_open', open ? '1' : '0') } catch { /* ignore */ }
+  }
 
   const updatePerMatchBudget = (val) => {
     const n = Math.max(1, Math.min(100000, Number(val) || 0))
@@ -66,7 +85,13 @@ export function BankrollProvider({ children }) {
   }
 
   const setLegStake = (id, val) => {
-    setLegStakes((prev) => ({ ...prev, [id]: String(val ?? '') }))
+    const next = String(val ?? '')
+    setLegStakes((prev) => ({ ...prev, [id]: next }))
+    const leg = (legs || []).find((l) => l.id === id)
+    const stake = Number(next)
+    if (leg && stake >= 10 && Number(leg.odds) > 1 && !legResults[id]) {
+      recordSlipLegs([{ ...leg, stake }]).catch(() => {})
+    }
   }
 
   const setMultiStake = (val) => {
@@ -75,6 +100,7 @@ export function BankrollProvider({ children }) {
 
   const addLeg = (leg) => {
     let ok = false
+    let queued = null
     setLegs((prev) => {
       const check = canAddLeg(prev, leg)
       if (!check.ok) {
@@ -88,8 +114,17 @@ export function BankrollProvider({ children }) {
       if (Number(leg.stake) >= 10) {
         setLegStakes((st) => (st[id] != null && st[id] !== '' ? st : { ...st, [id]: String(leg.stake) }))
       }
+      queued = { ...leg, id }
+      setSlipOpen(true)
       return [...prev, leg]
     })
+    if (ok && queued) {
+      // Fire-and-forget: park for craft learning once stake is real
+      const stake = Number(queued.stake)
+      if (stake >= 10 && Number(queued.odds) > 1) {
+        recordSlipLegs([{ ...queued, stake }]).catch(() => {})
+      }
+    }
     return ok
   }
 
@@ -100,14 +135,39 @@ export function BankrollProvider({ children }) {
       delete next[id]
       return next
     })
+    setLegResults((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     setSlipMsg(null)
   }
 
   const clearSlip = () => {
     setLegs([])
     setLegStakes({})
+    setLegResults({})
     setMultiStakeState('')
     setSlipMsg(null)
+  }
+
+  const settleLeg = async (id, won) => {
+    const leg = (legs || []).find((l) => l.id === id)
+    if (!leg) return
+    const stake = Number(legStakes[id] || leg.stake || 0)
+    if (!(stake >= 1) || !(Number(leg.odds) > 1)) {
+      setSlipMsg('Set an amount before marking won/lost')
+      return
+    }
+    try {
+      // Ensure ticket exists in paper book, then settle into craft weights
+      await recordSlipLegs([{ ...leg, stake }])
+      await settleSlipLeg({ id, won, sport: leg.sportKey || leg.sport })
+      setLegResults((prev) => ({ ...prev, [id]: won ? 'won' : 'lost' }))
+      setSlipMsg(won ? 'Logged win. Model updated.' : 'Logged loss. Model updated.')
+    } catch (err) {
+      setSlipMsg(err?.message || 'Could not update model from this bet')
+    }
   }
 
   const setSlip = (payload) => {
@@ -129,6 +189,7 @@ export function BankrollProvider({ children }) {
       league: payload.meta,
     })).filter((l) => l.odds)
     setLegs(next)
+    setSlipOpen(true)
     setSlipMsg(null)
   }
 
@@ -142,10 +203,11 @@ export function BankrollProvider({ children }) {
       return {
         ...leg,
         stake,
+        result: legResults[leg.id] || null,
         payout: payoutFor(stake, leg.odds),
       }
     })
-  ), [legs, legStakes])
+  ), [legs, legStakes, legResults])
 
   const multiPayout = showMulti ? payoutFor(multiStake, odds) : null
 
@@ -158,6 +220,9 @@ export function BankrollProvider({ children }) {
   const multiStakeNum = Number(multiStake) > 0 ? Number(multiStake) : 0
   const totalStake = singlesStakeTotal + (showMulti ? multiStakeNum : 0)
   const totalPayout = singlesPayoutTotal + (showMulti && multiPayout != null ? multiPayout : 0)
+
+  // Dynamic rail width: closed / empty / filled
+  const slipWidth = !slipOpen ? 0 : (legs.length ? 340 : 280)
 
   const slip = legs.length
     ? {
@@ -202,6 +267,10 @@ export function BankrollProvider({ children }) {
       removeLeg,
       setSlip,
       clearSlip,
+      settleLeg,
+      slipOpen,
+      setSlipOpen,
+      slipWidth,
       // legacy aliases so older pages don't crash
       slipStake: multiStake,
       updateSlipStake: setMultiStake,

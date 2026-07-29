@@ -41,6 +41,7 @@ frontend/node_modules/
 # ───── Editors / OS ─────
 .idea/
 .vscode/
+.cursor/
 *.swp
 .DS_Store
 Thumbs.db

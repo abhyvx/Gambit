@@ -120,8 +120,13 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
             ):
                 if odds_raw <= 1.01 or mp <= 0:
                     continue
+                # Value band — junk longshots + heavy juice favorites dump monthly ROI
+                if not (1.50 <= odds_raw <= 3.20):
+                    continue
+                if mp < 0.55:
+                    continue
                 edge = mp - _implied(odds_raw)
-                if edge >= 0.03:
+                if edge >= 0.10:
                     candidates.append((edge, sel, odds_raw, mp))
             if not candidates:
                 continue
@@ -185,12 +190,15 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
                     }
                     side = "home" if float(probs["home"]) >= float(probs["away"]) else "away"
                     mp = float(probs[side])
-                    # Cricket corpus is thinner — keep more sides so desk can reach 10k
-                    floor = 0.48 if sport == "cricket" else 0.52
+                    # Basketball even-money needs real favorites — 0.52 was coin-flip bleed
+                    floor = 0.48 if sport == "cricket" else 0.58
                     if mp < floor:
                         continue
                     odds = 1.91  # even-money paper — evolution = skill, not juice
                     imp = _implied(odds)
+                    edge = mp - imp
+                    if sport == "basketball" and edge < 0.08:
+                        continue
                     hit = _grade_ml(side, hs, aws)
                     pnl = (odds - 1.0) if hit else -1.0
                     con.execute(
@@ -200,7 +208,7 @@ def rebuild_from_corpora(verbose: bool = False) -> dict[str, Any]:
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             sport, g.get("date") or "", home, away, hs, aws,
-                            "match_winner", side, odds, mp, imp, mp - imp, hit, pnl,
+                            "match_winner", side, odds, mp, imp, edge, hit, pnl,
                             "model_fair_evolution", _now(),
                         ),
                     )

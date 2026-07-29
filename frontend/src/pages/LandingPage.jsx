@@ -16,7 +16,7 @@ export default function LandingPage() {
       <main className="landing-content">
         <h1 className="landing-title">GAMBIT</h1>
         <p className="landing-sub">
-          Live boards. Real crests. Prices when the market has them.
+          Soccer, basketball, and cricket boards with prices.
         </p>
         <button
           type="button"

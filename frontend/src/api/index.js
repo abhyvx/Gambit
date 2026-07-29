@@ -251,6 +251,59 @@ export async function refreshPortfolioSnapshot() {
   return r.json()
 }
 
+export async function confirmPortfolioSlip({ legs, multiStake, multiOdds } = {}) {
+  const r = await fetch(`${API}/portfolio/confirm-slip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      legs: legs || [],
+      multi_stake: multiStake != null && multiStake !== '' ? Number(multiStake) : null,
+      multi_odds: multiOdds != null ? Number(multiOdds) : null,
+    }),
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!r.ok) {
+    const raw = await r.text()
+    let msg = `Could not confirm slip (${r.status})`
+    try {
+      const data = JSON.parse(raw)
+      if (data?.detail) msg = typeof data.detail === 'string' ? data.detail : msg
+    } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function addManualPortfolioBet(payload) {
+  const r = await fetch(`${API}/portfolio/bets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!r.ok) {
+    const raw = await r.text()
+    let msg = `Could not save bet (${r.status})`
+    try {
+      const data = JSON.parse(raw)
+      if (data?.detail) msg = typeof data.detail === 'string' ? data.detail : msg
+    } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function updatePortfolioBetResult(betId, result, payout = null) {
+  const r = await fetch(`${API}/portfolio/bets/${encodeURIComponent(betId)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ result, payout }),
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!r.ok) throw new Error(`Could not update bet (${r.status})`)
+  return r.json()
+}
+
 export async function recordSlipLegs(legs) {
   const r = await fetch(`${API}/slip/record`, {
     method: 'POST',

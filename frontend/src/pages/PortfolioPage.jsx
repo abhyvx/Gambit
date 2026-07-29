@@ -7,6 +7,8 @@ import {
   checkHealth,
   refreshPortfolioSnapshot,
   updatePortfolioPrivacy,
+  addManualPortfolioBet,
+  updatePortfolioBetResult,
 } from '../api'
 import PortfolioCurve from '../components/PortfolioCurve'
 import { useEntryReady } from '../components/EntryScreen'
@@ -34,6 +36,10 @@ export default function PortfolioPage() {
   const [err, setErr] = useState('')
   const [cloudStake, setCloudStake] = useState(false)
   const [stakeLive, setStakeLive] = useState(false)
+  const [manual, setManual] = useState({
+    home: '', away: '', selection: '', odds: '', stake: '', result: 'open', market: 'manual',
+  })
+  const [manualBusy, setManualBusy] = useState(false)
   useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
@@ -63,7 +69,7 @@ export default function PortfolioPage() {
         setState(next)
         const live = Boolean(health?.stake_live || health?.stake_remote)
         setStakeLive(live)
-        // Host has no live browser path — journal still works from last sync.
+        // Host has no live browser path; journal still works from last sync / manual bets.
         setCloudStake(health?.stake_use_browser === false && !health?.stake_remote)
         if (
           next?.privacy?.portfolio_enabled &&
@@ -89,22 +95,23 @@ export default function PortfolioPage() {
   const browser = connection?.browser || {}
   const portfolio = state?.portfolio || {}
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
-  const syncStatus = connection.last_sync_status || 'never'
+  const syncStatus = connection.last_sync_status || 'ready'
   const betCount = Array.isArray(portfolio.bets) ? portfolio.bets.length : 0
-  const hasJournal = betCount > 0 || syncStatus === 'imported' || connection.status === 'relay'
+  const hasJournal = betCount > 0 || syncStatus === 'imported' || syncStatus === 'confirmed' || connection.status === 'relay'
   const syncMessage = connection.last_sync_message || ''
   const loginUrl = connection.login_url || browser.login_url || ''
-  const canLiveConnect = stakeLive || !cloudStake
   const stakeLoggedIn = connection.status === 'authenticated'
     || connection.status === 'relay'
     || Boolean(browser.have_auth_token)
-  const canSync = portfolioReady && canLiveConnect && (stakeLoggedIn || browser.ready)
+  // Always allow Connect / Sync clicks; backend returns a clear error if Stake is unavailable.
+  const canSync = portfolioReady
   const needsSignIn = ['awaiting_login', 'auth_required'].includes(connection.status)
     || syncStatus === 'auth_required'
-  const softSetup = !hasJournal && (
-    ['setup', 'cloud'].includes(connection.status) || (cloudStake && !stakeLive)
-  )
-  const showAttention = needsSignIn && !hasJournal
+  const showStatusError = Boolean(err)
+    || syncStatus === 'error'
+    || needsSignIn
+    || (cloudStake && !stakeLive && !hasJournal)
+  const statusBanner = err || syncMessage || ''
   const money = (n) => fmtMoney(n, portfolio.display_currency)
 
   const summary = useMemo(() => ([
@@ -135,8 +142,8 @@ export default function PortfolioPage() {
     setErr('')
     try {
       const next = await updatePortfolioPrivacy({
-        portfolio_enabled: patch.portfolio_enabled ?? privacy.portfolio_enabled ?? false,
-        risk_acknowledged: patch.risk_acknowledged ?? privacy.risk_acknowledged ?? false,
+        portfolio_enabled: patch.portfolio_enabled ?? privacy.portfolio_enabled ?? true,
+        risk_acknowledged: patch.risk_acknowledged ?? privacy.risk_acknowledged ?? true,
         learning_opt_in: patch.learning_opt_in ?? privacy.learning_opt_in ?? false,
       })
       setState(next)
@@ -155,7 +162,10 @@ export default function PortfolioPage() {
       setState(next)
       const status = next?.connection?.last_sync_status
       const message = next?.connection?.last_sync_message
-      if (key === 'snapshot' && status && status !== 'imported' && message) {
+      if (message && (status === 'error' || status === 'auth_required' || status === 'needs_reconnect' || status === 'setup')) {
+        setErr(message)
+      }
+      if (key === 'snapshot' && status && !['imported', 'confirmed', 'authenticated'].includes(status) && message) {
         setErr(message)
       }
     } catch (e) {
@@ -176,7 +186,7 @@ export default function PortfolioPage() {
           <span className="page-eyebrow">PORTFOLIO</span>
           <h1>Betting journal</h1>
           <p className="subtitle">
-            Imported from your Stake session. Strengths, leaks, and recent form.
+            Stake imports plus bets you confirm from your slip. Strengths, leaks, and recent form.
           </p>
           {portfolio.profile?.summary && (
             <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
@@ -197,56 +207,39 @@ export default function PortfolioPage() {
             disabled={!canSync || busy === 'snapshot'}
             title={
               !portfolioReady
-                ? 'Enable portfolio sync and accept the privacy note first'
-                : !canLiveConnect
-                  ? 'Sync will be available once Stake connect is ready'
-                  : !stakeLoggedIn && !browser.ready
-                    ? 'Connect Stake first'
-                    : 'Refresh your Stake bet history'
+                ? 'Enable portfolio sync below first'
+                : 'Refresh Stake bet history'
             }
           >
-            {busy === 'snapshot' ? 'Refreshing…' : 'Sync'}
+            {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
           </button>
         </div>
       </header>
 
-      {hasJournal && (
+      {(showStatusError || statusBanner) && (
+        <div className={`portfolio-alert ${showStatusError ? 'error' : ''}`}>
+          {statusBanner || 'Connect Stake or confirm bets from your slip to build your journal.'}
+          {loginUrl ? (
+            <>
+              {' '}
+              <a href={loginUrl} target="_blank" rel="noreferrer">Open Stake window</a>
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {hasJournal && !showStatusError && (
         <div className="portfolio-alert">
           {syncMessage || `Journal ready${betCount ? ` · ${betCount} bets` : ''}.`}
           {connection.last_sync_at ? ` Updated ${fmtTs(connection.last_sync_at)}.` : ''}
         </div>
       )}
 
-      {softSetup && !err && (
-        <div className="portfolio-alert">
-          Connect Stake once to import your betting journal. Enable private sync below, then tap Connect Stake.
-          {canLiveConnect
-            ? ' We’ll open a secure sign-in window.'
-            : ' Live connect is finishing setup — your last synced journal still loads if available.'}
-        </div>
-      )}
-
-      {showAttention && (
-        <div className="portfolio-alert">
-          {syncMessage || 'Sign into Stake, then tap Connect Stake again.'}
-          {loginUrl ? (
-            <>
-              {' '}
-              <a href={loginUrl} target="_blank" rel="noreferrer">
-                Open Stake window
-              </a>
-            </>
-          ) : null}
-        </div>
-      )}
-
       {connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
         <div className="portfolio-alert">
-          Stake is connected. Tap Sync to import your history.
+          Stake is connected. Tap Sync Stake to import your history.
         </div>
       )}
-
-      {err && <div className="portfolio-alert error">{err}</div>}
 
       <section className="portfolio-topline fade-up">
         {summary.map((item) => (
@@ -448,7 +441,7 @@ export default function PortfolioPage() {
         </div>
         {audit.message && <p className="muted">{audit.message}</p>}
         {syncMessage && (
-          <p className={`muted ${showAttention ? 'sync-status-warn' : ''}`}>
+          <p className={`muted ${showStatusError ? 'sync-status-warn' : ''}`}>
             Sync status: <strong>{syncStatus}</strong> - {syncMessage}
           </p>
         )}
@@ -457,9 +450,78 @@ export default function PortfolioPage() {
       <section className="portfolio-card fade-up">
         <div className="portfolio-card-head">
           <div>
+            <h2>Add a past bet</h2>
+            <p className="muted">
+              Log a bet you already placed (any book). Use Confirm I placed this on the slip for live picks.
+            </p>
+          </div>
+        </div>
+        <form
+          className="portfolio-controls"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            setManualBusy(true)
+            setErr('')
+            try {
+              const next = await addManualPortfolioBet({
+                home: manual.home,
+                away: manual.away,
+                selection: manual.selection,
+                market: manual.market || 'manual',
+                odds: manual.odds ? Number(manual.odds) : null,
+                stake: Number(manual.stake),
+                result: manual.result || 'open',
+              })
+              setState(next)
+              setManual({ home: '', away: '', selection: '', odds: '', stake: '', result: 'open', market: 'manual' })
+            } catch (ex) {
+              setErr(fetchErrorMessage(ex, 'Could not save manual bet.'))
+            } finally {
+              setManualBusy(false)
+            }
+          }}
+        >
+          <label className="portfolio-check compact">
+            <span>Home</span>
+            <input value={manual.home} onChange={(e) => setManual((m) => ({ ...m, home: e.target.value }))} required />
+          </label>
+          <label className="portfolio-check compact">
+            <span>Away</span>
+            <input value={manual.away} onChange={(e) => setManual((m) => ({ ...m, away: e.target.value }))} required />
+          </label>
+          <label className="portfolio-check compact">
+            <span>Selection</span>
+            <input value={manual.selection} onChange={(e) => setManual((m) => ({ ...m, selection: e.target.value }))} required />
+          </label>
+          <label className="portfolio-check compact">
+            <span>Odds</span>
+            <input value={manual.odds} onChange={(e) => setManual((m) => ({ ...m, odds: e.target.value.replace(/[^\d.]/g, '') }))} placeholder="2.10" />
+          </label>
+          <label className="portfolio-check compact">
+            <span>Stake</span>
+            <input value={manual.stake} onChange={(e) => setManual((m) => ({ ...m, stake: e.target.value.replace(/[^\d.]/g, '') }))} required placeholder="100" />
+          </label>
+          <label className="portfolio-check compact">
+            <span>Result</span>
+            <select value={manual.result} onChange={(e) => setManual((m) => ({ ...m, result: e.target.value }))}>
+              <option value="open">Open</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+              <option value="push">Push</option>
+            </select>
+          </label>
+          <button className="refresh-btn" type="submit" disabled={manualBusy}>
+            {manualBusy ? 'Saving…' : 'Add to journal'}
+          </button>
+        </form>
+      </section>
+
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
             <h2>Bet journal</h2>
             <p className="muted">
-              A cleaner ledger of what you actually placed, so you can review execution without noise.
+              Stake imports plus confirmed slip bets and manual history.
             </p>
           </div>
           <span className={`portfolio-pill ${portfolio.bets?.length ? 'ok' : 'idle'}`}>
@@ -469,8 +531,7 @@ export default function PortfolioPage() {
 
         {!portfolio.bets?.length ? (
           <p className="muted">
-            No imported bets yet. Open the Stake login window, make sure you are fully signed in, then press
-            `Refresh portfolio now`.
+            No bets yet. Confirm a slip with amounts, add a past bet above, or Connect Stake then Sync Stake.
           </p>
         ) : (
           <div className="portfolio-bets">
@@ -479,7 +540,7 @@ export default function PortfolioPage() {
                 <div className="portfolio-bet-top">
                   <div>
                     <strong>{bet.fixture_name}</strong>
-                    <div className="muted">{bet.league || 'Unknown league'} · {fmtTs(bet.created_at)}</div>
+                    <div className="muted">{(bet.source || 'stake')} · {bet.league || 'Unknown league'} · {fmtTs(bet.created_at)}</div>
                   </div>
                   <div className="portfolio-bet-badges">
                     <span className="portfolio-pill idle">{bet.bet_type || 'bet'}</span>
@@ -534,6 +595,24 @@ export default function PortfolioPage() {
                         {leg.tone === 'neutral' && <small>Neutral means the model saw little edge either way.</small>}
                       </div>
                     ))}
+                  </div>
+                )}
+                {bet.result === 'open' && (
+                  <div className="portfolio-inline-actions">
+                    <button
+                      type="button"
+                      className="refresh-btn"
+                      onClick={() => runAction('bet-won', () => updatePortfolioBetResult(bet.id, 'won'))}
+                    >
+                      Mark won
+                    </button>
+                    <button
+                      type="button"
+                      className="refresh-btn"
+                      onClick={() => runAction('bet-lost', () => updatePortfolioBetResult(bet.id, 'lost'))}
+                    >
+                      Mark lost
+                    </button>
                   </div>
                 )}
               </div>

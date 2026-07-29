@@ -18,21 +18,24 @@ done
 [ -f "$DEST/betting_evolution.db" ] || NEED_REFRESH=1
 # Stake overlay from last laptop push (survives redeploy)
 [ -f "$DEST/stake_overlay_cache.json" ] || NEED_REFRESH=1
+# Model desk cache + factor graph (charts / factor box)
+[ -f "$DEST/model_insights_cache.json" ] || NEED_REFRESH=1
+[ -f "$DEST/factor_store.json" ] || NEED_REFRESH=1
 
 if [ "$NEED_REFRESH" = "0" ]; then
-  echo "model: using cached state in $DEST"
-  exit 0
+    echo "model: using cached state in $DEST"
+    exit 0
 fi
 
 echo "model: downloading $TAG from $REPO…"
 API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
 JSON=$(curl -fsSL "$API" 2>/dev/null || true)
 if [ -z "$JSON" ] || echo "$JSON" | grep -q '"message"'; then
-  echo "model: no release yet — app runs; train via GitHub Actions"
-  exit 0
+    echo "model: no release yet — app runs; train via GitHub Actions"
+    exit 0
 fi
 
-for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json; do
+for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json model_insights_cache.json factor_store.json; do
   URL=$(echo "$JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

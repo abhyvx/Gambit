@@ -63,6 +63,20 @@ function deskHitRate(craft) {
   return hold == null ? null : Number(hold)
 }
 
+function overviewLine(ins, craft) {
+  const corpus = Number(ins?.total_corpus || 0)
+  const epochs = Number(craft?.n_epochs || craft?.train_status?.epoch || 0)
+  const boxes = (ins?.containers || []).length
+  const roi = deskRoi(craft)
+  const parts = []
+  if (corpus > 0) parts.push(`${corpus.toLocaleString()} graded matches`)
+  if (epochs > 0) parts.push(`${epochs.toLocaleString()} craft epochs`)
+  if (boxes > 0) parts.push(`${boxes} desk boxes`)
+  if (roi != null && Number.isFinite(Number(roi))) parts.push(`desk ROI ${roiPct(roi)}`)
+  if (!parts.length) return 'Training desk for soccer, basketball, and cricket.'
+  return parts.join(' · ')
+}
+
 function chartRoi(v) {
   if (v == null || !Number.isFinite(Number(v))) return '-'
   return `${(Number(v) * 100).toFixed(1)}%`
@@ -773,7 +787,9 @@ export default function ModelPage() {
       <header className="page-header">
         <div>
           <h1>Model</h1>
-          <p className="subtitle">Same test matches every craft run.</p>
+          <p className="subtitle">
+            {overviewLine(ins, craft)}
+          </p>
         </div>
         <div className="insight-header-actions">
           <button type="button" className="btn-secondary" onClick={runPaper} disabled={paperBusy || retraining}>
@@ -823,9 +839,9 @@ export default function ModelPage() {
             <small>{fmt(craft.train_status?.epoch || craft.n_epochs)} epochs</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Odds API</span>
-            <strong className="stat-value">cache</strong>
-            <small>no credit burn from this page</small>
+            <span className="stat-label">Factors</span>
+            <strong className="stat-value">{fmt(ins?.factors?.total_nodes || containers.find((c) => c.id === '18_factor_graph')?.total_nodes)}</strong>
+            <small>trained graph nodes</small>
           </div>
         </div>
       </section>

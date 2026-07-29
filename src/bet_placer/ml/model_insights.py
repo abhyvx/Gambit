@@ -6,6 +6,8 @@ building status with need/have counts.
 
 from __future__ import annotations
 
+import json
+import time
 from typing import Any
 from bet_placer.config import data_path
 
@@ -173,17 +175,14 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         }
 
     market_replay = params.get("market_replay") or report.get("market_replay") or {}
-    # Refresh niche fuel if still WC-thin
+    # Never rebuild market replay on the insights HTTP path — it OOMs/502s Render.
+    # Prefer craft meta cache; otherwise leave niches empty (containers still chart).
     if int(market_replay.get("n_bets") or 0) < 500:
         try:
-            from bet_placer.ml.market_replay import replay_multi_markets
-            from bet_placer.ml.craft_store import get_meta, set_meta
+            from bet_placer.ml.craft_store import get_meta
             cached = get_meta("market_replay_cache") or {}
             if int(cached.get("n_bets") or 0) >= 500:
                 market_replay = cached
-            else:
-                market_replay = replay_multi_markets(verbose=False)
-                set_meta("market_replay_cache", market_replay)
         except Exception:
             pass
     niches = []
@@ -393,8 +392,10 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
 
     factors = {}
     try:
-        from bet_placer.ml.factor_store import load_summary
+        from bet_placer.ml.factor_store import load_summary, rebuild as rebuild_factors
         factors = load_summary() or {}
+        if int(factors.get("total_nodes") or 0) < 10:
+            factors = rebuild_factors(params=params) or {}
     except Exception:
         factors = {}
 
@@ -467,7 +468,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         total_corpus=total_corpus,
     )
 
-    return {
+    out = {
         "status": report.get("status") or ("ready" if total_corpus else "needs_train"),
         "total_corpus": total_corpus,
         "sports": sports,
@@ -545,6 +546,240 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         "insights": _insight_bullets(
             sports, craft, best, metrics, confident, market_replay_acc, factors, betting, niches,
         ),
+    }
+    try:
+        save_insights_cache(out)
+    except Exception:
+        pass
+    return out
+
+
+_INSIGHTS_DISK = None  # set lazily via data_path
+
+
+def _insights_disk_path():
+    from bet_placer.config import data_path
+    return data_path("model_insights_cache.json")
+
+
+def save_insights_cache(payload: dict[str, Any]) -> None:
+    path = _insights_disk_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Drop bulky nested epoch dumps if craft leaked them
+    slim = dict(payload)
+    craft = dict(slim.get("craft") or {})
+    craft.pop("epochs", None)
+    craft.pop("equity_curve", None)
+    slim["craft"] = craft
+    path.write_text(json.dumps(slim), encoding="utf-8")
+
+
+def load_insights_cache(max_age_s: float = 3600.0) -> dict[str, Any] | None:
+    path = _insights_disk_path()
+    if not path.is_file():
+        return None
+    try:
+        age = time.time() - path.stat().st_mtime
+        if age > max_age_s:
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
+    """Charts that work from craft alone — used when full insights 502s or is cold."""
+    from bet_placer.ml.craft_store import progress_snapshot
+
+    craft = progress_snapshot(limit_epochs=80)
+    ts = craft.get("train_status") or {}
+    blocks = list(craft.get("blocks") or [])
+    BLOCK = 10
+
+    def _chunk(vals: list, n: int = BLOCK) -> list:
+        out = []
+        for i in range(0, len(vals), n):
+            chunk = [float(v) for v in vals[i:i + n] if v is not None]
+            if chunk:
+                out.append(sum(chunk) / len(chunk))
+        return out
+
+    rois = [float(x) for x in (craft.get("roi_trend") or []) if x is not None]
+    accs = [float(x) for x in (craft.get("accuracy_trend") or []) if x is not None]
+    if blocks:
+        craft_roi = [float(b.get("mean_roi")) for b in blocks if b.get("mean_roi") is not None]
+        craft_acc = [float(b.get("mean_acc")) for b in blocks if b.get("mean_acc") is not None]
+    else:
+        craft_roi = _chunk(rois)
+        craft_acc = _chunk(accs)
+
+    sport_roi: dict[str, list] = {s: [] for s in SPORTS}
+    sport_acc: dict[str, list] = {s: [] for s in SPORTS}
+    sport_vol: dict[str, list] = {s: [] for s in SPORTS}
+    for b in blocks[-12:]:
+        by = b.get("by_sport") or {}
+        for sp in SPORTS:
+            cell = by.get(sp) or {}
+            if cell.get("roi") is not None:
+                sport_roi[sp].append(float(cell["roi"]))
+            if cell.get("hit_rate") is not None:
+                sport_acc[sp].append(float(cell["hit_rate"]))
+            if cell.get("n") is not None:
+                sport_vol[sp].append(float(cell["n"]))
+
+    equity = []
+    for e in (craft.get("equity_curve") or [])[-40:]:
+        try:
+            equity.append(float(e.get("roi") if isinstance(e, dict) else e))
+        except (TypeError, ValueError):
+            pass
+
+    # Betting charts from evolution snapshot (fast)
+    betting_trends = []
+    betting_yearly = []
+    try:
+        from bet_placer.ml.betting_evolution import snapshot
+        snap = snapshot()
+        betting_trends = list(snap.get("trends") or [])
+        betting_yearly = list(snap.get("yearly") or [])
+    except Exception:
+        pass
+
+    factors = {}
+    try:
+        from bet_placer.ml.factor_store import load_summary
+        factors = load_summary() or {}
+    except Exception:
+        pass
+
+    curves = {
+        "craft_roi": craft_roi,
+        "craft_roi_all": craft_roi,
+        "craft_roi_prev": craft_roi[:-1] if len(craft_roi) > 1 else [],
+        "craft_accuracy": craft_acc,
+        "craft_accuracy_prev": craft_acc[:-1] if len(craft_acc) > 1 else [],
+        "craft_equity": equity or craft_roi,
+        "craft_sport_roi": sport_roi,
+        "craft_sport_accuracy": sport_acc,
+        "craft_sport_volume": sport_vol,
+        "betting_trends": betting_trends,
+        "betting_yearly": betting_yearly,
+        "betting_gated": [],
+        "holdout": [],
+        "board_by_sport": [],
+        "leg_accuracy": [],
+    }
+
+    containers = [
+        {
+            "id": "10_craft_equity",
+            "title": "10 · Paper bankroll equity",
+            "kind": "chart",
+            "chart": "craft_equity",
+            "status": "ready" if len(curves["craft_equity"]) >= 2 else "building",
+            "n": len(curves["craft_equity"]),
+            "need": 2,
+        },
+        {
+            "id": "13_monthly_roi",
+            "title": "13 · Monthly unit ROI",
+            "kind": "chart",
+            "chart": "betting_monthly_roi",
+            "status": "ready" if len(betting_trends) >= 4 else "building",
+            "n": len(betting_trends),
+            "need": 4,
+        },
+        {
+            "id": "14_yearly_volume",
+            "title": "14 · Betting trend by year",
+            "kind": "chart",
+            "chart": "betting_yearly_volume",
+            "status": "ready" if len(betting_yearly) >= 2 else "building",
+            "n": len(betting_yearly),
+            "need": 2,
+        },
+        {
+            "id": "18_factor_graph",
+            "title": "18 · Factor graph",
+            "kind": "factors",
+            "total_nodes": factors.get("total_nodes") or 0,
+            "total_edges": factors.get("total_edges") or 0,
+            "by_sport": factors.get("by_sport") or {},
+            "by_type": factors.get("by_type") or {},
+            "status": "ready" if int(factors.get("total_nodes") or 0) >= 10 else "building",
+            "n": int(factors.get("total_nodes") or 0),
+            "need": 10,
+        },
+        {
+            "id": "22_epoch_curves",
+            "title": "22 · Self-improvement curves",
+            "kind": "chart",
+            "chart": "craft_overall",
+            "status": "ready" if len(craft_roi) >= 2 else "building",
+            "n": len(craft_roi),
+            "need": 2,
+        },
+        {
+            "id": "07_craft_roi_sport",
+            "title": "7 · Paper craft ROI by sport",
+            "kind": "sport_grid",
+            "chart": "craft_sport_roi",
+            "sports": [{"sport": s, "status": "ready", "n": len(sport_roi[s]), "need": 1} for s in SPORTS],
+        },
+        {
+            "id": "08_craft_acc_sport",
+            "title": "8 · Paper craft hit rate by sport",
+            "kind": "sport_grid",
+            "chart": "craft_sport_accuracy",
+            "sports": [{"sport": s, "status": "ready", "n": len(sport_acc[s]), "need": 1} for s in SPORTS],
+        },
+        {
+            "id": "09_craft_volume",
+            "title": "9 · Paper craft volume by sport",
+            "kind": "sport_grid",
+            "chart": "craft_sport_volume",
+            "sports": [{"sport": s, "status": "ready", "n": len(sport_vol[s]), "need": 1} for s in SPORTS],
+        },
+    ]
+
+    # Corpus from params if available
+    total_corpus = 0
+    sports = {}
+    try:
+        from bet_placer.ml.params import load_params
+        p = load_params(force=False)
+        hist = p.get("trained_on_sport_history") or {}
+        boards = p.get("trained_on_boards") or {}
+        for sp in SPORTS:
+            n = int(hist.get(sp) or 0) + int(boards.get(sp) or 0)
+            sports[sp] = {"corpus": n}
+            total_corpus += n
+        if not total_corpus:
+            total_corpus = int(p.get("trained_on") or p.get("trained_on_history") or 0)
+    except Exception:
+        pass
+
+    return {
+        "status": "craft_fallback",
+        "total_corpus": total_corpus,
+        "sports": sports,
+        "containers": containers,
+        "curves": curves,
+        "craft": {
+            "n_epochs": craft.get("n_epochs") or 0,
+            "holdout_roi": ts.get("holdout_roi"),
+            "holdout_accuracy": ts.get("holdout_accuracy"),
+            "best_roi": ts.get("best_roi") or (craft.get("best") or {}).get("roi"),
+            "champion_roi": ts.get("champion_roi"),
+            "block": craft.get("block"),
+            "blocks": craft.get("blocks"),
+            "train_status": ts,
+            "target_roi": 0.25,
+            "target_accuracy": 0.60,
+            "hit_target": craft.get("hit_target"),
+        },
+        "factors": factors,
+        "insights": [msg] if msg else ["Craft + evolution charts (full desk still warming)."],
     }
 
 

@@ -94,7 +94,7 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
     <div className="analysis-brief">
       <div className="analysis-brief-head">
         <div>
-          {v.headline ? <strong>{v.headline.replace(/^(BET|CAUTION|SKIP)\s*[—--]\s*/i, '')}</strong> : null}
+          {v.headline ? <strong>{v.headline.replace(/^(BET|CAUTION|SKIP)\s*[-\u2013\u2014]\s*/i, '')}</strong> : null}
           {a.style_note ? <p className="muted">{a.style_note}</p> : null}
         </div>
         {v.verdict ? <VerdictBadge verdict={v.verdict} /> : null}

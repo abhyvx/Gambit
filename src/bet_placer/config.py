@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     consensus_weight_web: float = 0.08
 
     # Active ensemble weights
+    ensemble_weight_poisson: float = 0.45
     ensemble_weight_elo: float = 0.35
     ensemble_weight_gbm: float = 0.20  # heuristic GBM until factor-graph trainer ships
 

@@ -1,0 +1,49 @@
+# Free background craft training — does not run on your laptop.
+# Artifacts: craft.db + model_params + NN weights (download and copy to ~/.bet_placer on deploy).
+name: Craft training
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # daily midnight UTC (~24h cadence)
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: Max craft epochs
+        default: "15"
+      full_model:
+        description: Full model retrain first (slow)
+        type: boolean
+        default: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Craft worker
+        env:
+          CRAFT_DISABLE: "1"
+        run: |
+          mkdir -p "$HOME/.bet_placer"
+          FLAGS="--epochs ${{ inputs.epochs || 15 }}"
+          if [ "${{ inputs.full_model }}" = "true" ]; then FLAGS="$FLAGS --full-model"; fi
+          PYTHONPATH=src python3 scripts/run_craft_worker.py $FLAGS
+
+      - name: Upload model state
+        uses: actions/upload-artifact@v4
+        with:
+          name: bet-placer-model-state
+          path: |
+            ~/.bet_placer/craft.db
+            ~/.bet_placer/model_params.json
+            ~/.bet_placer/craft_nn.joblib
+          retention-days: 14

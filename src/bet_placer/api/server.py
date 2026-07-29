@@ -32,10 +32,14 @@ def _warmup_stake_browser() -> None:
     server — requests fall back to DraftKings pricing until Stake is opened.
     """
     settings = get_settings()
-    if not settings.stake_use_browser:
-        logger.info("Stake browser warmup skipped (stake_use_browser=False)")
+    from bet_placer.config import remote_stake_browser_enabled, stake_network_enabled
+
+    if not stake_network_enabled():
+        logger.info("Stake browser warmup skipped (no local/cloud browser path)")
         return
-    if not settings.stake_browser_warmup_on_startup:
+    # Cloud browser: warm by default so odds loop has a session. Local: only if asked.
+    should_warm = bool(settings.stake_browser_warmup_on_startup or remote_stake_browser_enabled())
+    if not should_warm:
         logger.info(
             "Stake browser warmup deferred (set STAKE_BROWSER_WARMUP_ON_STARTUP=1 to pre-launch)"
         )
@@ -53,6 +57,48 @@ def _warmup_stake_browser() -> None:
             logger.warning("Stake browser warmup failed", exc_info=True)
 
     threading.Thread(target=_go, daemon=True, name="stake-warmup").start()
+
+
+def _stake_odds_keepalive_loop() -> None:
+    """Keep Stake odds fresh 24/7 when cloud browser is configured on this host."""
+    settings = get_settings()
+    interval = int(settings.stake_odds_loop_seconds or 0)
+    if interval <= 0:
+        return
+    from bet_placer.config import remote_stake_browser_enabled, stake_network_enabled
+
+    if not stake_network_enabled():
+        logger.info("Stake odds loop skipped (no live Stake path)")
+        return
+    # Laptop 24/7 path is LaunchAgent / stake_relay.py — avoid a second scraper in the API.
+    if not remote_stake_browser_enabled():
+        logger.info(
+            "Stake odds loop idle until BROWSERBASE_API_KEY / STAKE_CDP_URL "
+            "(local 24/7: ./scripts/install_stake_relay_agent.sh)"
+        )
+        return
+
+    def _go() -> None:
+        import time
+
+        # First pass after a short settle so warmup can finish.
+        time.sleep(20)
+        while True:
+            try:
+                from bet_placer.engine.stake_odds import refresh_stake_overlay
+
+                out = refresh_stake_overlay()
+                logger.info(
+                    "Stake odds loop: fixtures=%s have_data=%s",
+                    (out.get("status") or {}).get("fixtures") if isinstance(out, dict) else None,
+                    (out.get("status") or {}).get("have_data") if isinstance(out, dict) else out,
+                )
+            except Exception:
+                logger.warning("Stake odds loop tick failed", exc_info=True)
+            time.sleep(max(60, interval))
+
+    threading.Thread(target=_go, daemon=True, name="stake-odds-loop").start()
+    logger.info("Stake odds keepalive every %ss (cloud browser)", interval)
 
 
 def _prefetch_stake_overlay() -> None:
@@ -188,6 +234,7 @@ async def lifespan(_app: FastAPI):
     _warmup_data()
     _prefetch_stake_overlay()
     _warmup_stake_browser()
+    _stake_odds_keepalive_loop()
     _warmup_model()
     _ensure_craft_training()
     _warmup_insights()
@@ -228,15 +275,26 @@ class StakeRelayPayload(BaseModel):
     fixtures: dict[str, dict]
 
 
+class PortfolioRelayPayload(BaseModel):
+    secret: str
+    portfolio: dict | None = None
+    privacy: dict | None = None
+    connection: dict | None = None
+
+
 @app.get("/api/health")
 def health():
     settings = get_settings()
-    stake_status = {}
+    from bet_placer.config import remote_stake_browser_enabled
     from bet_placer.engine.stake_odds import stake_overlay_status
     overlay = stake_overlay_status()
-    if settings.stake_use_browser:
-        from bet_placer.data.stake_browser import browser_status
-        stake_status = {**browser_status(), "overlay": overlay}
+    stake_status = {}
+    if stake_network_enabled():
+        try:
+            from bet_placer.data.stake_browser import browser_status
+            stake_status = {**browser_status(), "overlay": overlay}
+        except Exception:
+            stake_status = {"overlay": overlay}
     elif settings.stake_relay_secret or overlay.get("have_data"):
         stake_status = {"relay": bool(settings.stake_relay_secret), "overlay": overlay}
     return {
@@ -244,6 +302,7 @@ def health():
         "odds_api_configured": bool(settings.odds_api_key),
         "stake_token_configured": bool(settings.stake_api_token),
         "stake_use_browser": settings.stake_use_browser,
+        "stake_remote": remote_stake_browser_enabled(),
         "stake_relay": bool(settings.stake_relay_secret),
         "stake_live": stake_network_enabled(),
         "stake_browser": stake_status,
@@ -438,26 +497,22 @@ def stake_refresh():
 
 @app.post("/api/stake/connect")
 def stake_connect():
-    """Open visible Chrome for Cloudflare/login, then pull Stake odds (laptop only)."""
-    from bet_placer.config import get_settings, stake_network_enabled
+    """Warm Stake browser (local or cloud) and refresh odds overlay."""
+    from bet_placer.config import stake_network_enabled
     if not stake_network_enabled():
         from bet_placer.engine.stake_odds import stake_overlay_status, warm_stake_cache_from_disk
         warm_stake_cache_from_disk()
         overlay = stake_overlay_status()
+        n = overlay.get("fixtures", 0)
         return {
             "connected": bool(overlay.get("have_data")),
             "browser": {"ready": False, "cloud": True},
             "overlay": overlay,
-            "fixtures": overlay.get("fixtures", 0),
+            "fixtures": n,
             "message": (
-                f"Cloud mode: {overlay.get('fixtures', 0)} cached Stake matches from relay. "
-                "Live Connect needs a laptop with STAKE_USE_BROWSER=true, or the GitHub Stake relay."
+                f"Using {n} cached Stake matches. Live prices refresh when the odds link is online."
                 if overlay.get("have_data")
-                else (
-                    "Cloud mode cannot open Stake Chrome. "
-                    "Odds still work from ESPN/model prices. "
-                    "For live Stake lines, run the GitHub Stake relay or laptop relay script."
-                )
+                else "Stake prices will appear once the odds feed is connected."
             ),
         }
     from bet_placer.data.stake_browser import browser_status, warmup_visible
@@ -482,7 +537,7 @@ def stake_connect():
             f"Stake connected — {overlay_status.get('fixtures', 0)} matches priced"
             if overlay_status.get("have_data")
             else (
-                "Chrome opened — complete Cloudflare / login on stake.com, then click Connect again."
+                "Stake window is open — finish sign-in if asked, then Connect again."
                 if not browser.get("ready")
                 else "Browser ready — pulling odds failed; try Connect again in a moment."
             )
@@ -553,6 +608,23 @@ def portfolio_refresh():
         return refresh_portfolio_snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/relay")
+def portfolio_relay(body: PortfolioRelayPayload):
+    """Ingest portfolio snapshot from scripts/stake_login.py (cloud has no Chrome)."""
+    settings = get_settings()
+    if not settings.stake_relay_secret or body.secret != settings.stake_relay_secret:
+        raise HTTPException(status_code=401, detail="Invalid relay secret")
+    from bet_placer.portfolio.store import ingest_portfolio_relay
+
+    return ingest_portfolio_relay(
+        {
+            "portfolio": body.portfolio,
+            "privacy": body.privacy,
+            "connection": body.connection,
+        }
+    )
 
 
 @app.get("/api/worldcup")

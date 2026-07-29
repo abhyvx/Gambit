@@ -1138,7 +1138,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
                 {' '}Recs and Build still use ESPN/model prices — open Stake.com to place.
               </p>
               <button type="button" className="stake-open-btn" onClick={connectStake} disabled={stakeConnecting}>
-                {stakeConnecting ? 'Opening...' : 'Open / Reconnect Stake (laptop)'}
+                {stakeConnecting ? 'Opening...' : 'Reconnect Stake'}
               </button>
               <button type="button" className="stake-open-btn secondary" onClick={loadStake}>Retry</button>
             </div>

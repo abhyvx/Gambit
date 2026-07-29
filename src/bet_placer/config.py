@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
     stake_browser_warmup_on_startup: bool = False
     stake_relay_secret: str = DEFAULT_STAKE_RELAY_SECRET
+    # Cloud Chrome (Browserbase) — 24/7 odds + portfolio login without a laptop.
+    browserbase_api_key: str = ""
+    browserbase_project_id: str = ""
+    # Raw CDP websocket (any remote Chrome). Overrides Browserbase when set.
+    stake_cdp_url: str = ""
+    # Background odds scrape interval when a live browser path is available (0=off).
+    stake_odds_loop_seconds: int = 600
 
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
@@ -82,6 +89,15 @@ def get_settings() -> Settings:
 
 
 def stake_network_enabled() -> bool:
-    """Stake GraphQL works only via Playwright (local) or an API token — not from cloud IPs."""
+    """True when we can reach Stake GraphQL (local Chrome, API token, or cloud browser)."""
     s = get_settings()
-    return bool(s.stake_use_browser or s.stake_api_token)
+    if s.stake_use_browser or s.stake_api_token:
+        return True
+    if (s.stake_cdp_url or "").strip() or (s.browserbase_api_key or "").strip():
+        return True
+    return False
+
+
+def remote_stake_browser_enabled() -> bool:
+    s = get_settings()
+    return bool((s.stake_cdp_url or "").strip() or (s.browserbase_api_key or "").strip())

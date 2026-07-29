@@ -143,9 +143,9 @@ def _store_path() -> Path:
 def _default_state() -> dict[str, Any]:
     return {
         "privacy": {
-            "portfolio_enabled": False,
+            "portfolio_enabled": True,
             "visibility": "private",
-            "risk_acknowledged": False,
+            "risk_acknowledged": True,
             "learning_opt_in": False,
             "consent_version": _CONSENT_VERSION,
             "consent_accepted_at": None,
@@ -156,8 +156,10 @@ def _default_state() -> dict[str, Any]:
             "connected": False,
             "last_connected_at": None,
             "last_sync_at": None,
-            "last_sync_status": "never",
-            "last_sync_message": "Portfolio sync is off until you enable it.",
+            "last_sync_status": "ready",
+            "last_sync_message": (
+                "Journal is on. Connect Stake to import history, or confirm bets from your slip."
+            ),
         },
         "portfolio": {
             "bet_count": 0,
@@ -173,6 +175,30 @@ def _default_state() -> dict[str, Any]:
             "bets": [],
         },
     }
+
+
+def _ensure_privacy_defaults(state: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Journal sync stays on unless the user turns it off after first load."""
+    priv = state.setdefault("privacy", {})
+    changed = False
+    if not priv.get("portfolio_enabled"):
+        priv["portfolio_enabled"] = True
+        changed = True
+    if not priv.get("risk_acknowledged"):
+        priv["risk_acknowledged"] = True
+        changed = True
+    if priv.get("risk_acknowledged") and not priv.get("consent_accepted_at"):
+        priv["consent_accepted_at"] = _utc_now()
+        priv["consent_version"] = _CONSENT_VERSION
+        changed = True
+    if changed:
+        conn = state.setdefault("connection", {})
+        if conn.get("last_sync_status") in (None, "never"):
+            conn["last_sync_status"] = "ready"
+            conn["last_sync_message"] = (
+                "Journal is on. Connect Stake to import history, or confirm bets from your slip."
+            )
+    return state, changed
 
 
 def _migrate_legacy_bet(bet: dict[str, Any]) -> dict[str, Any]:
@@ -406,7 +432,7 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         } if top_fixture[0] else None,
         "summary": (
             (
-                f"You usually spread {avg_bets_per_fixture:.0f} separate bets per match — "
+                f"You usually spread {avg_bets_per_fixture:.0f} separate bets per match, "
                 f"we'll prioritise multi-single routes over one big parlay."
                 if prefers_spread_singles else
                 f"Lean into {', '.join(recommended_focus) if recommended_focus else 'disciplined singles'}; "
@@ -464,7 +490,10 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
 
 def get_portfolio_state() -> dict[str, Any]:
     with _LOCK:
-        return _merged_status(_load_state())
+        state, changed = _ensure_privacy_defaults(_load_state())
+        if changed:
+            _save_state(state)
+        return _merged_status(state)
 
 
 def get_portfolio_profile() -> dict[str, Any] | None:
@@ -504,16 +533,16 @@ def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
             has_bets = bool((state.get("portfolio") or {}).get("bets"))
             state["connection"].update(
                 {
-                    "status": "relay" if has_bets else "setup",
+                    "status": "setup",
                     "connected": bool(has_bets),
-                    "last_sync_status": "imported" if has_bets else "setup",
+                    "last_sync_status": "error" if not has_bets else "imported",
                     "last_sync_message": (
                         "Your journal is up to date from the last sync."
                         if has_bets
                         else (
-                            "To import your Stake history, tap Connect Stake — "
-                            "we'll open a secure sign-in window. "
-                            "If that isn't available yet, sync once from any Gambit desktop session."
+                            "Stake live login is not available on this host yet. "
+                            "Confirm bets from your slip, add past bets below, "
+                            "or set BROWSERBASE_API_KEY so Connect can open Stake."
                         )
                     ),
                     "login_url": None,
@@ -594,8 +623,8 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
                     "status": "disconnected",
                     "connected": False,
                     "last_sync_at": _utc_now(),
-                    "last_sync_status": "needs_reconnect",
-                    "last_sync_message": "Stake session is not active. Open Stake login, sign in, then sync again.",
+                    "last_sync_status": "error",
+                    "last_sync_message": "Stake session is not active. Tap Connect Stake first, or confirm bets from your slip.",
                 }
             )
             return _merged_status(_save_state(state))
@@ -605,10 +634,11 @@ def refresh_portfolio_snapshot() -> dict[str, Any]:
                     "status": "awaiting_login",
                     "connected": False,
                     "last_sync_at": _utc_now(),
-                    "last_sync_status": "auth_required",
+                    "last_sync_status": "error",
                     "last_sync_message": (
                         "Stake Chrome is open, but no account session yet. "
-                        "Sign into Stake in that window (Open Stake login), then sync again."
+                        "Sign into Stake (Connect Stake), then sync again. "
+                        "Or confirm bets from your slip / add past bets below."
                     ),
                 }
             )
@@ -736,3 +766,254 @@ def portfolio_relay_export() -> dict[str, Any]:
             "stake_user": (state.get("connection") or {}).get("stake_user"),
         },
     }
+
+
+def _normalize_manual_bet(raw: dict[str, Any]) -> dict[str, Any]:
+    """Build a portfolio bet row from slip/manual fields."""
+    import uuid
+
+    stake = float(raw.get("stake") or raw.get("stake_value") or 0)
+    odds = float(raw.get("odds") or raw.get("combined_odds") or 0)
+    result = str(raw.get("result") or "open").lower()
+    if result not in {"open", "won", "lost", "push", "cashed_out", "unknown"}:
+        result = "open"
+    payout = float(raw.get("payout") or raw.get("payout_value") or 0)
+    if result == "won" and payout <= 0 and stake > 0 and odds > 1:
+        payout = round(stake * odds, 2)
+    elif result == "lost":
+        payout = 0.0
+    elif result == "push" and payout <= 0:
+        payout = stake
+    elif result == "open":
+        payout = 0.0
+
+    home = (raw.get("home") or raw.get("home_team") or "").strip()
+    away = (raw.get("away") or raw.get("away_team") or "").strip()
+    fixture = (raw.get("fixture_name") or "").strip() or (
+        f"{home} vs {away}" if home and away else (home or away or "Manual bet")
+    )
+    selection = (raw.get("selection") or raw.get("label") or "").strip() or "Selection"
+    market = (raw.get("market") or raw.get("market_name") or raw.get("market_family") or "manual").strip()
+    bet_id = str(raw.get("id") or raw.get("bet_id") or f"manual-{uuid.uuid4().hex[:12]}")
+    selections = raw.get("selections")
+    if not isinstance(selections, list) or not selections:
+        selections = [
+            {
+                "fixture_name": fixture,
+                "selection": selection,
+                "odds": odds or None,
+                "status": result if result != "open" else "pending",
+                "payout": payout if result != "open" else None,
+            }
+        ]
+    return _migrate_legacy_bet(
+        {
+            "id": bet_id,
+            "bet_id": bet_id,
+            "source": str(raw.get("source") or "manual"),
+            "created_at": raw.get("created_at") or _utc_now(),
+            "status": "open" if result == "open" else result,
+            "result": result,
+            "active": result == "open",
+            "currency": raw.get("currency") or "INR",
+            "display_currency": raw.get("display_currency") or raw.get("currency") or "INR",
+            "stake": stake,
+            "stake_value": stake,
+            "payout": payout,
+            "payout_value": payout,
+            "combined_odds": odds or None,
+            "fixture_name": fixture,
+            "home_team": home or None,
+            "away_team": away or None,
+            "league": raw.get("league"),
+            "selection_count": len(selections),
+            "bet_type": "parlay" if len(selections) > 1 else "single",
+            "market_family": market,
+            "selections": selections,
+            "notes": raw.get("notes"),
+        }
+    )
+
+
+def _merge_portfolio_bets(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {str(b.get("id") or b.get("bet_id")): b for b in existing if b.get("id") or b.get("bet_id")}
+    for bet in incoming:
+        key = str(bet.get("id") or bet.get("bet_id"))
+        by_id[key] = bet
+    return sorted(by_id.values(), key=lambda b: b.get("created_at") or "", reverse=True)
+
+
+def _leg_fixture_name(leg: dict[str, Any]) -> str:
+    home = str(leg.get("home") or "").strip()
+    away = str(leg.get("away") or "").strip()
+    if home and away:
+        return f"{home} vs {away}"
+    if home or away:
+        return home or away
+    return str(leg.get("fixture_name") or leg.get("label") or "Match").strip()
+
+
+def confirm_slip_bets(
+    *,
+    legs: list[dict[str, Any]] | None = None,
+    multi_stake: float | None = None,
+    multi_odds: float | None = None,
+) -> dict[str, Any]:
+    """Confirm slip legs as real placed bets in the journal (live / upcoming)."""
+    legs = [l for l in (legs or []) if isinstance(l, dict)]
+    if not legs:
+        raise ValueError("Add at least one leg before confirming a placed bet.")
+
+    incoming: list[dict[str, Any]] = []
+    multi = float(multi_stake or 0)
+    if multi > 0 and len(legs) >= 2:
+        selections = []
+        for leg in legs:
+            selections.append(
+                {
+                    "fixture_name": _leg_fixture_name(leg),
+                    "selection": leg.get("label") or leg.get("selection") or "Pick",
+                    "odds": float(leg.get("odds") or 0) or None,
+                    "status": "pending",
+                }
+            )
+        odds = float(multi_odds or 0)
+        if odds <= 1:
+            odds = 1.0
+            for leg in legs:
+                o = float(leg.get("odds") or 0)
+                if o > 1:
+                    odds *= o
+        incoming.append(
+            _normalize_manual_bet(
+                {
+                    "source": "slip_confirm",
+                    "stake": multi,
+                    "odds": odds,
+                    "result": "open",
+                    "fixture_name": " + ".join(_leg_fixture_name(l) for l in legs[:4]),
+                    "selection": "Multi",
+                    "market": "multi",
+                    "selections": selections,
+                }
+            )
+        )
+    else:
+        for leg in legs:
+            stake = float(leg.get("stake") or 0)
+            if stake <= 0:
+                continue
+            incoming.append(
+                _normalize_manual_bet(
+                    {
+                        "id": f"slip-{leg.get('id') or leg.get('label')}",
+                        "source": "slip_confirm",
+                        "home": leg.get("home"),
+                        "away": leg.get("away"),
+                        "selection": leg.get("label") or leg.get("selection"),
+                        "market": leg.get("marketName") or leg.get("market") or "board",
+                        "odds": leg.get("odds"),
+                        "stake": stake,
+                        "result": leg.get("result") or "open",
+                        "payout": leg.get("payout"),
+                    }
+                )
+            )
+    if not incoming:
+        raise ValueError("Set an amount on at least one single (or a multi stake) before confirming.")
+
+    with _LOCK:
+        state, _ = _ensure_privacy_defaults(_load_state())
+        existing = list((state.get("portfolio") or {}).get("bets") or [])
+        merged = _merge_portfolio_bets(existing, incoming)
+        summary = _summarize_bets(merged)
+        summary["model_audit"] = {
+            "available": False,
+            "audited_legs": 0,
+            "aligned_legs": 0,
+            "against_legs": 0,
+            "strong_edges": 0,
+            "skip_flags": 0,
+            "message": "Manual and confirmed slip bets are in your journal.",
+            "pending": False,
+        }
+        state["portfolio"] = summary
+        state["connection"].update(
+            {
+                "last_sync_at": _utc_now(),
+                "last_sync_status": "confirmed",
+                "last_sync_message": f"Confirmed {len(incoming)} placed bet(s) into your journal.",
+            }
+        )
+        return _merged_status(_save_state(state))
+
+
+def add_manual_portfolio_bet(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add or update a past / manual journal bet."""
+    if not isinstance(payload, dict):
+        raise ValueError("Bet payload required.")
+    bet = _normalize_manual_bet({**payload, "source": payload.get("source") or "manual_past"})
+    if float(bet.get("stake_value") or 0) <= 0:
+        raise ValueError("Stake must be greater than 0.")
+    if not (bet.get("selections") or []):
+        raise ValueError("Selection is required.")
+
+    with _LOCK:
+        state, _ = _ensure_privacy_defaults(_load_state())
+        existing = list((state.get("portfolio") or {}).get("bets") or [])
+        merged = _merge_portfolio_bets(existing, [bet])
+        summary = _summarize_bets(merged)
+        summary["model_audit"] = (state.get("portfolio") or {}).get("model_audit") or {
+            "available": False,
+            "message": "Manual bet saved.",
+        }
+        state["portfolio"] = summary
+        state["connection"].update(
+            {
+                "last_sync_at": _utc_now(),
+                "last_sync_status": "confirmed",
+                "last_sync_message": f"Saved manual bet: {bet.get('fixture_name')}.",
+            }
+        )
+        return _merged_status(_save_state(state))
+
+
+def update_portfolio_bet_result(bet_id: str, result: str, payout: float | None = None) -> dict[str, Any]:
+    """Mark a journal bet won/lost/push (for open confirmed slips)."""
+    result = str(result or "").lower()
+    if result not in {"won", "lost", "push", "cashed_out", "open"}:
+        raise ValueError("Result must be won, lost, push, cashed_out, or open.")
+    with _LOCK:
+        state, _ = _ensure_privacy_defaults(_load_state())
+        bets = list((state.get("portfolio") or {}).get("bets") or [])
+        found = None
+        for b in bets:
+            if str(b.get("id") or b.get("bet_id")) == str(bet_id):
+                found = b
+                break
+        if not found:
+            raise ValueError("Bet not found.")
+        stake = float(found.get("stake_value") or 0)
+        odds = float(found.get("combined_odds") or 0)
+        if payout is None:
+            if result == "won" and odds > 1:
+                payout = round(stake * odds, 2)
+            elif result == "push":
+                payout = stake
+            elif result == "lost":
+                payout = 0.0
+            else:
+                payout = float(found.get("payout_value") or 0)
+        found["result"] = result
+        found["status"] = "open" if result == "open" else result
+        found["active"] = result == "open"
+        found["payout"] = float(payout)
+        found["payout_value"] = float(payout)
+        found["profit_value"] = round(float(payout) - stake, 2) if result != "open" else 0.0
+        for sel in found.get("selections") or []:
+            sel["status"] = "pending" if result == "open" else result
+        summary = _summarize_bets(bets)
+        state["portfolio"] = summary
+        state["connection"]["last_sync_message"] = f"Updated bet result to {result}."
+        state["connection"]["last_sync_at"] = _utc_now()
+        return _merged_status(_save_state(state))

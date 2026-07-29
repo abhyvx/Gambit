@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react'
 import { canAddLeg, combinedOdds, slipMode } from '../lib/slipRules'
-import { recordSlipLegs, settleSlipLeg } from '../api/index'
+import { recordSlipLegs, settleSlipLeg, confirmPortfolioSlip } from '../api/index'
 
 const DEFAULT_STYLE = {
   goal: 'value',
@@ -170,6 +170,34 @@ export function BankrollProvider({ children }) {
     }
   }
 
+  const confirmPlaced = async () => {
+    const multiOn = (legs || []).length >= 2
+    const packed = (legs || []).map((leg) => ({
+      ...leg,
+      stake: Number(legStakes[leg.id] || 0) || undefined,
+      result: legResults[leg.id] || undefined,
+      payout: (() => {
+        const stake = Number(legStakes[leg.id] || 0)
+        const o = Number(leg.odds || 0)
+        if (legResults[leg.id] === 'won' && stake > 0 && o > 1) return stake * o
+        if (legResults[leg.id] === 'lost') return 0
+        return undefined
+      })(),
+    }))
+    try {
+      const out = await confirmPortfolioSlip({
+        legs: packed,
+        multiStake: multiOn ? multiStake : null,
+        multiOdds: multiOn ? combinedOdds(legs) : null,
+      })
+      setSlipMsg((out?.connection?.last_sync_message) || 'Confirmed into your portfolio journal.')
+      return out
+    } catch (e) {
+      setSlipMsg(e?.message || 'Could not confirm placed bets.')
+      throw e
+    }
+  }
+
   const setSlip = (payload) => {
     if (!payload) {
       clearSlip()
@@ -268,6 +296,7 @@ export function BankrollProvider({ children }) {
       setSlip,
       clearSlip,
       settleLeg,
+      confirmPlaced,
       slipOpen,
       setSlipOpen,
       slipWidth,

@@ -627,6 +627,66 @@ def portfolio_relay(body: PortfolioRelayPayload):
     )
 
 
+class PortfolioConfirmSlip(BaseModel):
+    legs: list[dict] = []
+    multi_stake: float | None = None
+    multi_odds: float | None = None
+
+
+class PortfolioManualBet(BaseModel):
+    home: str | None = None
+    away: str | None = None
+    fixture_name: str | None = None
+    selection: str
+    market: str | None = "manual"
+    odds: float | None = None
+    stake: float
+    result: str = "open"
+    payout: float | None = None
+    created_at: str | None = None
+    notes: str | None = None
+    id: str | None = None
+
+
+class PortfolioBetResultUpdate(BaseModel):
+    result: str
+    payout: float | None = None
+
+
+@app.post("/api/portfolio/confirm-slip")
+def portfolio_confirm_slip(body: PortfolioConfirmSlip):
+    from bet_placer.portfolio.store import confirm_slip_bets
+
+    try:
+        return confirm_slip_bets(
+            legs=body.legs,
+            multi_stake=body.multi_stake,
+            multi_odds=body.multi_odds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/bets")
+def portfolio_add_bet(body: PortfolioManualBet):
+    from bet_placer.portfolio.store import add_manual_portfolio_bet
+
+    try:
+        return add_manual_portfolio_bet(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/bets/{bet_id}/result")
+def portfolio_bet_result(bet_id: str, body: PortfolioBetResultUpdate):
+    from bet_placer.portfolio.store import update_portfolio_bet_result
+
+    try:
+        return update_portfolio_bet_result(bet_id, body.result, body.payout)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/worldcup")
 def worldcup(
     matchday: int | None = Query(default=None, ge=0, le=9),

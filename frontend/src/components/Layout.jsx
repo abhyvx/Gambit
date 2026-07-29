@@ -21,8 +21,9 @@ export default function Layout() {
     clearSlip, legs, removeLeg, slipMode, slipOdds, slipPayout, slipSingles, slipMsg,
     setLegStake, multiStake, setMultiStake, showMulti,
     singlesStakeTotal, singlesPayoutTotal, totalStake, totalPayout,
-    slipOpen, setSlipOpen, slipWidth, settleLeg,
+    slipOpen, setSlipOpen, slipWidth, settleLeg, confirmPlaced,
   } = useBankroll()
+  const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
 
   useEffect(() => {
@@ -255,6 +256,26 @@ export default function Layout() {
               )}
 
               <div className="slip-footer">
+                {legs?.length > 0 && (
+                  <button
+                    type="button"
+                    className="refresh-btn"
+                    style={{ width: '100%', marginBottom: 8 }}
+                    disabled={confirmBusy}
+                    onClick={async () => {
+                      setConfirmBusy(true)
+                      try {
+                        await confirmPlaced()
+                      } catch {
+                        /* message set in context */
+                      } finally {
+                        setConfirmBusy(false)
+                      }
+                    }}
+                  >
+                    {confirmBusy ? 'Saving…' : 'Confirm I placed this'}
+                  </button>
+                )}
                 <p className="sidebar-disclaimer">18+ · Bet responsibly.</p>
               </div>
             </aside>

@@ -119,6 +119,22 @@ export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '', onAddOdd
         return null
       })()
     : null
+  const chip = (side, label, value) => (
+    <button
+      type="button"
+      key={side}
+      className="ft-odd-chip"
+      disabled={!value}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (value) onAddOdds?.(ev, side)
+      }}
+      aria-label={`Add ${label} at ${fmtOdds(value)}`}
+    >
+      <span>{label}</span>
+      <strong>{fmtOdds(value) || '—'}</strong>
+    </button>
+  )
   return (
     <button
       type="button"
@@ -141,24 +157,10 @@ export function FeaturedCard({ ev, onOpen, showDraw = true, sport = '', onAddOdd
         {parts && <strong className="fixture-score">{parts.away}</strong>}
       </div>
       {priced ? (
-        <div
-          className="featured-odds"
-          aria-label="Match odds — click to add"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <OddsBtn
-            label="1"
-            value={odds.home}
-            onClick={() => onAddOdds?.(ev, 'home')}
-          />
-          {showDraw && odds.draw ? (
-            <OddsBtn label="X" value={odds.draw} onClick={() => onAddOdds?.(ev, 'draw')} />
-          ) : null}
-          <OddsBtn
-            label="2"
-            value={odds.away}
-            onClick={() => onAddOdds?.(ev, 'away')}
-          />
+        <div className="featured-odds" aria-label="Match odds — click to add">
+          {chip('home', '1', odds.home)}
+          {showDraw && odds.draw ? chip('draw', 'X', odds.draw) : null}
+          {chip('away', '2', odds.away)}
         </div>
       ) : (
         <small>{fmtKickoff(ev.kickoff) || ev.league}</small>

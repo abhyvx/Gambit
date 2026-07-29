@@ -21,6 +21,48 @@ function roiPct(x) {
   return `${v > 0 ? '+' : ''}${Math.round(v * 10) / 10}%`
 }
 
+function trainGateLabel(craft) {
+  if (craft?.hit_target) return 'Hit'
+  const state = craft?.train_status?.state || craft?.state
+  const labels = {
+    running: 'Training',
+    hit_target: 'Hit',
+    finished_without_hit: 'Missed target',
+    finished: 'Done',
+    open: 'Ready',
+    idle: 'Ready',
+    needs_train: 'Needs train',
+  }
+  if (labels[state]) return labels[state]
+  if (!state) return 'Ready'
+  return String(state).replace(/_/g, ' ')
+}
+
+/** Prefer champion / best; hide a failed unfinished run as the headline. */
+function deskRoi(craft) {
+  const ts = craft?.train_status || {}
+  const champ = [craft?.best_roi, craft?.champion_roi, ts.champion_roi, ts.best_roi]
+    .map((v) => (v == null ? null : Number(v)))
+    .find((v) => v != null && Number.isFinite(v) && v > -0.45)
+  if (champ != null) return champ
+  const block = craft?.block?.mean_roi
+  if (block != null && Number.isFinite(Number(block)) && Number(block) > -0.45) return Number(block)
+  const hold = craft?.holdout_roi ?? ts.holdout_roi
+  if (ts.state === 'finished_without_hit' && Number(hold) < 0) return null
+  return hold == null ? null : Number(hold)
+}
+
+function deskHitRate(craft) {
+  const ts = craft?.train_status || {}
+  const champ = [craft?.best_accuracy, craft?.champion_accuracy, ts.champion_accuracy, ts.best_accuracy]
+    .map((v) => (v == null ? null : Number(v)))
+    .find((v) => v != null && Number.isFinite(v) && v > 0.45)
+  if (champ != null) return champ
+  const hold = craft?.holdout_accuracy ?? ts.holdout_accuracy
+  if (ts.state === 'finished_without_hit' && Number(hold) < 0.5) return champ ?? null
+  return hold == null ? null : Number(hold)
+}
+
 function chartRoi(v) {
   if (v == null || !Number.isFinite(Number(v))) return '-'
   return `${(Number(v) * 100).toFixed(1)}%`
@@ -366,7 +408,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           </div>
           <div className="stat-cell">
             <span className="stat-label">Gate</span>
-            <strong className="stat-value">{c.hit_target ? 'HIT' : (c.train_status?.state || 'running')}</strong>
+            <strong className="stat-value">{trainGateLabel(c)}</strong>
             <small>25% overall · each sport {'>'} 0 · monthly green</small>
           </div>
           {c.gates?.sports && Object.entries(c.gates.sports).map(([sp, g]) => (
@@ -758,26 +800,26 @@ export default function ModelPage() {
           </div>
           <div className="stat-cell">
             <span className="stat-label">Best test ROI</span>
-            <strong className={`stat-value ${Number(craft.best_roi ?? craft.champion_roi ?? craft.train_status?.champion_roi) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(craft.best_roi ?? craft.champion_roi ?? craft.train_status?.champion_roi)}
+            <strong className={`stat-value ${Number(deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(deskRoi(craft))}
             </strong>
             <small>target {roiPct(craft.target_roi || 0.25)}</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Live desk ROI</span>
-            <strong className={`stat-value ${Number(craft.holdout_roi ?? craft.train_status?.holdout_roi ?? craft.best_roi) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(craft.holdout_roi ?? craft.train_status?.holdout_roi ?? craft.champion_roi ?? craft.best_roi ?? craft.train_status?.champion_roi)}
+            <strong className={`stat-value ${Number(deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(deskRoi(craft))}
             </strong>
             <small>soccer · basketball · cricket</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Live hit rate</span>
-            <strong className="stat-value">{pct(craft.holdout_accuracy ?? craft.train_status?.holdout_accuracy)}</strong>
+            <strong className="stat-value">{pct(deskHitRate(craft))}</strong>
             <small>target {pct(craft.target_accuracy || 0.60)}</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Train gate</span>
-            <strong className="stat-value">{craft.hit_target ? 'HIT' : (craft.train_status?.state || 'open')}</strong>
+            <strong className="stat-value">{trainGateLabel(craft)}</strong>
             <small>{fmt(craft.train_status?.epoch || craft.n_epochs)} epochs</small>
           </div>
           <div className="stat-cell">
@@ -791,7 +833,9 @@ export default function ModelPage() {
       {containers.length === 0 && (
         <section className="panel">
           <p className="muted" role="alert">
-            Desk boxes still loading. Model files may not be on this server yet.
+            {deskLoading
+              ? 'Loading insight boxes…'
+              : (ins?.insights?.[0] || 'Insight boxes unavailable. Open Model again in a minute, or hit Retrain after craft files finish syncing.')}
           </p>
         </section>
       )}

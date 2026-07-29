@@ -596,6 +596,14 @@ export default function SportPage() {
       return
     }
     setExpanded(row.id)
+    // Always bring the row into view when opening from top matches
+    const boardIdx = board.findIndex((r) => String(r.id) === String(row.id))
+    if (boardIdx >= 0 && boardIdx >= visible) setVisible(boardIdx + 1)
+    const scroll = () => {
+      document.getElementById(`fixture-${row.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    requestAnimationFrame(scroll)
+    setTimeout(scroll, 160)
     if (row._wc) {
       setAnalysis(row)
       setAnalyzing(false)

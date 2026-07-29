@@ -99,6 +99,83 @@ def _upload_release(path: Path) -> None:
         print(f"release upload skipped: {exc}")
 
 
+def _espn_book_fixtures() -> dict:
+    """Last resort: ESPN 1X2 as Match Odds so cloud Odds/recs aren't empty without Stake."""
+    from bet_placer.config import data_path
+    from bet_placer.models.stake_types import StakeFixture, StakeMarket, StakeOutcome
+    from bet_placer.engine.stake_odds import _overlay_key, _serialize_fixture
+
+    path = data_path("espn_board_cache.json")
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    # Cache shape varies: {sport: {events: [...]}} or flat events
+    events = []
+    if isinstance(raw, dict):
+        if isinstance(raw.get("events"), list):
+            events = raw["events"]
+        else:
+            for v in raw.values():
+                if isinstance(v, dict) and isinstance(v.get("events"), list):
+                    events.extend(v["events"])
+                elif isinstance(v, list):
+                    events.extend(v)
+    out = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("status") not in ("live", "upcoming"):
+            continue
+        home, away = ev.get("home_team"), ev.get("away_team")
+        if not home or not away:
+            continue
+        odds = ev.get("odds") or {}
+        h, d, a = odds.get("home"), odds.get("draw"), odds.get("away")
+        if not (h and a and float(h) > 1 and float(a) > 1):
+            # bookmakers shape
+            for bm in ev.get("bookmakers") or []:
+                for m in bm.get("markets") or []:
+                    if m.get("key") not in ("h2h", "match_winner", None) and "winner" not in str(m.get("key") or ""):
+                        continue
+                    for o in m.get("outcomes") or []:
+                        name = str(o.get("name") or "")
+                        price = o.get("price")
+                        if not price:
+                            continue
+                        if name == home or name.lower() == "home":
+                            h = float(price)
+                        elif name == away or name.lower() == "away":
+                            a = float(price)
+                        elif name.lower() in ("draw", "tie", "x"):
+                            d = float(price)
+        if not (h and a and float(h) > 1 and float(a) > 1):
+            continue
+        outcomes = [
+            StakeOutcome(id="h", name=str(home), odds=float(h)),
+            StakeOutcome(id="a", name=str(away), odds=float(a)),
+        ]
+        if d and float(d) > 1:
+            outcomes.insert(1, StakeOutcome(id="d", name="Draw", odds=float(d)))
+        fx = StakeFixture(
+            id=str(ev.get("id") or f"espn-{home}-{away}"),
+            name=f"{home} vs {away}",
+            home_team=str(home),
+            away_team=str(away),
+            sport=str(ev.get("sport_key") or "soccer"),
+            league=str(ev.get("league") or "ESPN book"),
+            status=str(ev.get("status") or "upcoming"),
+            kickoff=None,
+            markets=[StakeMarket(id="1x2", name="Match Odds", group="winner", outcomes=outcomes)],
+        )
+        out[_overlay_key(home, away)] = _serialize_fixture(fx)
+        if len(out) >= 40:
+            break
+    return out
+
+
 def main() -> int:
     cloud = _cloud_url()
     secret = (os.getenv("STAKE_RELAY_SECRET") or "gambit-relay-v1-abhyvx").strip()
@@ -113,29 +190,32 @@ def main() -> int:
     source = "none"
 
     # 1) Try live scrape (laptop / self-hosted runner with CF cleared)
-    try:
-        from bet_placer.data.stake_scraper import StakeScraper
-        from bet_placer.engine.stake_odds import (
-            _overlay_key,
-            _serialize_fixture,
-            fetch_fast_stake_overlay,
-            persist_match_stake_data,
-        )
+    if os.getenv("STAKE_SKIP_LIVE", "").strip().lower() not in ("1", "true", "yes"):
+        try:
+            from bet_placer.data.stake_scraper import StakeScraper
+            from bet_placer.engine.stake_odds import (
+                _overlay_key,
+                _serialize_fixture,
+                fetch_fast_stake_overlay,
+                persist_match_stake_data,
+            )
 
-        scraper = StakeScraper(timeout=120, allow_browser_launch=True)
-        overlay = fetch_fast_stake_overlay(scraper)
-        for fx in overlay.values():
-            if not fx.markets:
-                continue
-            try:
-                persist_match_stake_data(fx.home_team, fx.away_team, fx, None)
-            except Exception:
-                pass
-            fixtures[_overlay_key(fx.home_team, fx.away_team)] = _serialize_fixture(fx)
-        if fixtures:
-            source = "live_scrape"
-    except Exception as exc:
-        print(f"live scrape skipped: {exc}")
+            scraper = StakeScraper(timeout=120, allow_browser_launch=True)
+            overlay = fetch_fast_stake_overlay(scraper)
+            for fx in overlay.values():
+                if not fx.markets:
+                    continue
+                try:
+                    persist_match_stake_data(fx.home_team, fx.away_team, fx, None)
+                except Exception:
+                    pass
+                fixtures[_overlay_key(fx.home_team, fx.away_team)] = _serialize_fixture(fx)
+            if fixtures:
+                source = "live_scrape"
+        except Exception as exc:
+            print(f"live scrape skipped: {exc}")
+    else:
+        print("STAKE_SKIP_LIVE set — scrape skipped")
 
     # 2) Fall back to last good disk cache — never invent empty
     if not fixtures:
@@ -143,6 +223,13 @@ def main() -> int:
         if fixtures:
             source = "disk_cache"
             print(f"using disk cache ({len(fixtures)} fixtures)")
+
+    # 3) ESPN 1X2 book lines — keeps cloud Odds/recs priced when Stake CF blocks
+    if not fixtures:
+        fixtures = _espn_book_fixtures()
+        if fixtures:
+            source = "espn_book"
+            print(f"using ESPN book lines ({len(fixtures)} fixtures) — not live Stake")
 
     if not fixtures:
         print(

@@ -317,7 +317,10 @@ def _load_state() -> dict[str, Any]:
     if bets:
         migrated = [_migrate_legacy_bet(b) for b in bets]
         summary = _summarize_bets(migrated)
-        summary["model_audit"] = _audit_bets_against_model(summary["bets"])
+        # Keep prior audit if present. Re-scoring every GET against the model hangs big journals.
+        prior = (data.get("portfolio") or {}).get("model_audit") if isinstance(data.get("portfolio"), dict) else None
+        if isinstance(prior, dict):
+            summary["model_audit"] = prior
         state["portfolio"] = summary
     return state
 

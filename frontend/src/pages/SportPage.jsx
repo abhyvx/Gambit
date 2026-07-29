@@ -16,7 +16,7 @@ import {
 import TopBetTicket from '../components/TopBetTicket'
 import {
   SPORT_GROUPS, fetchSportKey, filterRowsForLeague, boardForBetting,
-  emptyBoardMessage, matchScoreParts,
+  emptyBoardMessage, matchScoreParts, leagueTabForEvent,
 } from '../data/sportBoard'
 import { legFromBet } from '../lib/slipRules'
 import './pages.css'
@@ -214,7 +214,7 @@ export default function SportPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const group = SPORT_GROUPS.find((g) => g.id === sportId) || SPORT_GROUPS[0]
-  const { perMatchBudget, targetCashout, bettorStyle, addLeg } = useBankroll()
+  const { perMatchBudget, targetCashout, bettorStyle, addLeg, setSlipOpen } = useBankroll()
 
   const focusId = params.get('focus')
   const initialLeague = params.get('league') || group.leagues[0].key
@@ -527,11 +527,35 @@ export default function SportPage() {
     }
   }
 
+  const addFeaturedOdds = (ev, side) => {
+    const o = ev.odds || {}
+    const price = o[side]
+    if (!price) return
+    const label = side === 'home' ? `${ev.home_team} to win`
+      : side === 'away' ? `${ev.away_team} to win` : 'Draw'
+    const ok = addLeg(legFromBet({
+      event_id: ev.id,
+      home_team: ev.home_team,
+      away_team: ev.away_team,
+      home_logo: ev.home_logo,
+      away_logo: ev.away_logo,
+      sport_key: ev.sport_key,
+      league: ev.league,
+      market: 'match_winner',
+      market_name: 'Match Result',
+      selection: side,
+      label,
+      decimal_odds: price,
+    }, null))
+    if (ok) setSlipOpen?.(true)
+  }
+
   const openMatch = (ev) => {
     // Top bet / featured → deep-link so league + focus survive remounts
     if (ev?.event_id && !rows.some((r) => String(r.id) === String(ev.event_id || ev.id))) {
       const q = new URLSearchParams({ focus: String(ev.event_id || ev.id) })
-      if (ev.sport_key) q.set('league', String(ev.sport_key))
+      const league = leagueTabForEvent(ev) || ev.sport_key
+      if (league) q.set('league', String(league))
       if (ev.home_team) q.set('home', String(ev.home_team))
       if (ev.away_team) q.set('away', String(ev.away_team))
       navigate(`/app/sport/${group.id}?${q}`)
@@ -612,6 +636,7 @@ export default function SportPage() {
                 key={ev.id}
                 ev={ev}
                 onOpen={openMatch}
+                onAddOdds={addFeaturedOdds}
                 showDraw={group.id === 'soccer'}
                 sport={group.id}
               />

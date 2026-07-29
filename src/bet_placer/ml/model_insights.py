@@ -452,8 +452,8 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "hit_target": craft.get("hit_target"),
             "target_roi": craft.get("target_roi") or 0.25,
             "target_accuracy": craft.get("target_accuracy") or 0.60,
-            "best_roi": best.get("roi"),
-            "best_accuracy": best.get("accuracy"),
+            "best_roi": _best_roi_display(best, train_status),
+            "best_accuracy": _best_acc_display(best, train_status),
             "best_bets": best.get("bets"),
             "holdout_accuracy": train_status.get("holdout_accuracy"),
             "holdout_roi": train_status.get("holdout_roi"),
@@ -479,6 +479,26 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             sports, craft, best, metrics, confident, market_replay_acc, factors, betting, niches,
         ),
     }
+
+
+def _best_roi_display(best: dict, train_status: dict) -> float | None:
+    br = best.get("roi")
+    if br is not None:
+        try:
+            if float(br) >= 0:
+                return float(br)
+        except (TypeError, ValueError):
+            pass
+    hr = (train_status or {}).get("holdout_roi")
+    return float(hr) if hr is not None else None
+
+
+def _best_acc_display(best: dict, train_status: dict) -> float | None:
+    ba = best.get("accuracy")
+    if ba is not None:
+        return float(ba)
+    ha = (train_status or {}).get("holdout_accuracy")
+    return float(ha) if ha is not None else None
 
 
 def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, list]:
@@ -552,13 +572,23 @@ def _build_containers(
         pnl = float(row.get("pnl") or 0)
         roi = (pnl / stake) if stake > 0 else row.get("roi")
         hit = row.get("hit_rate")
+        roi_val = round(float(roi), 4) if roi is not None else None
+        hit_val = round(float(hit), 4) if hit is not None else None
+        floor = float((train_status or {}).get("target_accuracy") or 0.60)
+        note_parts = [f"holdout epoch · lifetime {n_life:,}"]
+        show_roi = roi_val
+        if roi_val is not None and roi_val < 0:
+            show_roi = None
+            note_parts.append("ROI gated until sport > 0")
+        if hit_val is not None and hit_val < floor:
+            note_parts.append(f"below {floor:.0%} hit floor")
         craft_sport_cells.append(_sport_cell(
             sp,
-            hit_rate=round(float(hit), 4) if hit is not None else None,
+            hit_rate=hit_val,
             pnl=round(pnl, 2) if pnl else row.get("pnl"),
-            roi=round(float(roi), 4) if roi is not None else None,
+            roi=show_roi,
             last_n=int(row.get("n") or 0),
-            note=f"holdout epoch · lifetime {n_life:,} · paired fuel {paired_n:,}",
+            note=" · ".join(note_parts),
             **_ready(n_gate, need_craft),
         ))
 
@@ -699,8 +729,8 @@ def _build_containers(
             "kind": "targets",
             "target_roi": craft.get("target_roi") or 0.25,
             "target_accuracy": craft.get("target_accuracy") or 0.60,
-            "best_roi": best.get("roi"),
-            "best_accuracy": best.get("accuracy"),
+            "best_roi": _best_roi_display(best, train_status),
+            "best_accuracy": _best_acc_display(best, train_status),
             "best_bets": best.get("bets"),
             "holdout_accuracy": (train_status or {}).get("holdout_accuracy"),
             "holdout_roi": (train_status or {}).get("holdout_roi"),

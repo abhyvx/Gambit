@@ -1,0 +1,241 @@
+.entry-app-under[aria-hidden='true'] {
+  content-visibility: auto;
+  user-select: none;
+}
+
+.entry-screen {
+  --entry-silver: #e8eef4;
+  --entry-emerald: #5dcc9a;
+  --entry-line-dur: 0.75s;
+  --entry-bg-dur: 1.85s;
+  --hold-ms: 800ms;
+  /* Mark size — AMBIT type scales off this */
+  --entry-g: min(18vw, 64px);
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background: #07141c;
+  cursor: pointer;
+  transition: opacity 0.24s ease, visibility 0.24s ease;
+}
+.entry-screen.is-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* G mark + AMBIT as one lockup */
+.entry-reveal--brand {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  pointer-events: none;
+  color: var(--blue-bright, #3a8ff0);
+}
+
+.entry-mark {
+  width: var(--entry-g);
+  height: var(--entry-g);
+  overflow: visible;
+  flex-shrink: 0;
+  margin-right: -6px;
+}
+
+.entry-pawn {
+  fill: var(--entry-silver);
+  opacity: 0;
+  animation:
+    entry-fade 0.12s ease both,
+    entry-pawn-out 0.28s 2.1s ease both;
+}
+.entry-pawn.is-e4 { animation-delay: 0s, 2.1s; }
+.entry-pawn.is-e5 {
+  fill: #9aa8b4;
+  animation-delay: 0.14s, 2.1s;
+}
+.entry-pawn.is-f4 {
+  fill: var(--entry-emerald);
+  animation-delay: 0.28s, 2.1s;
+}
+@keyframes entry-pawn-out {
+  to { opacity: 0; }
+}
+
+.entry-line {
+  fill: none;
+  stroke-linecap: round;
+  opacity: 0;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+}
+
+.entry-line--web {
+  stroke: rgba(232, 238, 244, 0.22);
+  stroke-width: 0.32;
+  animation: entry-web-draw var(--entry-bg-dur) ease both;
+}
+.entry-line--spoke {
+  stroke: rgba(232, 238, 244, 0.5);
+  stroke-width: 0.38;
+  animation: entry-spoke-draw var(--entry-line-dur) ease both;
+}
+.entry-line--spoke-spur {
+  stroke: rgba(93, 204, 154, 0.5);
+}
+.entry-line--g {
+  stroke: rgba(232, 238, 244, 0.95);
+  stroke-width: 0.55;
+  animation: entry-g-draw var(--entry-line-dur) ease both;
+}
+.entry-line--spur {
+  stroke: rgba(93, 204, 154, 0.95);
+}
+
+@keyframes entry-web-draw {
+  from { opacity: 0; stroke-dashoffset: 100; }
+  to { opacity: 0.22; stroke-dashoffset: 0; }
+}
+@keyframes entry-spoke-draw {
+  from { opacity: 0; stroke-dashoffset: 100; }
+  to { opacity: 0.42; stroke-dashoffset: 0; }
+}
+@keyframes entry-g-draw {
+  from { opacity: 0; stroke-dashoffset: 100; }
+  to { opacity: 1; stroke-dashoffset: 0; }
+}
+
+.entry-dot {
+  fill: var(--entry-silver);
+  opacity: 0;
+  animation: entry-fade 0.35s ease both;
+}
+
+/* AMBIT: same draw duration as G lines, after G outline lands (~1.35s) */
+.entry-ambit.gambit-word {
+  font-family: var(--font-brand, 'Chakra Petch', sans-serif);
+  font-weight: 700;
+  /* Match mark optical height — Chakra caps sit a bit short of the G box */
+  font-size: calc(var(--entry-g) * 0.72);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(0.94);
+  transform-origin: left center;
+  animation: entry-pop var(--entry-line-dur) 1.35s ease both;
+}
+.entry-ambit.gambit-word.is-static {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+@keyframes entry-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.entry-hold-hint {
+  position: absolute;
+  bottom: max(56px, calc(env(safe-area-inset-bottom) + 48px));
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-family: var(--font, 'Outfit', sans-serif);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(232, 238, 244, 0.28);
+  pointer-events: none;
+}
+
+.entry-screen.is-hold .entry-line--g {
+  animation: none;
+  opacity: 1;
+  stroke-dashoffset: 0;
+}
+.entry-screen.is-hold .entry-line--spoke {
+  animation: none;
+  opacity: 0.35;
+  stroke-dashoffset: 0;
+}
+.entry-screen.is-hold .entry-line--web {
+  animation: none;
+  opacity: 0.16;
+  stroke-dashoffset: 0;
+}
+
+.entry-screen.is-resolve .entry-pawn { opacity: 0; }
+.entry-screen.is-resolve .entry-line--g,
+.entry-screen.is-resolve .entry-dot {
+  animation: none;
+  opacity: 1;
+  stroke-dashoffset: 0;
+}
+.entry-screen.is-resolve .entry-ambit {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+.entry-screen.is-resolve .entry-line--spoke {
+  animation: none;
+  opacity: 0.28;
+  stroke-dashoffset: 0;
+}
+.entry-screen.is-resolve .entry-line--web {
+  animation: none;
+  opacity: 0.14;
+  stroke-dashoffset: 0;
+}
+
+.entry-skip {
+  position: absolute;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  right: max(20px, env(safe-area-inset-right));
+  border: 0;
+  background: transparent;
+  color: rgba(232, 238, 244, 0.3);
+  font-family: var(--font, 'Outfit', sans-serif);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 8px 4px;
+  opacity: 0;
+  animation: entry-fade 0.2s 0.4s ease both;
+}
+.entry-skip:hover,
+.entry-skip:focus-visible {
+  color: var(--entry-silver);
+  outline: none;
+}
+
+@keyframes entry-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.entry-screen.is-reduced .entry-pawn { display: none; }
+.entry-screen.is-reduced .entry-line,
+.entry-screen.is-reduced .entry-dot,
+.entry-screen.is-reduced .entry-ambit,
+.entry-screen.is-reduced .entry-skip {
+  animation: none;
+  opacity: 1;
+  stroke-dashoffset: 0;
+  transform: none;
+}
+.entry-screen.is-reduced .entry-line--web { opacity: 0.14; }
+.entry-screen.is-reduced .entry-line--spoke { opacity: 0.28; }

@@ -1,7 +1,18 @@
 const API = '/api'
 
+function fetchErrorMessage(err, fallback) {
+  if (err?.name === 'TimeoutError' || String(err).includes('TimeoutError')) {
+    return 'Request timed out. The API may still be working. Wait, then click Reload.'
+  }
+  if (String(err).includes('Failed to fetch')) {
+    return 'Could not reach the API. Run ./scripts/run.sh from the Bet Placer folder and keep that terminal open.'
+  }
+  return err?.message || fallback
+}
+
 export async function checkHealth() {
-  const r = await fetch(`${API}/health`)
+  const r = await fetch(`${API}/health`, { signal: AbortSignal.timeout(5000) })
+  if (!r.ok) throw new Error(`Health ${r.status}`)
   return r.json()
 }
 
@@ -18,19 +29,87 @@ export async function fetchSports(category = null, featured = false) {
   return r.json()
 }
 
-export async function fetchEvents(sport, match = '') {
-  const params = new URLSearchParams({ sport })
-  if (match) params.set('match', match)
-  const r = await fetch(`${API}/events?${params}`)
+export async function fetchMarketTop(limit = 8) {
+  const r = await fetch(`${API}/market/top?limit=${limit}`, { signal: AbortSignal.timeout(45000) })
+  if (!r.ok) throw new Error(`Market top failed (${r.status})`)
   return r.json()
 }
 
-export async function fetchWorldCup({ matchday, eventId, budgetPerMatchInr = 300, includeCompleted = false, forceRefresh = false } = {}) {
+const _eventsCache = new Map()
+const EVENTS_TTL_MS = 180_000
+const EVENTS_DISK_KEY = 'gambit_events_v1'
+const EVENTS_DISK_TTL_MS = 3_600_000  // 1h — Stake-style paint after hard refresh
+
+function _diskLoad(key) {
+  try {
+    const blob = JSON.parse(localStorage.getItem(EVENTS_DISK_KEY) || '{}')
+    const hit = blob[key]
+    if (!hit || Date.now() - hit.ts > EVENTS_DISK_TTL_MS) return null
+    return hit.data
+  } catch {
+    return null
+  }
+}
+
+function _diskSave(key, data) {
+  try {
+    const blob = JSON.parse(localStorage.getItem(EVENTS_DISK_KEY) || '{}')
+    blob[key] = { ts: Date.now(), data }
+    const keys = Object.keys(blob)
+    if (keys.length > 24) {
+      keys
+        .sort((a, b) => (blob[a].ts || 0) - (blob[b].ts || 0))
+        .slice(0, keys.length - 24)
+        .forEach((k) => { delete blob[k] })
+    }
+    localStorage.setItem(EVENTS_DISK_KEY, JSON.stringify(blob))
+  } catch { /* quota / private mode */ }
+}
+
+export function peekEventsCache(sport, match = '') {
+  const key = `${sport}|${match || ''}`
+  const hit = _eventsCache.get(key)
+  if (hit && Date.now() - hit.ts <= EVENTS_TTL_MS) return hit.data
+  const disk = _diskLoad(key)
+  if (disk) {
+    _eventsCache.set(key, { ts: Date.now(), data: disk })
+    return disk
+  }
+  return null
+}
+
+export async function fetchEvents(sport, match = '', { force = false } = {}) {
+  const key = `${sport}|${match || ''}`
+  if (!force) {
+    const hit = _eventsCache.get(key)
+    if (hit && Date.now() - hit.ts < EVENTS_TTL_MS) return hit.data
+    const disk = _diskLoad(key)
+    if (disk) {
+      // Paint immediately from disk; soft-revalidate in background
+      _eventsCache.set(key, { ts: Date.now() - EVENTS_TTL_MS + 5_000, data: disk })
+      fetchEvents(sport, match, { force: true }).catch(() => {})
+      return disk
+    }
+  }
+  const params = new URLSearchParams({ sport })
+  if (match) params.set('match', match)
+  const r = await fetch(`${API}/events?${params}`, { signal: AbortSignal.timeout(60000) })
+  if (!r.ok) throw new Error(`Events failed (${r.status})`)
+  const data = await r.json()
+  _eventsCache.set(key, { ts: Date.now(), data })
+  _diskSave(key, data)
+  return data
+}
+
+export async function fetchWorldCup({ matchday, eventId, budgetPerMatchInr = 300, targetCashoutInr, includeCompleted = false, forceRefresh = false } = {}) {
   const params = new URLSearchParams({
     budget_per_match_inr: String(budgetPerMatchInr),
     include_completed: String(includeCompleted),
     force_refresh: String(forceRefresh),
   })
+  if (targetCashoutInr != null && targetCashoutInr > 0) {
+    params.set('target_cashout_inr', String(targetCashoutInr))
+  }
   if (matchday !== undefined && matchday !== null) {
     params.set('matchday', String(matchday))
   }
@@ -40,20 +119,75 @@ export async function fetchWorldCup({ matchday, eventId, budgetPerMatchInr = 300
   return r.json()
 }
 
-export async function fetchBetBuilder({ home, away, budgetInr = 300 } = {}) {
+export async function fetchBetBuilder({ home, away, budgetInr = 200, sport } = {}) {
   const params = new URLSearchParams({
     home,
     away,
     budget_inr: String(budgetInr),
   })
+  if (sport) params.set('sport', sport)
   const r = await fetch(`${API}/worldcup/bet-builder?${params}`)
   if (!r.ok) throw new Error(`Bet builder failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchMatchSlipRefresh({
+  home, away, budgetInr = 200, targetCashoutInr = 1000, refreshStake = true, sport,
+  goal, risk, structure,
+} = {}) {
+  const params = new URLSearchParams({
+    home,
+    away,
+    budget_inr: String(budgetInr),
+    target_cashout_inr: String(targetCashoutInr),
+    refresh_stake: String(refreshStake),
+  })
+  if (sport) params.set('sport', sport)
+  if (goal) params.set('goal', goal)
+  if (risk) params.set('risk', risk)
+  if (structure) params.set('structure', structure)
+  const r = await fetch(`${API}/worldcup/match-slip?${params}`, { signal: AbortSignal.timeout(90000) })
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '')
+    throw new Error(detail?.slice(0, 160) || `Match slip refresh failed (${r.status})`)
+  }
+  return r.json()
+}
+
+export async function fetchHitTarget({
+  home, away, budgetInr = 200, targetCashoutInr = 1000,
+  goal, risk, structure, sport,
+} = {}) {
+  const params = new URLSearchParams({
+    home,
+    away,
+    budget_inr: String(budgetInr),
+    target_cashout_inr: String(targetCashoutInr),
+  })
+  if (goal) params.set('goal', goal)
+  if (risk) params.set('risk', risk)
+  if (structure) params.set('structure', structure)
+  if (sport) params.set('sport', sport)
+  const r = await fetch(`${API}/worldcup/hit-target?${params}`, { signal: AbortSignal.timeout(90000) })
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '')
+    throw new Error(detail?.slice(0, 120) || `Hit target failed (${r.status})`)
+  }
   return r.json()
 }
 
 export async function refreshStakeOverlay() {
   const r = await fetch(`${API}/stake/refresh`, { method: 'POST', signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Stake refresh failed (${r.status})`)
+  return r.json()
+}
+
+export async function connectStakeSession() {
+  const r = await fetch(`${API}/stake/connect`, { method: 'POST', signal: AbortSignal.timeout(300000) })
+  if (!r.ok) {
+    const raw = await r.text().catch(() => '')
+    throw new Error(raw?.slice(0, 160) || `Stake connect failed (${r.status})`)
+  }
   return r.json()
 }
 
@@ -74,7 +208,7 @@ export async function updatePortfolioPrivacy(payload) {
 }
 
 export async function connectPortfolioSession() {
-  const r = await fetch(`${API}/portfolio/connect`, { method: 'POST', signal: AbortSignal.timeout(180000) })
+  const r = await fetch(`${API}/portfolio/connect`, { method: 'POST', signal: AbortSignal.timeout(300000) })
   if (!r.ok) throw new Error(`Portfolio connect failed (${r.status})`)
   return r.json()
 }
@@ -86,22 +220,24 @@ export async function disconnectPortfolioSession() {
 }
 
 export async function refreshPortfolioSnapshot() {
-  const r = await fetch(`${API}/portfolio/refresh`, { method: 'POST', signal: AbortSignal.timeout(45000) })
+  const r = await fetch(`${API}/portfolio/refresh`, { method: 'POST', signal: AbortSignal.timeout(120000) })
   if (!r.ok) {
+    const raw = await r.text()
     let msg = `Portfolio refresh failed (${r.status})`
     try {
-      const data = await r.json()
+      const data = JSON.parse(raw)
       msg = data.detail || msg
     } catch {
-      const text = await r.text()
-      if (text) msg = text
+      if (raw) msg = raw
     }
     throw new Error(msg)
   }
   return r.json()
 }
 
-export async function fetchStakeOdds({ home, away, budgetInr = 300 } = {}) {
+export { fetchErrorMessage }
+
+export async function fetchStakeOdds({ home, away, budgetInr = 200 } = {}) {
   const params = new URLSearchParams({
     home,
     away,
@@ -114,22 +250,101 @@ export async function fetchStakeOdds({ home, away, budgetInr = 300 } = {}) {
 
 export async function fetchModelReport({ retrain = false } = {}) {
   const params = new URLSearchParams({ retrain: String(retrain) })
-  const r = await fetch(`${API}/model/report?${params}`)
+  const timeout = retrain ? 300000 : 20000
+  const r = await fetch(`${API}/model/report?${params}`, { signal: AbortSignal.timeout(timeout) })
   if (!r.ok) throw new Error(`Model report failed (${r.status})`)
   return r.json()
 }
 
-export async function fetchModelScorecard() {
-  const r = await fetch(`${API}/model/scorecard`)
+export async function fetchModelScorecard({ refresh = false } = {}) {
+  const params = new URLSearchParams({ refresh: String(refresh) })
+  const r = await fetch(`${API}/model/scorecard?${params}`, { signal: AbortSignal.timeout(30000) })
   if (!r.ok) throw new Error(`Model scorecard failed (${r.status})`)
   return r.json()
 }
 
-export async function fetchAnalysis({ sport, match, eventId, bankroll = 2000 } = {}) {
-  const params = new URLSearchParams({ sport, bankroll: String(bankroll) })
+export async function fetchModelActivity(limit = 40) {
+  const r = await fetch(`${API}/model/activity?limit=${limit}`, { signal: AbortSignal.timeout(15000) })
+  if (!r.ok) throw new Error(`Activity log failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchPaperBook() {
+  const r = await fetch(`${API}/model/paper`, { signal: AbortSignal.timeout(15000) })
+  if (!r.ok) throw new Error(`Paper book failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchCraftProgress() {
+  const r = await fetch(`${API}/model/craft`, { signal: AbortSignal.timeout(15000) })
+  if (!r.ok) throw new Error(`Craft progress failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchModelInsights() {
+  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(60000) })
+  if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
+  return r.json()
+}
+
+export async function runPaperCycle({
+  trainWalkforward = true,
+  placeLive = true,
+  bankroll = 10000,
+  matchBudget = 200,
+  maxGames = 60,
+  untilRoi = false,
+  targetRoi = 0.25,
+  targetAcc = 0.55,
+  maxEpochs = 0, // 0 = unlimited until targets hit
+} = {}) {
+  const params = new URLSearchParams({
+    train_walkforward: String(trainWalkforward),
+    place_live: String(placeLive),
+    bankroll: String(bankroll),
+    match_budget: String(matchBudget),
+    max_games: String(maxGames),
+    until_roi: String(untilRoi),
+    target_roi: String(targetRoi),
+    target_acc: String(targetAcc),
+    max_epochs: String(maxEpochs),
+  })
+  const r = await fetch(`${API}/model/paper/cycle?${params}`, {
+    method: 'POST',
+    // Unlimited craft can run a long time — keep the request alive
+    signal: AbortSignal.timeout(untilRoi ? 7_200_000 : 300000),
+  })
+  if (!r.ok) throw new Error(`Paper cycle failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchAnalysis({
+  sport,
+  match,
+  eventId,
+  bankroll = 300,
+  goal = 'preserve',
+  risk = 'medium',
+  structure = 'spread',
+  targetCashoutInr,
+} = {}) {
+  const params = new URLSearchParams({
+    sport,
+    bankroll: String(bankroll),
+    goal,
+    risk,
+    structure,
+  })
   if (match) params.set('match', match)
   if (eventId) params.set('event_id', eventId)
-  const r = await fetch(`${API}/analyze?${params}`)
+  if (targetCashoutInr != null) params.set('target_cashout_inr', String(targetCashoutInr))
+  const r = await fetch(`${API}/analyze?${params}`, { signal: AbortSignal.timeout(60000) })
   if (!r.ok) throw new Error(`Analysis failed (${r.status})`)
+  return r.json()
+}
+
+export async function fetchBettorStyleCatalog() {
+  const r = await fetch(`${API}/bettor-style`, { signal: AbortSignal.timeout(10000) })
+  if (!r.ok) throw new Error(`Style catalog failed (${r.status})`)
   return r.json()
 }

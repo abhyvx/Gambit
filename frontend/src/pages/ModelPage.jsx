@@ -309,15 +309,16 @@ function InsightContainer({ c, curves, sportKeys }) {
             <strong className="stat-value">{pct(c.target_accuracy)}</strong>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Best paper ROI</span>
-            <strong className={`stat-value ${Number(c.best_roi) >= Number(c.target_roi) ? 'delta-up' : ''}`}>
-              {roiPct(c.best_roi)}
+            <span className="stat-label">Holdout ROI</span>
+            <strong className={`stat-value ${Number(c.holdout_roi ?? c.best_roi) >= 0 ? 'delta-up' : ''}`}>
+              {roiPct(c.holdout_roi ?? c.best_roi)}
             </strong>
+            <small>same frozen matches every run</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Best hit rate</span>
-            <strong className="stat-value">{pct(c.best_accuracy)}</strong>
-            <small>{fmt(c.best_bets)} bets · {fmt(c.n_epochs)} epochs</small>
+            <span className="stat-label">Holdout hit rate</span>
+            <strong className="stat-value">{pct(c.holdout_accuracy ?? c.best_accuracy)}</strong>
+            <small>{fmt(c.best_bets)} bets at best · {fmt(c.n_epochs)} epochs</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Gate</span>
@@ -328,7 +329,7 @@ function InsightContainer({ c, curves, sportKeys }) {
             <div className="stat-cell" key={sp}>
               <span className="stat-label">{sp} sport gate</span>
               <strong className={`stat-value ${g.ok ? 'delta-up' : ''}`}>{g.ok ? 'OK' : 'OPEN'}</strong>
-              <small>n={fmt(g.n)} · {roiPct(g.roi)}</small>
+              <small>n={fmt(g.n)} · {g.roi != null && Number(g.roi) >= 0 ? roiPct(g.roi) : 'gated'}</small>
             </div>
           ))}
           {c.gates?.monthly?.sports && Object.entries(c.gates.monthly.sports).map(([sp, g]) => (

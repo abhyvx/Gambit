@@ -9,9 +9,30 @@ from enum import Enum
 from bet_placer.engine.probability import rank_all_bets
 
 
+def _json_key(k):
+    if k is None:
+        return "null"
+    if isinstance(k, (str, int, float, bool)):
+        return k
+    if isinstance(k, tuple):
+        return "|".join("" if x is None else str(x) for x in k)
+    return str(k)
+
+
 def to_json(obj):
     if obj is None:
         return None
+    # numpy / pandas scalars (bool_, int64, float64) — common in probability code
+    t = type(obj)
+    tname = t.__name__
+    if t.__module__.startswith("numpy") and hasattr(obj, "item"):
+        return obj.item()
+    if tname in ("bool_", "bool8", "bool"):
+        return bool(obj)
+    if tname.startswith(("int", "uint")) and hasattr(obj, "item"):
+        return int(obj)
+    if tname.startswith(("float", "Float")) and hasattr(obj, "item"):
+        return float(obj)
     if isinstance(obj, Enum):
         return obj.value
     if isinstance(obj, datetime):
@@ -19,7 +40,7 @@ def to_json(obj):
     if is_dataclass(obj):
         return {k: to_json(v) for k, v in asdict(obj).items()}
     if isinstance(obj, dict):
-        return {k: to_json(v) for k, v in obj.items()}
+        return {_json_key(k): to_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [to_json(v) for v in obj]
     return obj

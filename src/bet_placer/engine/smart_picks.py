@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from bet_placer.ml.poisson import expected_goals, score_matrix
 
-_MAX_SITUATIONAL = 6
+_MAX_SITUATIONAL = 3
 _MIN_SITUATIONAL = 2
+_MAX_EASY_MONEY = 1
+
+# Easy money = high win-rate spots only. NOT the same as situational narratives.
+_EASY_MONEY_CORE = frozenset({
+    "match_winner", "double_chance", "draw_no_bet", "over_under_goals", "btts", "asian_handicap",
+})
+_EASY_MIN_PROB = 0.62
+_EASY_MATCH_WINNER_MIN = 0.68
+_EASY_MAX_IMPLIED_GAP = 0.18
 
 _SLATE_CAPS: dict[str, int] = {
     "must_win": 5,
@@ -50,6 +59,22 @@ def _market_family(market: str) -> str:
     if market == "half_time":
         return "half"
     return market
+
+
+def _selection_cluster(o: dict, home: str, away: str) -> str:
+    from bet_placer.engine.bet_builder import _axis_dir
+
+    axis, direction = _axis_dir(o, home, away)
+    market = o.get("market") or "other"
+    if axis == "result":
+        return f"result:{direction}"
+    if axis in ("goals", "btts"):
+        return f"score_shape:{direction}"
+    if market == "player_goal":
+        return f"scorer:{(o.get('selection') or '').lower()}"
+    if axis in ("corners", "cards", "half"):
+        return f"{axis}:{direction}"
+    return f"{market}:{direction}"
 
 
 def first_goal_probs(match) -> tuple[float, float, float]:
@@ -135,9 +160,11 @@ def _matches_angle(o: dict, angle: dict, home: str, away: str) -> bool:
 
 def _on_stake(o: dict, angle: dict, ctx: dict) -> bool:
     overlay = ctx.get("stake_overlay")
-    if not overlay:
+    from bet_placer.engine.stake_odds import option_on_stake, stake_lines_usable, stake_overlay_ready
+    if ctx.get("_board_source") == "stake":
         return True
-    from bet_placer.engine.stake_odds import option_on_stake
+    if not stake_overlay_ready(overlay):
+        return False
     market = angle.get("market", "")
     if market == "first_goal_team":
         market = "team_first_goal"
@@ -203,6 +230,85 @@ def _is_pool_eligible(o: dict, home: str, away: str) -> bool:
     return True
 
 
+def _build_easy_money_picks(
+    pool: list[dict],
+    thesis: dict,
+    home: str,
+    away: str,
+    ctx: dict,
+) -> list[dict]:
+    """High win-rate spots only — separate from situational story bets.
+
+    Bar is intentionally strict: if nothing clears it, we return [] rather than
+    dressing up a 50/50 narrative as 'easy money'.
+    """
+    from bet_placer.engine.bet_builder import _axis_dir
+
+    def implied(o: dict) -> float:
+        return 1.0 / o["odds"] if o.get("odds", 0) > 1.0 else 1.0
+
+    draw_scenario = bool(thesis.get("draw_scenario"))
+    fade_public = bool(ctx.get("fade_public"))
+    trending = ctx.get("trending_on")
+    out: list[dict] = []
+    used_clusters: set[str] = set()
+
+    for o in pool:
+        market = o.get("market") or ""
+        if market not in _EASY_MONEY_CORE:
+            continue
+        if market in ("player_goal", "team_first_goal", "situation", "corners", "cards", "half_time"):
+            continue
+
+        p = o.get("our_probability") or 0
+        min_p = _EASY_MATCH_WINNER_MIN if market == "match_winner" else _EASY_MIN_PROB
+        if p < min_p:
+            continue
+        if abs(p - implied(o)) > _EASY_MAX_IMPLIED_GAP:
+            continue
+
+        tier = (o.get("verdict") or {}).get("tier")
+        if tier in ("trap", "bad"):
+            continue
+        if crowd_hype(o, fade_public, trending, home, away):
+            continue
+
+        axis, direction = _axis_dir(o, home, away)
+        if draw_scenario and market in ("match_winner", "draw_no_bet", "asian_handicap"):
+            if axis == "result" and direction in ("home", "away"):
+                continue
+
+        tdir = {
+            "result": thesis.get("result_dir"),
+            "goals": thesis.get("goals_dir"),
+            "btts": thesis.get("btts_dir"),
+        }.get(axis)
+        if tdir is not None and direction != tdir and direction != "nodraw":
+            continue
+
+        cluster = _selection_cluster(o, home, away)
+        if cluster in used_clusters:
+            continue
+        used_clusters.add(cluster)
+
+        pct = round(p * 100)
+        out.append({
+            **o,
+            "pick_kind": "easy_money",
+            "tag": "💎 Easy money",
+            "why": (
+                f"High-confidence read (~{pct}% to land) on a core market that fits how this "
+                "game should play — not a long-shot story bet."
+            ),
+            "reason": f"~{pct}% win chance · core market · thesis-aligned",
+            "confidence_tier": "lock" if p >= 0.70 else "strong",
+            "odds_source": o.get("source") or ("stake" if ctx.get("stake_priced") else "live_book"),
+        })
+
+    out.sort(key=lambda x: (-(x.get("our_probability") or 0), -(x.get("edge_pct") or 0)))
+    return out[:_MAX_EASY_MONEY]
+
+
 def build_smart_picks(
     flat: list[dict],
     home: str,
@@ -219,6 +325,26 @@ def build_smart_picks(
     from bet_placer.engine.game_profile import profile_match
 
     ctx = human_context or {}
+    from bet_placer.engine.stake_odds import option_on_stake, stake_lines_usable, stake_overlay_ready
+
+    overlay = ctx.get("stake_overlay")
+    board_stake = ctx.get("_board_source") == "stake"
+    if not stake_lines_usable(overlay, ctx):
+        return {
+            "easy_money": [],
+            "situational_picks": [],
+            "smart_picks": [],
+            "unified_picks": [],
+            "parlay_suggestion": None,
+            "thesis": thesis,
+            "game_profile": {},
+            "analyst_read": {},
+            "stage_note": _stage_note(matchday),
+            "skip_reasons": ["Verify on Stake — no live lines loaded."],
+            "spotlight": None,
+            "easy_money_note": "Connect Stake and refresh to see picks priced from live lines.",
+        }
+
     slate = slate_usage if slate_usage is not None else {}
     thesis = thesis or _match_thesis(flat, home, away)
     fade_public = bool(ctx.get("fade_public"))
@@ -231,9 +357,19 @@ def build_smart_picks(
         p = o.get("our_probability")
         return p is not None and abs(p - implied(o)) <= 0.30
 
+    from bet_placer.data.team_stars import player_goal_eligible
+
     pool = [
         o for o in flat
         if _is_pool_eligible(o, home, away) and plausible(o) and o.get("odds", 0) >= 1.15
+        and (
+            o.get("market") != "player_goal"
+            or player_goal_eligible(home, away, o.get("selection") or "")
+        )
+        and (
+            board_stake
+            or option_on_stake(o.get("market"), o.get("selection"), o.get("line"), overlay)
+        )
     ]
 
     profile = profile_match(match, probabilities, ctx)
@@ -243,6 +379,7 @@ def build_smart_picks(
     situational: list[dict] = []
     used_labels: set[str] = set()
     used_families: set[str] = set()
+    used_clusters: set[str] = set()
 
     def enrich(o: dict, angle: dict, score: float) -> dict:
         return {
@@ -277,13 +414,17 @@ def build_smart_picks(
         if crowd_hype(o, fade_public, trending, home, away):
             continue
         label = (o.get("label") or "").lower()
+        cluster = _selection_cluster(o, home, away)
         if label in used_labels:
+            continue
+        if cluster in used_clusters:
             continue
         p = o.get("our_probability") or 0
         if p < 0.44:
             continue
         used_labels.add(label)
         used_families.add(fam)
+        used_clusters.add(cluster)
         situational.append(enrich(o, angle, p * 50 + angle.get("priority", 5) * 4))
         slate[sig] = slate.get(sig, 0) + 1
 
@@ -296,13 +437,17 @@ def build_smart_picks(
             if not o:
                 continue
             label = (o.get("label") or "").lower()
+            cluster = _selection_cluster(o, home, away)
             if label in used_labels:
+                continue
+            if cluster in used_clusters:
                 continue
             if crowd_hype(o, fade_public, trending, home, away):
                 continue
             if (o.get("our_probability") or 0) < 0.40:
                 continue
             used_labels.add(label)
+            used_clusters.add(cluster)
             situational.append(enrich(o, angle, 35))
 
     # Third pass: any story angle at all
@@ -310,34 +455,39 @@ def build_smart_picks(
         for angle in ranked:
             o = _resolve_angle(angle, pool, home, away, match, ctx)
             if o and (o.get("our_probability") or 0) >= 0.38:
+                cluster = _selection_cluster(o, home, away)
+                if cluster in used_clusters:
+                    continue
+                used_clusters.add(cluster)
                 situational.append(enrich(o, angle, 30))
                 break
 
     situational.sort(key=lambda x: -x.get("_score", 0))
 
     unified = [{k: v for k, v in o.items() if k != "_score"} for o in situational[:_MAX_SITUATIONAL]]
+    easy_money = _build_easy_money_picks(pool, thesis, home, away, ctx)
 
     stage = _stage_note(matchday)
     if thesis:
         thesis = dict(thesis)
-        thesis["easy_money"] = bool(situational)
+        thesis["easy_money"] = bool(easy_money)
         thesis["game_style"] = profile.get("style")
         thesis["analyst_summary"] = read.get("summary", "")[:280]
-        if situational:
-            thesis["easy_money_note"] = situational[0].get("why", "")
+        if easy_money:
+            thesis["easy_money_note"] = easy_money[0].get("why", "")
 
     return {
-        "easy_money": unified,
+        "easy_money": easy_money,
         "situational_picks": unified,
         "smart_picks": unified,
-        "unified_picks": unified,
-        "parlay_suggestion": _parlay_from_picks(unified[:3], home, away),
+        "unified_picks": easy_money + [p for p in unified if p.get("label") not in {e.get("label") for e in easy_money}],
+        "parlay_suggestion": _parlay_from_picks((easy_money or unified)[:3], home, away),
         "thesis": thesis,
         "game_profile": profile,
         "analyst_read": read,
         "stage_note": stage,
-        "skip_reasons": [] if situational else ["No situational story resolved to a priced market."],
-        "spotlight": unified[0] if unified else None,
+        "skip_reasons": [] if (easy_money or situational) else ["No high-confidence or situational market resolved."],
+        "spotlight": (easy_money[0] if easy_money else unified[0]) if (easy_money or unified) else None,
     }
 
 
@@ -365,7 +515,7 @@ def _parlay_from_picks(picks: list[dict], home: str, away: str) -> dict | None:
         "legs": [{"label": p.get("label"), "odds": p.get("odds"), "probability_pct": p.get("our_probability_pct")} for p in legs[:3]],
         "combined_odds": round(odds, 2),
         "combined_probability_pct": round(prob * 100, 1),
-        "note": "Correlated same-game legs — stake small.",
+        "note": "Illustrative only — not a verified Stake combo. Check Stake Combos for real SGM prices.",
     }
 
 
@@ -391,18 +541,27 @@ def options_to_flat(options) -> list[dict]:
 def align_slip_with_picks(slip_dict: dict, picks: dict) -> dict:
     if not slip_dict or not picks:
         return slip_dict
+    easy = picks.get("easy_money") or []
     unified = picks.get("unified_picks") or picks.get("situational_picks") or []
-    easy = picks.get("easy_money") or unified
     slip_dict["unified_picks"] = unified
-    slip_dict["situational_picks"] = unified
+    slip_dict["situational_picks"] = picks.get("situational_picks") or unified
     slip_dict["easy_money"] = easy
     slip_dict["spotlight_pick"] = picks.get("spotlight")
     slip_dict["parlay_suggestion"] = picks.get("parlay_suggestion")
     slip_dict["game_profile"] = picks.get("game_profile")
     slip_dict["match_stories"] = (picks.get("analyst_read") or {}).get("stories", [])
+    slip_dict["match_thesis"] = picks.get("thesis")
+    curated = slip_dict.get("curated_picks") or {}
+    primary = curated.get("primary")
+    if primary and slip_dict.get("verdict") != "SKIP_MATCH":
+        slip_dict["recommended_strategy"] = primary.get("tab_id") or primary.get("id") or "singles_focus"
+        slip_dict["recommended_slip_id"] = primary.get("option_id") or primary.get("id")
+        return slip_dict
     if easy and slip_dict.get("verdict") != "SKIP_MATCH":
         slip_dict["easy_money_headline"] = easy[0].get("label")
         slip_dict["easy_money_why"] = easy[0].get("why")
+    if not easy:
+        slip_dict["easy_money_note"] = "No bet cleared the high-confidence bar for this match — situational picks are lower conviction."
     if easy and slip_dict.get("strategy_plans", {}).get("singles_focus"):
         plans = slip_dict["strategy_plans"]["singles_focus"]
         if plans and isinstance(plans, list):

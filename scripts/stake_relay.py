@@ -25,10 +25,10 @@ import requests
 
 def main() -> None:
     cloud = (os.getenv("GAMBIT_CLOUD_URL") or "").strip().rstrip("/")
-    secret = (os.getenv("STAKE_RELAY_SECRET") or "").strip()
+    secret = (os.getenv("STAKE_RELAY_SECRET") or "gambit-relay-v1-abhyvx").strip()
     interval = int(os.getenv("STAKE_RELAY_INTERVAL", "300"))
-    if not cloud or not secret:
-        print("Set GAMBIT_CLOUD_URL and STAKE_RELAY_SECRET in .env", file=sys.stderr)
+    if not cloud:
+        print("Set GAMBIT_CLOUD_URL in .env (your Render app URL)", file=sys.stderr)
         sys.exit(1)
 
     os.environ.setdefault("STAKE_USE_BROWSER", "true")

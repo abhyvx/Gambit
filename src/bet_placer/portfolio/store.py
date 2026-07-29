@@ -326,6 +326,11 @@ def _save_state(state: dict[str, Any]) -> dict[str, Any]:
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        from bet_placer.auth.persist import schedule_users_persist
+        schedule_users_persist()
+    except Exception:
+        pass
     return state
 
 

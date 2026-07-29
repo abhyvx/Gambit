@@ -73,6 +73,11 @@ def signup(*, email: str, password: str, name: str | None = None) -> dict[str, A
         }
         _save(_USERS, users)
         token = _issue_session(uid, email)
+        try:
+            from bet_placer.auth.persist import schedule_users_persist
+            schedule_users_persist()
+        except Exception:
+            pass
         return {"token": token, "user": public_user(users[email])}
 
 
@@ -145,6 +150,11 @@ def delete_account(token: str | None) -> None:
                 path.unlink()
         except Exception:
             pass
+    try:
+        from bet_placer.auth.persist import schedule_users_persist
+        schedule_users_persist()
+    except Exception:
+        pass
 
 
 def public_user(row: dict[str, Any]) -> dict[str, Any]:

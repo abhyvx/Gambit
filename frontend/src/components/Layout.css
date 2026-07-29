@@ -61,18 +61,89 @@
   position: relative;
 }
 
+.account-chip {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 10px 5px 6px !important;
+}
+
+.account-chip-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.account-caret {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  margin-left: 2px;
+}
+
+.account-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #0e1218;
+  background: linear-gradient(145deg, #c9a227 0%, #e0c56a 55%, #a8841a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.account-avatar.lg {
+  width: 36px;
+  height: 36px;
+  font-size: 0.95rem;
+}
+
+.account-avatar.ghost {
+  background: var(--bg-elevated, #1a2030);
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
 .account-menu-panel {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 200px;
+  min-width: 220px;
   z-index: 80;
   display: flex;
   flex-direction: column;
-  padding: 0.35rem;
+  padding: 0.4rem;
   border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
   background: var(--bg-elevated, #141820);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4);
+}
+
+.account-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem 0.7rem;
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid var(--border, #2a2f3a);
+}
+
+.account-menu-head strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.account-menu-head small {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.75rem;
 }
 
 .account-menu-panel button {
@@ -84,6 +155,7 @@
   padding: 0.55rem 0.7rem;
   font: inherit;
   cursor: pointer;
+  border-radius: 6px;
 }
 
 .account-menu-panel button:hover {
@@ -93,8 +165,9 @@
 .account-menu-panel .account-menu-danger {
   color: var(--red, #d45d5d);
   border-top: 1px solid var(--border, #2a2f3a);
-  margin-top: 0.2rem;
-  padding-top: 0.65rem;
+  margin-top: 0.25rem;
+  padding-top: 0.7rem;
+  border-radius: 0 0 6px 6px;
 }
 
 .user-chip {

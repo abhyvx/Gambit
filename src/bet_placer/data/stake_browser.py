@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +28,11 @@ from bet_placer.config import data_path
 logger = logging.getLogger(__name__)
 
 # Persistent Chrome profile — log in / pass Cloudflare once, reused forever.
-PROFILE_DIR = data_path("stake_profile")
+# Override with STAKE_PROFILE_DIR for portfolio sync (avoids odds-link lock fights).
+PROFILE_DIR = Path(
+    (os.environ.get("STAKE_PROFILE_DIR") or "").strip()
+    or str(data_path("stake_profile"))
+)
 AUTH_PATH = data_path("stake_auth.json")
 STAKE_URL = "https://stake.com/sports/soccer"
 STAKE_LOGIN_URL = "https://stake.com/?tab=login&modal=auth"

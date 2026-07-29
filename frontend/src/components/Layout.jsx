@@ -90,16 +90,31 @@ export default function Layout() {
               <div className="account-menu" ref={menuRef}>
                 <button
                   type="button"
-                  className="user-chip auth-chip is-on"
+                  className="user-chip auth-chip account-chip is-on"
                   aria-expanded={menuOpen}
                   aria-haspopup="menu"
                   onClick={() => setMenuOpen((v) => !v)}
                 >
-                  <small>Account</small>
-                  <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
+                  <span className="account-avatar" aria-hidden>
+                    {(user.name || user.email || 'G').trim().charAt(0).toUpperCase()}
+                  </span>
+                  <span className="account-chip-text">
+                    <small>Account</small>
+                    <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
+                  </span>
+                  <span className="account-caret" aria-hidden>{menuOpen ? '▴' : '▾'}</span>
                 </button>
                 {menuOpen && (
                   <div className="account-menu-panel" role="menu">
+                    <div className="account-menu-head">
+                      <span className="account-avatar lg" aria-hidden>
+                        {(user.name || user.email || 'G').trim().charAt(0).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{user.name || 'You'}</strong>
+                        <small>{user.email}</small>
+                      </div>
+                    </div>
                     <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/account') }}>
                       Account settings
                     </button>
@@ -124,9 +139,12 @@ export default function Layout() {
                 )}
               </div>
             ) : (
-              <button type="button" className="user-chip auth-chip" onClick={() => openAuth('login')}>
-                <small>Account</small>
-                <strong>Sign in</strong>
+              <button type="button" className="user-chip auth-chip account-chip" onClick={() => openAuth('login')}>
+                <span className="account-avatar ghost" aria-hidden>?</span>
+                <span className="account-chip-text">
+                  <small>Account</small>
+                  <strong>Sign in</strong>
+                </span>
               </button>
             )}
             <button

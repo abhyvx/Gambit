@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -249,6 +250,13 @@ def _ensure_craft_training() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    try:
+        from bet_placer.auth.persist import restore_users_bundle, write_users_bundle
+        out = restore_users_bundle(force=False)
+        logger.info("users bundle restore: %s", out)
+        write_users_bundle()
+    except Exception:
+        logger.debug("users bundle restore skipped", exc_info=True)
     _warmup_data()
     _prefetch_stake_overlay()
     _warmup_stake_browser()
@@ -264,6 +272,11 @@ async def lifespan(_app: FastAPI):
         shutdown()
     except Exception:
         logger.debug("Stake browser shutdown skipped", exc_info=True)
+    try:
+        from bet_placer.auth.persist import write_users_bundle
+        write_users_bundle()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Bet Placer API", version="0.2.0", lifespan=lifespan)
@@ -732,6 +745,34 @@ def admin_revoke_sessions(request: Request, body: dict):
     if not uid:
         raise HTTPException(status_code=400, detail="user_id required")
     return {"revoked": revoke_user_sessions(uid)}
+
+
+@app.get("/api/relay/users-bundle")
+def relay_users_bundle_get(secret: str = Query(...)):
+    """Laptop relay pulls accounts so they can be uploaded to model-latest."""
+    settings = get_settings()
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise HTTPException(status_code=401, detail="Invalid relay secret")
+    from bet_placer.auth.persist import export_users_bundle, write_users_bundle
+
+    write_users_bundle()
+    return export_users_bundle()
+
+
+@app.post("/api/relay/users-bundle")
+def relay_users_bundle_put(body: dict):
+    """Restore accounts from relay / release bootstrap."""
+    settings = get_settings()
+    secret = (body or {}).get("secret") or ""
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise HTTPException(status_code=401, detail="Invalid relay secret")
+    from bet_placer.auth.persist import bundle_path, restore_users_bundle
+
+    blob = {k: v for k, v in (body or {}).items() if k != "secret"}
+    path = bundle_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(blob, indent=2, sort_keys=True), encoding="utf-8")
+    return restore_users_bundle(force=True)
 
 
 @app.post("/api/slip/record")

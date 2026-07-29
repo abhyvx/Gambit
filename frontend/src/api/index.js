@@ -208,7 +208,7 @@ export async function connectStakeSession() {
 }
 
 export async function fetchPortfolioState() {
-  const r = await fetch(`${API}/portfolio`)
+  const r = await fetch(`${API}/portfolio`, { signal: AbortSignal.timeout(20000) })
   if (!r.ok) throw new Error(`Portfolio state failed (${r.status})`)
   return r.json()
 }

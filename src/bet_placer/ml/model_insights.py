@@ -236,6 +236,13 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     except Exception:
         craft = {}
 
+    betting = {}
+    try:
+        from bet_placer.ml.betting_evolution import snapshot
+        betting = snapshot()
+    except Exception:
+        betting = {}
+
     sport_roi: dict[str, list] = {s: [] for s in SPORTS}
     sport_acc_c: dict[str, list] = {s: [] for s in SPORTS}
     sport_vol: dict[str, list] = {s: [] for s in SPORTS}
@@ -260,6 +267,25 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             sport_vol[sport].append(int(ns) if ns else 0)
             sport_acc_c[sport].append(round(hits / ns, 4) if ns else None)
             sport_roi[sport].append(round(pnl / stake, 4) if stake else None)
+
+    def _series_has_vals(series_map: dict[str, list]) -> bool:
+        return any(v is not None for xs in series_map.values() for v in (xs or []))
+
+    # Epochs often log empty by_sport — fill sport charts from betting monthly heartbeat.
+    if not _series_has_vals(sport_roi):
+        trends = list((betting.get("trends") or []))
+        for sport in SPORTS:
+            rows = [
+                t for t in trends
+                if t.get("sport") == sport and t.get("roi") is not None and (t.get("n") or 0) >= 5
+            ]
+            rows = sorted(rows, key=lambda t: t.get("ym") or "")[-24:]
+            sport_roi[sport] = [round(float(t["roi"]), 4) for t in rows]
+            sport_vol[sport] = [int(t.get("n") or 0) for t in rows]
+            sport_acc_c[sport] = [
+                round(float(t["hit_rate"]), 4) if t.get("hit_rate") is not None else None
+                for t in rows
+            ]
 
     # Archived craft blocks (for chart comparison. not live ticks)
     block = craft.get("block") or {}
@@ -309,6 +335,18 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             if i < len(series) and series[i] is not None:
                 vals.append(float(series[i]))
         desk_roi.append(round(sum(vals) / len(vals), 4) if vals else None)
+
+    def _finite_series(xs: list | None) -> list:
+        return [v for v in (xs or []) if v is not None]
+
+    craft_roi_series = _dedupe_plateau(desk_roi) if _finite_series(desk_roi) else (
+        blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)
+    )
+    craft_equity_series = (
+        [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(_finite_series(desk_roi))]
+        if _finite_series(desk_roi)
+        else equity_cum
+    )
 
     craft_summary = (params.get("craft_learning") or {}).get("summary") or {}
     best = craft.get("best") or {}
@@ -399,13 +437,6 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     except Exception:
         factors = {}
 
-    betting = {}
-    try:
-        from bet_placer.ml.betting_evolution import snapshot
-        betting = snapshot()
-    except Exception:
-        betting = {}
-
     stake_desk = _stake_volume_desk()
     league_depth = _soccer_league_depth()
     format_fuel = _bb_ck_format_fuel()
@@ -443,15 +474,12 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "holdout": holdout_curve,
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
-            "craft_roi": _dedupe_plateau(desk_roi) if desk_roi else (blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)),
+            "craft_roi": craft_roi_series,
             "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
             "craft_roi_prev": prev_roi,
             "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
             "craft_accuracy_prev": prev_acc,
-            "craft_equity": (
-                [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(desk_roi)]
-                if desk_roi else equity_cum
-            ),
+            "craft_equity": craft_equity_series,
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
             "craft_sport_volume": sport_vol,
@@ -482,15 +510,12 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "holdout": holdout_curve,
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
-            "craft_roi": _dedupe_plateau(desk_roi) if desk_roi else (blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)),
+            "craft_roi": craft_roi_series,
             "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
             "craft_roi_prev": prev_roi,
             "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
             "craft_accuracy_prev": prev_acc,
-            "craft_equity": (
-                [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(desk_roi)]
-                if desk_roi else equity_cum
-            ),
+            "craft_equity": craft_equity_series,
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
             "craft_sport_volume": sport_vol,
@@ -562,6 +587,9 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
+INSIGHTS_CACHE_VERSION = 3
+
+
 def save_insights_cache(payload: dict[str, Any]) -> None:
     path = _insights_disk_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -571,6 +599,7 @@ def save_insights_cache(payload: dict[str, Any]) -> None:
     craft.pop("epochs", None)
     craft.pop("equity_curve", None)
     slim["craft"] = craft
+    slim["cache_version"] = INSIGHTS_CACHE_VERSION
     path.write_text(json.dumps(slim), encoding="utf-8")
 
 
@@ -582,7 +611,10 @@ def load_insights_cache(max_age_s: float = 3600.0) -> dict[str, Any] | None:
         age = time.time() - path.stat().st_mtime
         if age > max_age_s:
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if int(raw.get("cache_version") or 0) < INSIGHTS_CACHE_VERSION:
+            return None
+        return raw
     except Exception:
         return None
 
@@ -796,6 +828,27 @@ def _best_roi_display(best: dict, train_status: dict) -> float | None:
             continue
         cands.append(v)
     return max(cands) if cands else None
+
+
+def _fresh_craft_gates(train_status: dict | None, best: dict | None) -> dict[str, Any]:
+    """Refresh monthly gate from live series so the desk isn't stuck on thin_epochs."""
+    gates = dict((train_status or {}).get("gates") or (best or {}).get("gates") or {})
+    try:
+        from bet_placer.ml.craft_train import _monthly_nonneg
+
+        _ok, monthly = _monthly_nonneg()
+        gates["monthly"] = monthly
+        sports = gates.get("sports") or {}
+        sport_ok = all(bool((sports.get(sp) or {}).get("ok")) for sp in SPORTS) if sports else True
+        gates["all_ok"] = bool(
+            gates.get("roi_ok")
+            and gates.get("acc_ok")
+            and monthly.get("all_ok")
+            and sport_ok
+        )
+    except Exception:
+        pass
+    return gates
 
 
 def _best_acc_display(best: dict, train_status: dict) -> float | None:
@@ -1082,7 +1135,7 @@ def _build_containers(
             "hit_target": craft.get("hit_target"),
             "train_status": train_status,
             "n_epochs": craft.get("n_epochs") or 0,
-            "gates": (train_status or {}).get("gates") or best.get("gates"),
+            "gates": _fresh_craft_gates(train_status, best),
         },
         {
             "id": "07_craft_roi_sport",

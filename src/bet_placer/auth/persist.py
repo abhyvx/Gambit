@@ -37,6 +37,8 @@ def export_users_bundle() -> dict[str, Any]:
             users = json.loads(users_path.read_text(encoding="utf-8"))
         except Exception:
             users = {}
+    if not isinstance(users, dict):
+        users = {}
     portfolios: dict[str, Any] = {}
     port_dir = data_path("portfolios")
     if port_dir.is_dir():
@@ -45,10 +47,23 @@ def export_users_bundle() -> dict[str, Any]:
                 portfolios[p.stem] = json.loads(p.read_text(encoding="utf-8"))
             except Exception:
                 continue
+    # Also pull by user id in case glob missed a just-written file
+    for row in users.values():
+        if not isinstance(row, dict):
+            continue
+        uid = str(row.get("id") or "").strip()
+        if not uid or uid in portfolios:
+            continue
+        path = data_path("portfolios", f"{uid}.json")
+        if path.is_file():
+            try:
+                portfolios[uid] = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
     return {
         "version": 1,
         "exported_at": time.time(),
-        "users": users if isinstance(users, dict) else {},
+        "users": users,
         "portfolios": portfolios,
     }
 

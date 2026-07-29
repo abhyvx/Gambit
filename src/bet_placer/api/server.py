@@ -290,7 +290,11 @@ class AuthBody(BaseModel):
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
+    from bet_placer.auth.users import is_admin
+
     user = _bearer_user(request)
+    if user:
+        user = {**user, "is_admin": is_admin(user)}
     return {"user": user}
 
 
@@ -547,6 +551,9 @@ def stake_relay(body: StakeRelayPayload):
     if not settings.stake_relay_secret or body.secret != settings.stake_relay_secret:
         raise HTTPException(status_code=401, detail="Invalid relay secret")
     from bet_placer.engine.stake_odds import ingest_stake_relay
+    from bet_placer.portfolio.store import touch_relay_heartbeat
+
+    touch_relay_heartbeat()
     return ingest_stake_relay({"fixtures": body.fixtures})
 
 
@@ -645,8 +652,24 @@ def portfolio_stake_token(request: Request, body: StakeTokenConnect):
     from bet_placer.portfolio.store import connect_with_stake_token
 
     user = _bind_portfolio_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in first so the token is stored only on your account.")
     try:
-        return connect_with_stake_token(body.token, user_id=(user or {}).get("id"))
+        return connect_with_stake_token(body.token, user_id=user.get("id"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/stake-token/retry")
+def portfolio_stake_token_retry(request: Request):
+    """Re-queue Stake import from the sealed token already on this account."""
+    from bet_placer.portfolio.store import retry_stake_token_sync
+
+    user = _bind_portfolio_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in first.")
+    try:
+        return retry_stake_token_sync(user_id=user.get("id"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -675,6 +698,40 @@ def portfolio_sync_jobs_complete(body: StakeSyncJobsComplete):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _require_admin(request: Request):
+    from bet_placer.auth.users import is_admin
+    from bet_placer.config import get_settings
+
+    settings = get_settings()
+    header = (request.headers.get("x-gambit-admin") or "").strip()
+    if settings.gambit_admin_secret and header and header == settings.gambit_admin_secret:
+        return {"id": "secret", "email": "admin@local", "name": "Admin", "is_admin": True}
+    user = _bearer_user(request)
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only.")
+    return {**user, "is_admin": True}
+
+
+@app.get("/api/admin/accounts")
+def admin_accounts(request: Request):
+    from bet_placer.auth.users import list_accounts_for_admin
+    from bet_placer.portfolio.store import relay_heartbeat
+
+    _require_admin(request)
+    return {"accounts": list_accounts_for_admin(), "odds_link": relay_heartbeat()}
+
+
+@app.post("/api/admin/revoke-sessions")
+def admin_revoke_sessions(request: Request, body: dict):
+    from bet_placer.auth.users import revoke_user_sessions
+
+    _require_admin(request)
+    uid = str((body or {}).get("user_id") or "").strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail="user_id required")
+    return {"revoked": revoke_user_sessions(uid)}
 
 
 @app.post("/api/slip/record")

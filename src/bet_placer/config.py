@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # Default bankroll for stake recommendations (INR for students)
     default_bankroll: float = 2000.0
 
+    # Optional admin (comma-separated emails). Used for /api/admin/*.
+    gambit_admin_emails: str = ""
+    # Optional shared admin secret header (X-Gambit-Admin).
+    gambit_admin_secret: str = ""
+
     # Optional local JSON store for private Stake portfolio consent/cache.
     portfolio_store_path: str = ""
 

@@ -309,6 +309,46 @@ export async function connectStakeApiToken(token) {
   return r.json()
 }
 
+export async function retryStakeTokenSync() {
+  const r = await fetch(`${API}/portfolio/stake-token/retry`, {
+    method: 'POST',
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(120000),
+  })
+  if (!r.ok) {
+    const raw = await r.text()
+    let msg = `Retry failed (${r.status})`
+    try {
+      const data = JSON.parse(raw)
+      if (data?.detail) msg = typeof data.detail === 'string' ? data.detail : msg
+    } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export async function fetchAdminAccounts() {
+  const r = await fetch(`${API}/admin/accounts`, { headers: authHeaders() })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Admin denied (${r.status})`)
+  }
+  return r.json()
+}
+
+export async function revokeAdminSessions(userId) {
+  const r = await fetch(`${API}/admin/revoke-sessions`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ user_id: userId }),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Revoke failed (${r.status})`)
+  }
+  return r.json()
+}
+
 export async function confirmPortfolioSlip({ legs, multiStake, multiOdds } = {}) {
   const r = await fetch(`${API}/portfolio/confirm-slip`, {
     method: 'POST',

@@ -20,10 +20,40 @@ _LOCK = Lock()
 _CONSENT_VERSION = "2026-07-02"
 _CURRENT_USER_ID: ContextVar[str | None] = ContextVar("portfolio_user_id", default=None)
 _SYNC_JOBS = data_path("stake_sync_jobs.json")
+_RELAY_HEARTBEAT = data_path("relay_heartbeat.json")
 
 
 def set_portfolio_user(user_id: str | None) -> None:
     _CURRENT_USER_ID.set((user_id or "").strip() or None)
+
+
+def touch_relay_heartbeat() -> None:
+    """Odds-link machine pings this when draining jobs / pushing odds."""
+    try:
+        _RELAY_HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
+        _RELAY_HEARTBEAT.write_text(
+            json.dumps({"at": _utc_now()}, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def relay_heartbeat() -> dict[str, Any]:
+    if not _RELAY_HEARTBEAT.is_file():
+        return {"seen": False, "at": None, "age_s": None}
+    try:
+        raw = json.loads(_RELAY_HEARTBEAT.read_text(encoding="utf-8"))
+        at = raw.get("at")
+        age = None
+        if at:
+            try:
+                age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(at)).total_seconds()))
+            except Exception:
+                age = None
+        return {"seen": True, "at": at, "age_s": age, "online": age is not None and age < 900}
+    except Exception:
+        return {"seen": False, "at": None, "age_s": None}
 
 
 def _store_path() -> Path:
@@ -281,6 +311,8 @@ def _load_state() -> dict[str, Any]:
     for key in ("privacy", "connection", "portfolio"):
         if isinstance(data.get(key), dict):
             state[key].update(data[key])
+    if isinstance(data.get("secrets"), dict):
+        state["secrets"] = dict(data["secrets"])
     bets = state.get("portfolio", {}).get("bets") or []
     if bets:
         migrated = [_migrate_legacy_bet(b) for b in bets]
@@ -303,6 +335,7 @@ def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
     out.pop("secrets", None)
     browser = browser_status()
     out["connection"]["browser"] = browser
+    out["odds_link"] = relay_heartbeat()
     if browser.get("warming") and out["connection"].get("status") not in ("cloud", "authenticated", "relay", "syncing"):
         out["connection"]["status"] = "connecting"
         out["connection"]["connected"] = False
@@ -834,56 +867,67 @@ def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[
     token = (token or "").strip()
     if len(token) < 12:
         raise ValueError("Paste the full Stake API token from Settings → Security → API Tokens.")
+    uid = (user_id or _CURRENT_USER_ID.get() or "").strip() or None
+    if not uid:
+        raise ValueError("Sign in first so your Stake token is stored only on your account.")
 
-    # Try immediate sync when a live browser path exists on this host.
-    from bet_placer.config import stake_network_enabled
+    token_reset = _CURRENT_USER_ID.set(uid)
+    try:
+        return _connect_with_stake_token_locked(token, user_id=uid)
+    finally:
+        _CURRENT_USER_ID.reset(token_reset)
 
-    if stake_network_enabled():
-        try:
-            scraper = StakeScraper(api_token=token, use_browser=True, allow_browser_launch=True, timeout=60)
-            bets = []
-            for offset in range(0, 150, 50):
-                batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
-                if not batch:
-                    break
-                bets.extend(batch)
-                if len(batch) < 50:
-                    break
-            with _LOCK:
-                state, _ = _ensure_privacy_defaults(_load_state())
-                summary = _summarize_bets(bets)
-                state["portfolio"] = summary
-                state["connection"].update(
-                    {
-                        "status": "authenticated",
-                        "connected": True,
-                        "last_connected_at": _utc_now(),
-                        "last_sync_at": _utc_now(),
-                        "last_sync_status": "imported",
-                        "last_sync_message": f"Imported {len(bets)} bets from your Stake API token.",
-                        "has_stake_token": True,
-                    }
-                )
-                state["secrets"] = {"stake_api_token": _seal_token(token)}
-                return _merged_status(_save_state(state))
-        except Exception:
-            pass
 
-    # Queue for the odds-link machine (already pushes Stake prices to cloud).
+def _connect_with_stake_token_locked(token: str, *, user_id: str) -> dict[str, Any]:
+    # Try immediate token-only sync (no shared browser cookies — those expire / mix users).
+    try:
+        scraper = StakeScraper(api_token=token, use_browser=False, timeout=45)
+        bets = []
+        for offset in range(0, 150, 50):
+            batch = scraper.fetch_user_bet_history(limit=50, offset=offset)
+            if not batch:
+                break
+            bets.extend(batch)
+            if len(batch) < 50:
+                break
+        with _LOCK:
+            state, _ = _ensure_privacy_defaults(_load_state())
+            summary = _summarize_bets(bets)
+            state["portfolio"] = summary
+            state["connection"].update(
+                {
+                    "status": "authenticated",
+                    "connected": True,
+                    "last_connected_at": _utc_now(),
+                    "last_sync_at": _utc_now(),
+                    "last_sync_status": "imported",
+                    "last_sync_message": f"Imported {len(bets)} bets from your Stake API token.",
+                    "has_stake_token": True,
+                }
+            )
+            state["secrets"] = {"stake_api_token": _seal_token(token)}
+            return _merged_status(_save_state(state))
+    except Exception:
+        pass
+
+    # Queue for the odds-link machine (token-only scrape there — not the owner's login cookies).
     job_id = secrets.token_hex(8)
     with _LOCK:
         state, _ = _ensure_privacy_defaults(_load_state())
         state["secrets"] = {"stake_api_token": _seal_token(token)}
+        hb = relay_heartbeat()
+        link_note = (
+            "Odds link is online — import usually finishes within a couple of minutes."
+            if hb.get("online")
+            else "Waiting for the live odds link to pick up your import (usually within a few minutes)."
+        )
         state["connection"].update(
             {
                 "status": "syncing",
                 "connected": False,
                 "last_sync_at": _utc_now(),
                 "last_sync_status": "queued",
-                "last_sync_message": (
-                    "Token saved. Import is queued on the live odds link — "
-                    "usually finishes within a few minutes. Keep this tab open."
-                ),
+                "last_sync_message": f"Token saved on your account. {link_note}",
                 "has_stake_token": True,
                 "login_url": "https://stake.com/settings/security",
             }
@@ -892,13 +936,31 @@ def connect_with_stake_token(token: str, *, user_id: str | None = None) -> dict[
         _enqueue_sync_job(
             {
                 "id": job_id,
-                "user_id": user_id or _CURRENT_USER_ID.get(),
+                "user_id": user_id,
                 "token": _seal_token(token),
                 "status": "pending",
                 "created_at": _utc_now(),
             }
         )
         return out
+
+
+def retry_stake_token_sync(*, user_id: str | None = None) -> dict[str, Any]:
+    """Re-queue import from the sealed token already on this account."""
+    uid = (user_id or _CURRENT_USER_ID.get() or "").strip() or None
+    if not uid:
+        raise ValueError("Sign in first.")
+    token_reset = _CURRENT_USER_ID.set(uid)
+    try:
+        with _LOCK:
+            state, _ = _ensure_privacy_defaults(_load_state())
+            sealed = (state.get("secrets") or {}).get("stake_api_token")
+            raw = _reveal_token(sealed) if sealed else ""
+            if not raw or len(raw) < 12:
+                raise ValueError("No Stake token on this account. Paste a new one.")
+        return _connect_with_stake_token_locked(raw, user_id=uid)
+    finally:
+        _CURRENT_USER_ID.reset(token_reset)
 
 
 def _enqueue_sync_job(job: dict[str, Any]) -> None:
@@ -922,6 +984,7 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
         raise ValueError("Invalid relay secret")
+    touch_relay_heartbeat()
     if not _SYNC_JOBS.is_file():
         return []
     try:

@@ -1,5 +1,5 @@
-import { NavLink, Outlet, Link } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import { checkHealth } from '../api/index'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import { useAuth } from '../context/AuthContext'
@@ -13,7 +13,6 @@ const NAV = [
   { to: '/app', label: 'Home', icon: 'matches' },
   { to: '/app/model', label: 'Model', icon: 'model' },
   { to: '/app/portfolio', label: 'Portfolio', icon: 'portfolio' },
-  { to: '/app/settings', label: 'Settings', icon: 'guide' },
   { to: '/app/guide', label: 'Guide', icon: 'guide' },
 ]
 
@@ -27,7 +26,10 @@ export default function Layout() {
   } = useBankroll()
   const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
-  const { user, openAuth } = useAuth()
+  const { user, openAuth, logout } = useAuth()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     let cancelled = false
@@ -40,6 +42,20 @@ export default function Layout() {
     const id = setInterval(poll, 5000)
     return () => { cancelled = true; clearInterval(id) }
   }, [])
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    const onDoc = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    const onKey = (e) => { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
 
   return (
     <EntryScreen>
@@ -71,10 +87,42 @@ export default function Layout() {
               <strong>{online ? 'Live' : 'Down'}</strong>
             </div>
             {user ? (
-              <Link to="/app/settings" className="user-chip auth-chip is-on" title="Account settings">
-                <small>Account</small>
-                <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
-              </Link>
+              <div className="account-menu" ref={menuRef}>
+                <button
+                  type="button"
+                  className="user-chip auth-chip is-on"
+                  aria-expanded={menuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setMenuOpen((v) => !v)}
+                >
+                  <small>Account</small>
+                  <strong>{user.name || user.email?.split('@')[0] || 'You'}</strong>
+                </button>
+                {menuOpen && (
+                  <div className="account-menu-panel" role="menu">
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/account') }}>
+                      Account settings
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/portfolio') }}>
+                      Portfolio & Stake
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/legal/privacy') }}>
+                      Privacy
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/legal/terms') }}>
+                      Terms
+                    </button>
+                    {user.is_admin && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); navigate('/app/admin') }}>
+                        Admin
+                      </button>
+                    )}
+                    <button type="button" role="menuitem" className="account-menu-danger" onClick={() => { setMenuOpen(false); logout() }}>
+                      Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <button type="button" className="user-chip auth-chip" onClick={() => openAuth('login')}>
                 <small>Account</small>

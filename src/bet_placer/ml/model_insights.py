@@ -73,7 +73,8 @@ def _sport_cell(sport: str, **fields: Any) -> dict[str, Any]:
 def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     from bet_placer.ml.params import load_params
 
-    params = params or load_params(force=True)
+    # force=False — desk must paint fast on cloud; retrain refreshes params explicitly
+    params = params or load_params(force=False)
     report = params.get("report") or {}
     metrics = report.get("metrics") or {}
     cards = params.get("board_scorecards") or report.get("board_scorecards") or {}
@@ -399,35 +400,10 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
 
     betting = {}
     try:
-        from bet_placer.ml.betting_evolution import snapshot, rebuild_from_corpora, connect as be_connect
-        import threading
-
-        # Stale B365 pairs → negative monthly soccer. Rebuild once in background.
-        needs_rebuild = False
-        con = be_connect()
-        try:
-            row = con.execute(
-                "SELECT source FROM paired WHERE sport='soccer' LIMIT 1"
-            ).fetchone()
-            src = (row[0] if row else "") or ""
-            needs_rebuild = (not row) or ("model_fair" not in str(src))
-        finally:
-            con.close()
-        if needs_rebuild and not getattr(build_model_insights, "_be_rebuild", False):
-            build_model_insights._be_rebuild = True  # type: ignore[attr-defined]
-            # ponytail: full rebuild is O(40k); never block the Model paint path
-            threading.Thread(
-                target=lambda: rebuild_from_corpora(verbose=False),
-                daemon=True,
-                name="betting-evolution-rebuild",
-            ).start()
+        from bet_placer.ml.betting_evolution import snapshot
         betting = snapshot()
     except Exception:
-        try:
-            from bet_placer.ml.betting_evolution import snapshot
-            betting = snapshot()
-        except Exception:
-            betting = {}
+        betting = {}
 
     stake_desk = _stake_volume_desk()
     league_depth = _soccer_league_depth()

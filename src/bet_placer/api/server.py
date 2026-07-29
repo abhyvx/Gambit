@@ -823,15 +823,48 @@ _INSIGHTS_TTL = 120.0
 def model_insights():
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
     import time as _time
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     from bet_placer.ml.model_insights import build_model_insights
+    from bet_placer.ml.craft_store import progress_snapshot
 
     global _INSIGHTS_CACHE
     now = _time.time()
     if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
         return _INSIGHTS_CACHE[1]
 
+    def _craft_only(msg: str) -> dict:
+        craft = progress_snapshot()
+        ts = craft.get("train_status") or {}
+        return {
+            "status": "degraded",
+            "total_corpus": 0,
+            "sports": {},
+            "containers": [],
+            "craft": {
+                "n_epochs": craft.get("n_epochs") or 0,
+                "holdout_roi": ts.get("holdout_roi"),
+                "holdout_accuracy": ts.get("holdout_accuracy"),
+                "best_roi": ts.get("best_roi") or (craft.get("best") or {}).get("roi"),
+                "champion_roi": ts.get("champion_roi"),
+                "block": craft.get("block"),
+                "train_status": ts,
+                "target_roi": 0.25,
+                "target_accuracy": 0.60,
+                "hit_target": craft.get("hit_target"),
+            },
+            "curves": {},
+            "insights": [msg],
+        }
+
     try:
-        payload = build_model_insights()
+        # ponytail: free Render can hang on cold disk — never block the HTTP worker forever
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(build_model_insights)
+            try:
+                payload = fut.result(timeout=35)
+            except FuturesTimeout:
+                logger.warning("model insights timed out after 35s")
+                return _craft_only("Desk charts timed out — showing craft snapshot. Retry in a minute.")
         _INSIGHTS_CACHE = (now, payload)
         return payload
     except Exception as exc:
@@ -842,25 +875,7 @@ def model_insights():
             _INSIGHTS_CACHE = (now, payload)
             return payload
         except Exception:
-            from bet_placer.ml.craft_store import progress_snapshot
-            craft = progress_snapshot()
-            ts = craft.get("train_status") or {}
-            return {
-                "status": "degraded",
-                "total_corpus": 0,
-                "sports": {},
-                "containers": [],
-                "craft": {
-                    "n_epochs": craft.get("n_epochs") or 0,
-                    "holdout_roi": ts.get("holdout_roi"),
-                    "holdout_accuracy": ts.get("holdout_accuracy"),
-                    "train_status": ts,
-                    "target_roi": 0.25,
-                    "target_accuracy": 0.60,
-                },
-                "curves": {},
-                "insights": ["Model desk loading — craft snapshot only."],
-            }
+            return _craft_only("Model desk loading — craft snapshot only.")
 
 
 @app.get("/api/model/report")

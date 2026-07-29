@@ -10,6 +10,13 @@ def main() -> None:
     assert "location.pathname + location.search" not in layout, "Layout remounts on ?focus= — kills boards"
     assert "location.pathname" in layout
 
+    model = (ROOT / "frontend/src/pages/ModelPage.jsx").read_text(encoding="utf-8")
+    assert "finished_without_hit" in model and "Missed target" in model
+    assert "trainGateLabel" in model and "deskRoi" in model
+
+    bits = (ROOT / "frontend/src/components/BoardBits.jsx").read_text(encoding="utf-8")
+    assert "ft-odd-chip" in bits
+
     from bet_placer.ml.betting_evolution import snapshot
 
     snap = snapshot()

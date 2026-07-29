@@ -4,6 +4,7 @@ import {
   disconnectPortfolioSession,
   fetchErrorMessage,
   fetchPortfolioState,
+  checkHealth,
   refreshPortfolioSnapshot,
   updatePortfolioPrivacy,
 } from '../api'
@@ -31,6 +32,7 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [cloudStake, setCloudStake] = useState(false)
   useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
@@ -52,9 +54,13 @@ export default function PortfolioPage() {
     let mounted = true
     ;(async () => {
       try {
-        const next = await fetchPortfolioState()
+        const [next, health] = await Promise.all([
+          fetchPortfolioState(),
+          checkHealth().catch(() => null),
+        ])
         if (!mounted) return
         setState(next)
+        setCloudStake(health?.stake_use_browser === false)
         if (
           next?.privacy?.portfolio_enabled &&
           next?.privacy?.risk_acknowledged &&
@@ -78,9 +84,11 @@ export default function PortfolioPage() {
   const portfolio = state?.portfolio || {}
   const portfolioReady = privacy.portfolio_enabled && privacy.risk_acknowledged
   const syncStatus = connection.last_sync_status || 'never'
-  const syncFailed = ['needs_reconnect', 'auth_required', 'never'].includes(syncStatus)
+  const syncFailed = ['needs_reconnect', 'auth_required', 'never', 'cloud'].includes(syncStatus)
+    || connection.status === 'cloud'
   const syncMessage = connection.last_sync_message || ''
   const money = (n) => fmtMoney(n, portfolio.display_currency)
+  const cloudBlocked = cloudStake || connection.status === 'cloud'
 
   const summary = useMemo(() => ([
     { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%`, tone: (portfolio.roi_pct ?? 0) >= 0 ? 'good' : 'warn' },
@@ -161,26 +169,41 @@ export default function PortfolioPage() {
           <button
             className="refresh-btn"
             onClick={() => runAction('connect', connectPortfolioSession)}
-            disabled={busy === 'connect'}
+            disabled={busy === 'connect' || cloudBlocked}
+            title={
+              cloudBlocked
+                ? 'Stake login needs your laptop (STAKE_USE_BROWSER). Cloud cannot open Chrome.'
+                : 'Open a visible Stake Chrome window'
+            }
           >
-            {busy === 'connect' ? 'Opening…' : 'Open Stake login'}
+            {busy === 'connect' ? 'Opening…' : cloudBlocked ? 'Stake login (laptop only)' : 'Open Stake login'}
           </button>
           <button
             className="refresh-btn"
             onClick={() => runAction('snapshot', refreshPortfolioSnapshot)}
-            disabled={!portfolioReady || busy === 'snapshot'}
+            disabled={!portfolioReady || busy === 'snapshot' || cloudBlocked}
             title={
-              !portfolioReady
-                ? 'Enable portfolio sync and accept the privacy warning first'
-                : !browser.ready
-                  ? 'Open the Stake login window first'
-                  : 'Import your latest Stake bet history'
+              cloudBlocked
+                ? 'Sync Stake bets from a local session with browser login'
+                : !portfolioReady
+                  ? 'Enable portfolio sync and accept the privacy warning first'
+                  : !browser.ready
+                    ? 'Open the Stake login window first'
+                    : 'Import your latest Stake bet history'
             }
           >
             {busy === 'snapshot' ? 'Refreshing…' : 'Sync portfolio'}
           </button>
         </div>
       </header>
+
+      {cloudBlocked && (
+        <div className="portfolio-alert warn">
+          <strong>Stake login is laptop-only on cloud.</strong>{' '}
+          Run the app locally with STAKE_USE_BROWSER=true, open Stake login, sync once,
+          or use ./scripts/start_stake_relay.sh for live odds. Portfolio import cannot open Chrome on Render.
+        </div>
+      )}
 
       {err && <div className="portfolio-alert error">{err}</div>}
 

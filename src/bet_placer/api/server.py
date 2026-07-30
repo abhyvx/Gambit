@@ -99,7 +99,7 @@ def _stake_odds_keepalive_loop() -> None:
     if not remote_stake_browser_enabled():
         logger.info(
             "Stake odds loop idle until BROWSERBASE_API_KEY / STAKE_CDP_URL "
-            "(local 24/7: ./scripts/install_stake_relay_agent.sh)"
+            "(local on-demand: ./scripts/start_stake_relay.sh + Admin → Sync Stake odds now)"
         )
         return
 
@@ -653,11 +653,11 @@ def stake_connect():
         "open_url": "https://stake.com/",
         "message": (
             f"Showing {n} cached Stake prices. Live scrape is off on this API host — "
-            "use Admin → Request laptop odds sync while your relay runs, or open Stake.com to place."
+            "use Admin → Sync Stake odds now while ./scripts/start_stake_relay.sh is running, or open Stake.com to place."
             if overlay.get("have_data")
             else (
-                "No Stake cache yet. Run ./scripts/start_stake_relay.sh on your laptop, "
-                "then Admin → Request laptop odds sync. Open Stake.com to place bets."
+                "No Stake cache yet. On your Mac: ./scripts/start_stake_relay.sh, then Admin → Sync Stake odds now. "
+                "Open Stake.com to place bets."
             )
         ),
     }

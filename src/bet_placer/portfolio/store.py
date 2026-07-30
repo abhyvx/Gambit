@@ -1210,9 +1210,9 @@ def request_laptop_odds_sync() -> dict[str, Any]:
         "open_url": payload["open_url"],
         "relay_online": bool(hb.get("online")),
         "message": (
-            "Request queued. Keep ./scripts/start_stake_relay.sh running — we will mark it confirmed when odds land."
+            "Queued. Your on-demand relay will scrape now — leave any Stake/Cloudflare window open until it finishes."
             if hb.get("online")
-            else "Request stored. Start ./scripts/start_stake_relay.sh on your laptop, then wait for confirmation."
+            else "Queued, but no laptop listener is online. On your Mac run ./scripts/start_stake_relay.sh, then click Sync again."
         ),
     }
 

@@ -173,7 +173,11 @@ export default function AdminPage() {
             ? `Relay online · last seen ${oddsLink.age_s != null ? `${Math.round(oddsLink.age_s / 60)}m ago` : oddsLink.at}`
             : oddsLink?.at
               ? `Relay offline · last seen ${oddsLink.at}`
-              : 'No laptop heartbeat yet. Run ./scripts/start_stake_relay.sh locally.'}
+              : 'No laptop listener yet. On your Mac: ./scripts/start_stake_relay.sh (leave the terminal open).'}
+        </p>
+        <p className="muted">
+          No LaunchAgent timer — sync only when you click. If Chrome used to pop every few minutes, run{' '}
+          <code>./scripts/uninstall_stake_relay_agent.sh</code> once on the Mac.
         </p>
         {syncStatus?.status && syncStatus.status !== 'idle' && (
           <p className={`portfolio-status ${syncStatus.status === 'confirmed' ? 'ok' : ''}`} role="status">
@@ -182,7 +186,7 @@ export default function AdminPage() {
             {syncStatus.status === 'confirmed' && syncStatus.fixtures != null
               ? ` · ${syncStatus.fixtures} fixtures`
               : ''}
-            {syncStatus.status === 'pending' ? ' · waiting for laptop relay push…' : ''}
+            {syncStatus.status === 'pending' ? ' · waiting for laptop push…' : ''}
           </p>
         )}
         <div className="admin-actions">
@@ -196,13 +200,15 @@ export default function AdminPage() {
               setNote('')
               try {
                 const out = await requestLaptopOddsSync()
-                setNote(out?.message || 'Laptop odds sync requested.')
+                setNote(out?.message || 'Sync requested — laptop will scrape when the listener sees it.')
                 setSyncStatus({
                   id: out?.id,
                   status: out?.status || 'pending',
                   requested_at: out?.requested_at,
                   open_url: out?.open_url || 'https://stake.com/',
                 })
+                // Open Stake so you can finish Cloudflare in a real tab if needed.
+                // The laptop relay uses its own profile window when scrape needs a visible CF check.
                 if (out?.open_url) {
                   window.open(out.open_url, '_blank', 'noopener,noreferrer')
                 }
@@ -214,7 +220,7 @@ export default function AdminPage() {
               }
             }}
           >
-            {busy === 'laptop' ? 'Requesting…' : 'Request laptop odds sync'}
+            {busy === 'laptop' ? 'Requesting…' : 'Sync Stake odds now'}
           </button>
           <button
             type="button"
@@ -242,7 +248,8 @@ export default function AdminPage() {
           </a>
         </div>
         <p className="muted" style={{ marginTop: '0.75rem' }}>
-          Request opens Stake and flags the cloud. Confirmation appears after your laptop relay POSTs odds.
+          Keep <code>./scripts/start_stake_relay.sh</code> running while you work. Click Sync → leave the
+          Stake tab/window open if Cloudflare appears → confirmation shows here when odds land.
         </p>
       </section>
 

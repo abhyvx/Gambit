@@ -48,26 +48,27 @@ Optional but recommended:
 - `ODDS_API_KEY` — live multi-league book odds
 - `STAKE_RELAY_SECRET` — legacy laptop relay only (not needed when Browserbase is configured)
 
-If Browserbase is **not** configured, the app now stays token-only / cache-only rather than
-falling back to a local laptop popup.
+If Browserbase is **not** configured, the app stays token-only / cache-only rather than
+opening Chrome on a timer.
 
-Legacy fallback (only if you explicitly still want laptop relay):
+Laptop Stake sync (on-demand — no LaunchAgent):
 
 ```bash
 cd "/path/to/Gambit"
+./scripts/uninstall_stake_relay_agent.sh   # once, if Chrome kept auto-opening
 source .venv/bin/activate
-PYTHONPATH=src python3 scripts/connect_stake_and_push.py
-./scripts/install_stake_relay_agent.sh
+./scripts/start_stake_relay.sh            # leave open; idle until Admin sync
 ```
 
-That POSTs to `/api/stake/relay` and uploads `stake_overlay_cache.json` to GitHub `model-latest`
-so redeploys still boot with Stake. Odds still work from ESPN/model when Stake is cold.
+Then **Admin → Sync Stake odds now**. That POSTs to `/api/stake/relay` and can upload
+`stake_overlay_cache.json` to GitHub `model-latest` so redeploys still boot with Stake.
+Odds still work from ESPN/model when Stake is cold.
 
 | Service | Runs on | Role |
 |---------|---------|------|
 | Web app | Render | Always |
 | Stake remote browser | Browserbase / remote CDP | Preferred live Stake → cloud |
-| Stake relay | Your Mac (`connect_stake_and_push` / LaunchAgent) | Legacy fallback only |
+| Stake relay | Your Mac (`./scripts/start_stake_relay.sh`) | On-demand only: Admin → Sync Stake odds now |
 | Craft training | GitHub Actions | Daily model |
 
 GitHub Actions Stake workflow cannot pass Cloudflare — treat it as best-effort only.

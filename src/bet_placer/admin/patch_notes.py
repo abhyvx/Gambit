@@ -11,6 +11,20 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v29",
+        "cycle": "stake-ondemand-admin",
+        "at": "2026-07-30",
+        "title": "Stake sync on Admin click only — no LaunchAgent Chrome popups",
+        "fixed": [
+            "macOS LaunchAgent opened Stake Chrome every 10 minutes even with no browser/app open",
+        ],
+        "changes": [
+            "uninstall_stake_relay_agent.sh unloads the timer; install script now uninstalls instead of scheduling",
+            "start_stake_relay.sh runs an idle on-demand listener (Chrome only when Admin → Sync Stake odds now)",
+            "Admin copy updated for listener + Cloudflare tab workflow",
+        ],
+    },
+    {
         "version": "v28",
         "cycle": "combo-expand-legs",
         "at": "2026-07-30",

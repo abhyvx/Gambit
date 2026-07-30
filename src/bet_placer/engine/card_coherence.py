@@ -776,11 +776,12 @@ def _leg_axis_readings(leg: dict, home: str, away: str) -> dict[str, str]:
     readings: dict[str, str] = {}
     for part in _expand_pick(leg, home, away):
         axis, direction = _axis_dir(part, home, away)
-        if axis in ("goals", "btts", "result", "corners", "cards") and direction not in ("-", ""):
-        if axis == "result" and direction in ("nodraw",):
+        if axis not in ("goals", "btts", "result", "corners", "cards") or direction in ("-", ""):
             continue
-            # Keep "draw" visible so plans that back Draw fight a home/away thesis
-            readings[axis] = direction
+        # Skip nodraw noise; keep "draw" so Draw legs fight a home/away thesis
+        if axis == "result" and direction == "nodraw":
+            continue
+        readings[axis] = direction
     return readings
 
 

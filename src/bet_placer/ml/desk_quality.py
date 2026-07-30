@@ -44,10 +44,18 @@ def _finite_nums(xs: list | None) -> list[float]:
         else:
             n = v
         try:
-            out.append(float(n))
+            f = float(n)
         except (TypeError, ValueError):
             continue
+        if f == -1:
+            continue
+        out.append(f)
     return out
+
+
+def _finite_chart_roi(xs: list | None) -> list[float]:
+    """Keep real (including negative) ROI points; drop empty sentinels only."""
+    return _finite_nums(xs)
 
 
 def _running_best(xs: list[float]) -> list[float]:
@@ -339,7 +347,8 @@ def _enrich_curves(payload: dict, curves: dict) -> dict:
     sport_vol = dict(out.get("craft_sport_volume") or {})
 
     for sp in SPORTS:
-        roi_s = _finite_nonneg(sport_roi.get(sp) or [])
+        # Keep early red craft sport ROI when present — don't scrub the learning path
+        roi_s = _finite_chart_roi(sport_roi.get(sp) or [])
         acc_s = _finite_nums(sport_acc.get(sp) or [])
         vol_s = _finite_nums(sport_vol.get(sp) or [])
         # All-zero volume is useless — rebuild from betting ticket counts
@@ -360,7 +369,7 @@ def _enrich_curves(payload: dict, curves: dict) -> dict:
     out["craft_sport_accuracy"] = sport_acc
     out["craft_sport_volume"] = sport_vol
 
-    roi = _finite_nonneg(out.get("craft_roi") or out.get("craft_roi_all") or [])
+    roi = _finite_chart_roi(out.get("craft_roi") or out.get("craft_roi_all") or [])
     if len(roi) < 2:
         # Desk ROI from sport means
         n_blocks = max((len(sport_roi.get(sp) or []) for sp in SPORTS), default=0)
@@ -379,7 +388,7 @@ def _enrich_curves(payload: dict, curves: dict) -> dict:
         out["craft_roi_all"] = list(out.get("craft_roi_all") or roi)
         best = _running_best(roi)
         out["craft_roi_best"] = best
-        # Equity / self-improvement: non-decreasing best-so-far (never a fake decline)
+        # Equity / self-improvement: non-decreasing best-so-far (can start negative then climb)
         out["craft_equity"] = best
         out["craft_roi_display"] = best
 
@@ -879,140 +888,16 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     out = _merge_bundled_learning(out)
-    out["learning_runs"] = _learning_run_history(out)
     out["desk_revision"] = {
         "version": max(int(out.get("cache_version") or 0), 16),
-        "label": "Desk v16 · run history + guide links",
+        "label": "Desk v16 · guide links",
         "notes": [
             "Info on each box opens the Guide for that container",
-            "Run history chart compares early desks to the latest best-so-far",
             "Cricket craft holdout no longer paints a separate red number when pairs/craft are green",
-            "Self-improvement = best-so-far ROI across graded blocks",
+            "Self-improvement = best-so-far ROI across graded blocks (existing equity / epoch curves)",
         ],
     }
     out["cache_version"] = max(int(out.get("cache_version") or 0), 16)
-    return out
-
-
-def _learning_run_history(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Milestones for the Model page: early desks → latest best-so-far."""
-    # Fixed anchors so the UI always shows the early plateau / cricket red story
-    anchors: list[dict[str, Any]] = [
-        {
-            "id": "v10_plateau",
-            "label": "v10 desk",
-            "best_roi": 0.0221,
-            "cricket_roi": -0.1808,
-            "note": "Self-improvement stuck near 2.2%. Cricket craft holdout deep red / gated.",
-        },
-        {
-            "id": "block0_empty",
-            "label": "Early empty epochs",
-            "best_roi": 0.0,
-            "cricket_roi": None,
-            "note": "Empty or ungraded craft epochs (0 bets).",
-        },
-    ]
-
-    block_means: list[float] = []
-    try:
-        from bet_placer.ml.craft_store import get_meta
-
-        blocks = get_meta("craft_blocks") or []
-        if isinstance(blocks, list):
-            for b in blocks:
-                if not isinstance(b, dict) or b.get("mean_roi") is None:
-                    continue
-                try:
-                    block_means.append(float(b["mean_roi"]))
-                except (TypeError, ValueError):
-                    continue
-    except Exception:
-        pass
-
-    # Collapse many blocks into a few rising milestones (running best of block means)
-    milestones: list[dict[str, Any]] = []
-    if block_means:
-        run_best = None
-        picks = {0, len(block_means) // 2, len(block_means) - 1}
-        for i, mean in enumerate(block_means):
-            run_best = mean if run_best is None else max(run_best, mean)
-            if i not in picks:
-                continue
-            milestones.append({
-                "id": f"block_ms_{i}",
-                "label": f"Craft block {i + 1}",
-                "best_roi": round(float(run_best), 4),
-                "note": f"Running best of block means (block mean {mean:+.1%})",
-            })
-
-    curves = payload.get("curves") or {}
-    best_series = curves.get("craft_roi_best") or curves.get("craft_equity") or []
-    peak = None
-    for v in best_series:
-        try:
-            f = float(v.get("roi", v.get("v")) if isinstance(v, dict) else v)
-        except (TypeError, ValueError):
-            continue
-        peak = f if peak is None else max(peak, f)
-    craft = payload.get("craft") or {}
-    if peak is None:
-        try:
-            peak = float(craft.get("best_roi")) if craft.get("best_roi") is not None else None
-        except (TypeError, ValueError):
-            peak = None
-
-    cricket_roi = None
-    for c in payload.get("containers") or []:
-        if c.get("id") != "07_craft_roi_sport":
-            continue
-        for s in c.get("sports") or []:
-            if s.get("sport") == "cricket" and s.get("roi") is not None:
-                try:
-                    cricket_roi = float(s["roi"])
-                except (TypeError, ValueError):
-                    cricket_roi = None
-    if cricket_roi is None or cricket_roi < 0:
-        try:
-            g = (((craft.get("train_status") or {}).get("gates") or {}).get("sports") or {}).get("cricket") or {}
-            if g.get("roi") is not None and float(g["roi"]) > 0:
-                cricket_roi = float(g["roi"])
-        except (TypeError, ValueError):
-            pass
-    if cricket_roi is None or cricket_roi < 0:
-        try:
-            series = ((curves.get("craft_sport_roi") or {}).get("cricket") or [])
-            if series:
-                last = series[-1]
-                f = float(last.get("roi", last.get("v")) if isinstance(last, dict) else last)
-                if f > 0:
-                    cricket_roi = f
-        except (TypeError, ValueError, IndexError):
-            pass
-
-    current = None
-    if peak is not None:
-        current = {
-            "id": "v16_now",
-            "label": "Current desk",
-            "best_roi": round(float(peak), 4),
-            "cricket_roi": cricket_roi,
-            "note": "Latest best-so-far after three-sport craft learning.",
-        }
-
-    runs = anchors + milestones
-    if current:
-        runs.append(current)
-
-    # Drop duplicate consecutive best_roi labels; keep cricket story on first/last
-    seen = set()
-    out = []
-    for r in runs:
-        key = (r.get("label"), round(float(r.get("best_roi") or 0), 4))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r)
     return out
 
 

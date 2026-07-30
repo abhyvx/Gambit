@@ -110,16 +110,16 @@ function chartRoi(v) {
   return `${(Number(v) * 100).toFixed(1)}%`
 }
 
-/** Accept plain numbers or {roi|v} points. Never plot negatives. */
+/** Accept plain numbers or {roi|v} points. Drop empty sentinel (-1) only. */
 function asChartNumber(v) {
   if (v == null) return null
   if (typeof v === 'object') {
     const n = Number(v.roi ?? v.v ?? v.value)
-    if (!Number.isFinite(n) || n === -1 || n < 0) return null
+    if (!Number.isFinite(n) || n === -1) return null
     return n
   }
   const n = Number(v)
-  if (!Number.isFinite(n) || n === -1 || n < 0) return null
+  if (!Number.isFinite(n) || n === -1) return null
   return n
 }
 
@@ -334,68 +334,6 @@ function SportGrid({ sports, render }) {
         </article>
       ))}
     </div>
-  )
-}
-
-function LearningRunsPanel({ runs }) {
-  const rows = Array.isArray(runs) ? runs.filter((r) => r && r.label) : []
-  if (rows.length < 2) return null
-  const bestSeries = [{
-    key: 'best-so-far',
-    color: '#3d9b6c',
-    values: rows.map((r) => (r.best_roi == null ? null : Number(r.best_roi))),
-  }]
-  return (
-    <section className="panel insight-box" data-id="learning_runs" id="box-learning_runs">
-      <div className="insight-box-head">
-        <h2 className="panel-title">Learning runs · before → after</h2>
-        <div className="insight-box-head-actions">
-          <Link className="insight-info-btn" to="/app/guide#box-learning_runs" title="What this box means">
-            i
-          </Link>
-        </div>
-      </div>
-      <p className="panel-desc">
-        Each milestone is a published desk revision or craft block. Best-so-far should climb as learning lands;
-        cricket shows the early gated red versus the current sport cell.
-      </p>
-      <MultiLineChart
-        title="Best-so-far holdout ROI by run"
-        series={bestSeries}
-        format={(v) => `${(Number(v) * 100).toFixed(1)}%`}
-        height={130}
-      />
-      <div className="learning-runs-table-wrap">
-        <table className="learning-runs-table">
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>Best-so-far</th>
-              <th>Cricket</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id || r.label}>
-                <td>{r.label}</td>
-                <td className={Number(r.best_roi) >= 0 ? 'delta-up' : 'delta-down'}>
-                  {r.best_roi == null ? '—' : roiPct(r.best_roi)}
-                </td>
-                <td className={
-                  r.cricket_roi == null
-                    ? ''
-                    : (Number(r.cricket_roi) >= 0 ? 'delta-up' : 'delta-down')
-                }>
-                  {r.cricket_roi == null ? '—' : roiPct(r.cricket_roi)}
-                </td>
-                <td className="muted">{r.note || ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
   )
 }
 
@@ -1119,8 +1057,6 @@ export default function ModelPage() {
           </p>
         </section>
       )}
-
-      <LearningRunsPanel runs={ins?.learning_runs} />
 
       {containers.map((c) => (
         <InsightContainer key={c.id} c={c} curves={curves} sportKeys={sportKeys} />

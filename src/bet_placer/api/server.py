@@ -767,7 +767,8 @@ def _require_admin(request: Request):
 
 @app.get("/api/admin/accounts")
 def admin_accounts(request: Request):
-    from bet_placer.auth.persist import bundle_path, export_users_bundle
+    """Lightweight admin roster + debug. Never loads full user bundles (OOM on free tier)."""
+    from bet_placer.auth.persist import bundle_path
     from bet_placer.auth.users import list_accounts_for_admin
     from bet_placer.config import database_status, remote_stake_browser_enabled
     from bet_placer.engine.stake_odds import stake_overlay_status
@@ -788,10 +789,40 @@ def admin_accounts(request: Request):
             browser = browser_status()
         except Exception as exc:
             browser = {"error": str(exc)[:180]}
-    params = load_params(force=True)
-    craft = progress_snapshot(limit_epochs=24)
-    bundle = export_users_bundle()
+    # Cached params only — force=True re-reads a large JSON on every admin open
+    params = load_params(force=False) or {}
+    craft = {}
+    try:
+        snap = progress_snapshot(limit_epochs=8) or {}
+        craft = {
+            "train_status": snap.get("train_status") or {},
+            "best": {
+                k: (snap.get("best") or {}).get(k)
+                for k in ("roi", "accuracy", "bets", "at")
+            },
+            "champion": {
+                k: (snap.get("champion") or {}).get(k)
+                for k in ("roi", "accuracy", "bets", "at")
+            },
+            "latest": {
+                k: (snap.get("latest") or {}).get(k)
+                for k in ("epoch", "roi", "accuracy", "bets")
+            },
+            "epochs": snap.get("epochs") if isinstance(snap.get("epochs"), (int, float)) else len(snap.get("epochs") or []),
+            "blocks": len(snap.get("blocks") or []),
+        }
+    except Exception as exc:
+        craft = {"error": str(exc)[:160]}
     bundle_file = bundle_path()
+    port_n = 0
+    try:
+        from bet_placer.config import data_path
+
+        port_dir = data_path("portfolios")
+        if port_dir.is_dir():
+            port_n = sum(1 for _ in port_dir.glob("*.json"))
+    except Exception:
+        port_n = 0
     return {
         "accounts": accounts,
         "odds_link": relay_heartbeat(),
@@ -827,21 +858,14 @@ def admin_accounts(request: Request):
                 "trained_on_sport_history": params.get("trained_on_sport_history") or {},
                 "trained_on_boards": params.get("trained_on_boards") or {},
                 "updated_at": params.get("updated_at"),
-                "activity_log": get_activity_log(limit=18),
+                "activity_log": get_activity_log(limit=12),
             },
-            "craft": {
-                "train_status": craft.get("train_status") or {},
-                "best": craft.get("best") or {},
-                "champion": craft.get("champion") or {},
-                "latest": craft.get("latest") or {},
-                "epochs": craft.get("epochs"),
-                "blocks": craft.get("blocks") or [],
-            },
+            "craft": craft,
             "bundle": {
                 "path": str(bundle_file),
                 "exists": bundle_file.is_file(),
-                "users": len((bundle.get("users") or {})),
-                "portfolios": len((bundle.get("portfolios") or {})),
+                "users": len(accounts),
+                "portfolios": port_n,
             },
             "database": database_status(),
         },

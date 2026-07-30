@@ -5,20 +5,6 @@ import './pages.css'
 
 const BOXES = [
   {
-    id: 'box-learning_runs',
-    title: 'Learning runs · before → after',
-    body: (
-      <>
-        <p>
-          Milestone table on the Model page. Each row is an early published desk, a craft block mean,
-          or the current best-so-far. The line chart plots best-so-far holdout ROI so you can see runs
-          get better. Cricket column keeps the old gated red (−18%) next to the current green cell.
-        </p>
-        <p className="muted">Numbers are paper research on frozen holdout / pairs — not live bankroll.</p>
-      </>
-    ),
-  },
-  {
     id: 'box-01_corpus',
     title: '1 · Corpus depth',
     body: (
@@ -360,8 +346,8 @@ export default function GuidePage() {
           </li>
         </ul>
         <p>
-          Version / run comparisons live on the <Link to="/app/model#box-learning_runs">Model page</Link>.
-          The README explains the same math in prose without embedding charts.
+          Equity and epoch curves on the <Link to="/app/model">Model page</Link> show graded history
+          from craft.db when it exists. The README explains the same math in plain English.
         </p>
       </section>
 

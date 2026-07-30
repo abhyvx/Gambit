@@ -232,7 +232,9 @@ export default function AdminPage() {
               <li>Epoch: <strong>{craft.train_status?.epoch ?? craft.latest?.epoch ?? '—'}</strong></li>
               <li>Latest ROI: <strong>{craft.latest?.roi ?? '—'}</strong></li>
               <li>Latest accuracy: <strong>{craft.latest?.accuracy ?? '—'}</strong></li>
-              <li>Total epochs: <strong>{craft.epochs ?? 0}</strong></li>
+              <li>Total epochs: <strong>{Array.isArray(craft.epochs) ? craft.epochs.length : (craft.epochs ?? 0)}</strong></li>
+              <li>Craft blocks: <strong>{Array.isArray(craft.blocks) ? craft.blocks.length : (craft.blocks ?? 0)}</strong></li>
+              {craft.error ? <li className="muted">Craft debug: {craft.error}</li> : null}
             </ul>
           </article>
         </div>

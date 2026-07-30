@@ -221,7 +221,11 @@ def is_admin(user: dict[str, Any] | None) -> bool:
 
 
 def list_accounts_for_admin() -> list[dict[str, Any]]:
-    """Safe account roster: no passwords, no Stake tokens."""
+    """Safe account roster: no passwords, no Stake tokens.
+
+    Loads only light portfolio fields (token flag + bet_count) so the admin
+    page cannot OOM a free-tier host by materializing every journal twice.
+    """
     with _LOCK:
         users = _load(_USERS)
         sessions = _load(_SESSIONS)
@@ -237,29 +241,30 @@ def list_accounts_for_admin() -> list[dict[str, Any]]:
         bet_count = 0
         sync_status = None
         sync_message = None
-        if db_enabled():
-            port = load_portfolio_state(uid) or {}
+        port: dict[str, Any] = {}
+        try:
+            if db_enabled():
+                port = load_portfolio_state(uid) or {}
+            else:
+                port_path = data_path("portfolios", f"{uid}.json")
+                if port_path.is_file():
+                    port = json.loads(port_path.read_text(encoding="utf-8"))
+        except Exception:
+            port = {}
+        if isinstance(port, dict) and port:
             secrets = port.get("secrets") or {}
             has_token = bool(secrets.get("stake_api_token"))
-            bets = ((port.get("portfolio") or {}).get("bets") or [])
-            bet_count = len(bets) if isinstance(bets, list) else 0
+            portfolio = port.get("portfolio") or {}
+            bet_count = int(portfolio.get("bet_count") or 0)
+            if bet_count <= 0:
+                bets = portfolio.get("bets") or []
+                bet_count = len(bets) if isinstance(bets, list) else 0
+            # Drop heavy arrays ASAP so GC can reclaim before next account
+            port.pop("portfolio", None)
             conn = port.get("connection") or {}
             sync_status = conn.get("last_sync_status")
             sync_message = conn.get("last_sync_message")
-        else:
-            port_path = data_path("portfolios", f"{uid}.json")
-            if port_path.is_file():
-                try:
-                    port = json.loads(port_path.read_text(encoding="utf-8"))
-                    secrets = port.get("secrets") or {}
-                    has_token = bool(secrets.get("stake_api_token"))
-                    bets = ((port.get("portfolio") or {}).get("bets") or [])
-                    bet_count = len(bets) if isinstance(bets, list) else 0
-                    conn = port.get("connection") or {}
-                    sync_status = conn.get("last_sync_status")
-                    sync_message = conn.get("last_sync_message")
-                except Exception:
-                    pass
+            del port
         out.append(
             {
                 "id": uid,

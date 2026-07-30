@@ -77,6 +77,17 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
 
     # force=False — desk must paint fast on cloud; retrain refreshes params explicitly
     params = params or load_params(force=False)
+    # If the release has only craft/cache artifacts but params are still empty,
+    # prefer the finished desk cache instead of rebuilding a fake 0-corpus view.
+    if not (
+        int(params.get("trained_on") or 0)
+        or int(params.get("trained_on_history") or 0)
+        or any(int(v or 0) > 0 for v in ((params.get("trained_on_sport_history") or {}).values()))
+        or any((params.get("elo_by_sport") or {}).values())
+    ):
+        cached = load_insights_cache(max_age_s=30 * 86400)
+        if cached and int(cached.get("total_corpus") or 0) > 1000 and (cached.get("containers") or cached.get("curves")):
+            return cached
     report = params.get("report") or {}
     metrics = report.get("metrics") or {}
     cards = params.get("board_scorecards") or report.get("board_scorecards") or {}

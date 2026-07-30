@@ -4953,4 +4953,70 @@
   border-bottom-color: var(--border);
 }
 .admin-row small { display: block; }
+.admin-debug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+.admin-debug-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-card);
+  padding: 1rem;
+}
+.admin-debug-card h3 {
+  margin-bottom: 0.7rem;
+}
+.admin-debug-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+.admin-debug-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  color: var(--text-muted);
+}
+.admin-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+.admin-log-list {
+  display: grid;
+  gap: 0.6rem;
+}
+.admin-log-row {
+  border: 1px solid var(--border-soft, #2a2f3a);
+  border-radius: var(--r-sm);
+  background: var(--bg-card);
+  padding: 0.85rem 0.95rem;
+}
+.admin-log-row > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+.admin-log-row p {
+  margin: 0;
+  color: var(--text-muted);
+}
 .refresh-btn.danger { color: var(--red, #d45d5d); }
+
+@media (max-width: 860px) {
+  .admin-debug-grid {
+    grid-template-columns: 1fr;
+  }
+  .admin-row {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+  .admin-row--head {
+    display: none;
+  }
+}

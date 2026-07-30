@@ -729,11 +729,84 @@ def _require_admin(request: Request):
 
 @app.get("/api/admin/accounts")
 def admin_accounts(request: Request):
+    from bet_placer.auth.persist import bundle_path, export_users_bundle
     from bet_placer.auth.users import list_accounts_for_admin
-    from bet_placer.portfolio.store import relay_heartbeat
+    from bet_placer.config import remote_stake_browser_enabled
+    from bet_placer.engine.stake_odds import stake_overlay_status
+    from bet_placer.ml.activity_log import get_activity_log
+    from bet_placer.ml.craft_store import progress_snapshot
+    from bet_placer.ml.params import load_params
+    from bet_placer.portfolio.store import relay_heartbeat, sync_jobs_snapshot
 
     _require_admin(request)
-    return {"accounts": list_accounts_for_admin(), "odds_link": relay_heartbeat()}
+    settings = get_settings()
+    accounts = list_accounts_for_admin()
+    overlay = stake_overlay_status()
+    browser = {}
+    if stake_network_enabled():
+        try:
+            from bet_placer.data.stake_browser import browser_status
+
+            browser = browser_status()
+        except Exception as exc:
+            browser = {"error": str(exc)[:180]}
+    params = load_params(force=True)
+    craft = progress_snapshot(limit_epochs=24)
+    bundle = export_users_bundle()
+    bundle_file = bundle_path()
+    return {
+        "accounts": accounts,
+        "odds_link": relay_heartbeat(),
+        "admin_debug": {
+            "security": {
+                "admin_email_count": len(
+                    [e for e in (settings.gambit_admin_emails or "").split(",") if e.strip()]
+                ),
+                "admin_secret_enabled": bool(settings.gambit_admin_secret),
+            },
+            "stake": {
+                "network_enabled": stake_network_enabled(),
+                "remote_enabled": remote_stake_browser_enabled(),
+                "browserbase_configured": bool((settings.browserbase_api_key or "").strip()),
+                "cdp_configured": bool((settings.stake_cdp_url or "").strip()),
+                "local_browser_enabled": bool(settings.stake_use_browser),
+                "warmup_on_startup": bool(settings.stake_browser_warmup_on_startup),
+                "odds_loop_seconds": int(settings.stake_odds_loop_seconds or 0),
+                "relay": relay_heartbeat(),
+                "browser": browser,
+                "overlay": overlay,
+                "sync_jobs": sync_jobs_snapshot(),
+            },
+            "users": {
+                "accounts": len(accounts),
+                "with_stake_token": sum(1 for row in accounts if row.get("has_stake_token")),
+                "bets_total": sum(int(row.get("bet_count") or 0) for row in accounts),
+                "active_sessions": sum(int(row.get("sessions") or 0) for row in accounts),
+            },
+            "model": {
+                "trained_on": int(params.get("trained_on") or 0),
+                "trained_on_history": int(params.get("trained_on_history") or 0),
+                "trained_on_sport_history": params.get("trained_on_sport_history") or {},
+                "trained_on_boards": params.get("trained_on_boards") or {},
+                "updated_at": params.get("updated_at"),
+                "activity_log": get_activity_log(limit=18),
+            },
+            "craft": {
+                "train_status": craft.get("train_status") or {},
+                "best": craft.get("best") or {},
+                "champion": craft.get("champion") or {},
+                "latest": craft.get("latest") or {},
+                "epochs": craft.get("epochs"),
+                "blocks": craft.get("blocks") or [],
+            },
+            "bundle": {
+                "path": str(bundle_file),
+                "exists": bundle_file.is_file(),
+                "users": len((bundle.get("users") or {})),
+                "portfolios": len((bundle.get("portfolios") or {})),
+            },
+        },
+    }
 
 
 @app.post("/api/admin/revoke-sessions")

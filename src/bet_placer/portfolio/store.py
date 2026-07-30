@@ -1009,6 +1009,36 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
     ]
 
 
+def sync_jobs_snapshot(limit: int = 12) -> dict[str, Any]:
+    """Admin-safe queue summary: never reveals stored Stake tokens."""
+    if not _SYNC_JOBS.is_file():
+        return {"pending": 0, "recent": []}
+    try:
+        jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
+    except Exception:
+        return {"pending": 0, "recent": []}
+    if not isinstance(jobs, list):
+        return {"pending": 0, "recent": []}
+    recent = []
+    pending = 0
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") == "pending":
+            pending += 1
+        recent.append(
+            {
+                "id": row.get("id"),
+                "user_id": row.get("user_id"),
+                "status": row.get("status"),
+                "created_at": row.get("created_at"),
+                "completed_at": row.get("completed_at"),
+                "error": (str(row.get("error") or "")[:180] or None),
+            }
+        )
+    return {"pending": pending, "recent": recent[-limit:][::-1]}
+
+
 def complete_sync_job(
     *,
     secret: str,

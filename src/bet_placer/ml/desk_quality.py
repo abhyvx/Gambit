@@ -460,6 +460,31 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             "total_edges": max(int(prior.get("total_edges") or 0), int(disk.get("total_edges") or 0)),
             "version": max(int(prior.get("version") or 0), int(disk.get("version") or 0), 3),
         }
+        # Recover team/player counts from desk sports when a thin rebuild wiped them
+        if int((factors.get("by_type") or {}).get("team") or 0) <= 0:
+            sports = out.get("sports") or {}
+            teams = 0
+            players = 0
+            for sp in SPORTS:
+                row = sports.get(sp) or {}
+                teams += int(row.get("teams") or 0)
+                players += int(row.get("players") or 0)
+            if not teams:
+                for c in out.get("containers") or []:
+                    if c.get("id") == "04_teams":
+                        teams = sum(int(s.get("n") or s.get("teams") or 0) for s in (c.get("sports") or []) if isinstance(s, dict))
+                    if c.get("id") == "05_players":
+                        players = sum(int(s.get("n") or s.get("players") or 0) for s in (c.get("sports") or []) if isinstance(s, dict))
+            if teams or players:
+                bt = dict(factors.get("by_type") or {})
+                if teams:
+                    bt["team"] = max(int(bt.get("team") or 0), teams)
+                    bt["strength"] = max(int(bt.get("strength") or 0), teams * 3)
+                    bt["form"] = max(int(bt.get("form") or 0), teams * 4)
+                if players:
+                    bt["player"] = max(int(bt.get("player") or 0), players)
+                factors["by_type"] = bt
+                factors["total_nodes"] = max(int(factors.get("total_nodes") or 0), sum(bt.values()))
         out["factors"] = factors
     except Exception:
         try:

@@ -1301,6 +1301,7 @@ def model_insights():
     from bet_placer.ml.model_insights import (
         build_model_insights,
         craft_fallback_desk,
+        ensure_insights_cache_on_disk,
         load_insights_cache,
         save_insights_cache,
     )
@@ -1310,11 +1311,10 @@ def model_insights():
     if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
         return _INSIGHTS_CACHE[1]
 
-    # Disk cache — instant paint on Render (avoids 502 while full build runs)
-    disk = load_insights_cache(max_age_s=6 * 3600)
+    # Disk / release cache — instant paint on Render (never block on full rebuild)
+    disk = ensure_insights_cache_on_disk() or load_insights_cache(max_age_s=30 * 86400)
     if disk and (disk.get("containers") or disk.get("curves")):
         _INSIGHTS_CACHE = (now, disk)
-        _schedule_insights_refresh()
         return disk
 
     # Fast craft+evolution desk so graphs never stay blank
@@ -1326,7 +1326,6 @@ def model_insights():
                 save_insights_cache(fallback)
             except Exception:
                 pass
-            _schedule_insights_refresh()
             return fallback
     except Exception as exc:
         logger.warning("craft fallback desk failed: %s", exc)
@@ -1344,10 +1343,17 @@ _INSIGHTS_REFRESHING = False
 
 
 def _schedule_insights_refresh() -> None:
-    """Background full rebuild — never blocks HTTP."""
+    """Background full rebuild — never blocks HTTP; skip when release cache is already good."""
     global _INSIGHTS_REFRESHING, _INSIGHTS_CACHE
     if _INSIGHTS_REFRESHING:
         return
+    try:
+        from bet_placer.ml.model_insights import ensure_insights_cache_on_disk
+        hit = ensure_insights_cache_on_disk()
+        if hit and int(hit.get("total_corpus") or 0) > 1000:
+            return
+    except Exception:
+        pass
     _INSIGHTS_REFRESHING = True
 
     def _go() -> None:
@@ -1370,21 +1376,24 @@ def _warmup_insights() -> None:
     def _go() -> None:
         try:
             from bet_placer.ml.model_insights import (
-                build_model_insights,
                 craft_fallback_desk,
-                load_insights_cache,
+                ensure_insights_cache_on_disk,
                 save_insights_cache,
             )
             import time as _time
             global _INSIGHTS_CACHE
-            hit = load_insights_cache(max_age_s=6 * 3600)
+            hit = ensure_insights_cache_on_disk()
             if hit:
                 _INSIGHTS_CACHE = (_time.time(), hit)
-            else:
-                fb = craft_fallback_desk()
-                save_insights_cache(fb)
-                _INSIGHTS_CACHE = (_time.time(), fb)
-            _schedule_insights_refresh()
+                logger.info(
+                    "model insights cache warmed (%d corpus, %d containers)",
+                    int(hit.get("total_corpus") or 0),
+                    len(hit.get("containers") or []),
+                )
+                return
+            fb = craft_fallback_desk()
+            save_insights_cache(fb)
+            _INSIGHTS_CACHE = (_time.time(), fb)
         except Exception:
             logger.warning("insights warmup failed", exc_info=True)
 

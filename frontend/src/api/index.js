@@ -519,21 +519,37 @@ export async function fetchPaperBook() {
 }
 
 const _insightsCache = { ts: 0, data: null }
-const INSIGHTS_CLIENT_TTL_MS = 120_000
-const INSIGHTS_DISK_KEY = 'gambit_insights_v1'
+const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
+const INSIGHTS_DISK_KEY = 'gambit_insights_v2'
+
+function readInsightsStore() {
+  try {
+    return JSON.parse(localStorage.getItem(INSIGHTS_DISK_KEY) || sessionStorage.getItem('gambit_insights_v1') || 'null')
+  } catch {
+    return null
+  }
+}
+
+function writeInsightsStore(payload) {
+  try {
+    localStorage.setItem(INSIGHTS_DISK_KEY, JSON.stringify(payload))
+  } catch { /* quota / private mode */ }
+}
+
+export function insightsPayloadUsable(data) {
+  return Number(data?.total_corpus || 0) > 1000 || (data?.status && data.status !== 'needs_train')
+}
 
 export function peekModelInsights() {
   if (_insightsCache.data && Date.now() - _insightsCache.ts <= INSIGHTS_CLIENT_TTL_MS) {
     return _insightsCache.data
   }
-  try {
-    const raw = JSON.parse(sessionStorage.getItem(INSIGHTS_DISK_KEY) || 'null')
-    if (raw?.data && Date.now() - raw.ts <= INSIGHTS_CLIENT_TTL_MS) {
-      _insightsCache.ts = raw.ts
-      _insightsCache.data = raw.data
-      return raw.data
-    }
-  } catch { /* private mode */ }
+  const raw = readInsightsStore()
+  if (raw?.data && Date.now() - raw.ts <= INSIGHTS_CLIENT_TTL_MS && insightsPayloadUsable(raw.data)) {
+    _insightsCache.ts = raw.ts
+    _insightsCache.data = raw.data
+    return raw.data
+  }
   return null
 }
 
@@ -551,11 +567,13 @@ export async function fetchModelInsights({ force = false } = {}) {
   const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
   const data = await r.json()
+  const prior = _insightsCache.data || peekModelInsights()
+  if (!force && !insightsPayloadUsable(data) && insightsPayloadUsable(prior)) {
+    return prior
+  }
   _insightsCache.ts = Date.now()
   _insightsCache.data = data
-  try {
-    sessionStorage.setItem(INSIGHTS_DISK_KEY, JSON.stringify({ ts: _insightsCache.ts, data }))
-  } catch { /* quota */ }
+  writeInsightsStore({ ts: _insightsCache.ts, data })
   return data
 }
 

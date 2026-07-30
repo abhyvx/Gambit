@@ -341,7 +341,7 @@ def get_stake_match_odds(
         if book.get("available"):
             book["note"] = (
                 (book.get("note") or "")
-                + " Live Stake scrape skipped on this host — use laptop relay or Admin → Request laptop odds sync."
+                + " Live Stake scrape skipped on this host — use laptop relay or Admin → Sync Stake odds now."
             ).strip()
         return book
 
@@ -1531,7 +1531,7 @@ def refresh_stake_overlay(*, allow_launch: bool = False) -> dict:
             "skipped": True,
             "reason": (
                 "Live Stake scrape skipped on HTTP — using relay/cache. "
-                "Admin → Request laptop odds sync while the relay runs."
+                "Admin → Sync Stake odds now while the relay runs."
             ),
             "message": (
                 f"Using {n} cached Stake fixtures. Live scrape stays off on this host."

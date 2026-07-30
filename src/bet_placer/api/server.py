@@ -1274,7 +1274,7 @@ def worldcup_match_slip(
         slip = dict(slip)
         slip["stake_note"] = (
             "Live Stake scrape is off on this host. Prices use laptop relay / cache / board estimates. "
-            "Use Admin → Request laptop odds sync while the relay is running."
+            "Use Admin → Sync Stake odds now while the on-demand relay is running."
         )
     return to_json(slip)
 

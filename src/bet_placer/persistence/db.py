@@ -94,6 +94,7 @@ def _portfolio_key(user_id: str | None) -> str:
 def load_users_dict() -> dict[str, Any]:
     if not db_enabled():
         return {}
+    init_db()
     with engine().begin() as conn:
         rows = conn.execute(select(USERS)).mappings().all()
     return {
@@ -112,6 +113,7 @@ def load_users_dict() -> dict[str, Any]:
 def save_users_dict(data: dict[str, Any]) -> None:
     if not db_enabled():
         return
+    init_db()
     with engine().begin() as conn:
         conn.execute(delete(USERS))
         for email, row in (data or {}).items():
@@ -132,6 +134,7 @@ def save_users_dict(data: dict[str, Any]) -> None:
 def load_sessions_dict() -> dict[str, Any]:
     if not db_enabled():
         return {}
+    init_db()
     with engine().begin() as conn:
         rows = conn.execute(select(SESSIONS)).mappings().all()
     return {
@@ -147,6 +150,7 @@ def load_sessions_dict() -> dict[str, Any]:
 def save_sessions_dict(data: dict[str, Any]) -> None:
     if not db_enabled():
         return
+    init_db()
     with engine().begin() as conn:
         conn.execute(delete(SESSIONS))
         for token, row in (data or {}).items():
@@ -165,6 +169,7 @@ def save_sessions_dict(data: dict[str, Any]) -> None:
 def load_portfolio_state(user_id: str | None) -> dict[str, Any] | None:
     if not db_enabled():
         return None
+    init_db()
     key = _portfolio_key(user_id)
     with engine().begin() as conn:
         row = conn.execute(select(PORTFOLIOS.c.state_json).where(PORTFOLIOS.c.user_id == key)).scalar_one_or_none()
@@ -174,6 +179,7 @@ def load_portfolio_state(user_id: str | None) -> dict[str, Any] | None:
 def save_portfolio_state(user_id: str | None, state: dict[str, Any]) -> None:
     if not db_enabled():
         return
+    init_db()
     key = _portfolio_key(user_id)
     payload = json.loads(json.dumps(state))
     with engine().begin() as conn:
@@ -184,6 +190,7 @@ def save_portfolio_state(user_id: str | None, state: dict[str, Any]) -> None:
 def delete_portfolio_state(user_id: str | None) -> None:
     if not db_enabled():
         return
+    init_db()
     with engine().begin() as conn:
         conn.execute(delete(PORTFOLIOS).where(PORTFOLIOS.c.user_id == _portfolio_key(user_id)))
 
@@ -191,6 +198,7 @@ def delete_portfolio_state(user_id: str | None) -> None:
 def load_blob(key: str, default=None):
     if not db_enabled():
         return default
+    init_db()
     with engine().begin() as conn:
         row = conn.execute(select(BLOBS.c.value_json).where(BLOBS.c.key == key)).scalar_one_or_none()
     return row if row is not None else default
@@ -199,6 +207,7 @@ def load_blob(key: str, default=None):
 def save_blob(key: str, value: Any) -> None:
     if not db_enabled():
         return
+    init_db()
     payload = json.loads(json.dumps(value))
     with engine().begin() as conn:
         conn.execute(delete(BLOBS).where(BLOBS.c.key == key))

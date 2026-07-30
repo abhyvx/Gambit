@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchModelInsights, fetchModelReport, fetchCraftProgress, runPaperCycle, peekModelInsights } from '../api'
+import { fetchModelInsights, fetchModelReport, fetchCraftProgress, runPaperCycle, peekModelInsights, insightsPayloadUsable } from '../api'
 import { IconRefresh } from '../components/Icons'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
@@ -95,13 +95,15 @@ function chartRoi(v) {
 /** Accept plain numbers or {roi|v} points from the API. Drop −1 sentinels. */
 function asChartNumber(v) {
   if (v == null) return null
-  if (typeof v === 'object') {
+    if (typeof v === 'object') {
     const n = Number(v.roi ?? v.v ?? v.value)
     if (!Number.isFinite(n) || n === -1) return null
+    if (n < 0) return null
     return n
   }
   const n = Number(v)
   if (!Number.isFinite(n) || n === -1) return null
+  if (n < 0) return null
   return n
 }
 
@@ -699,8 +701,7 @@ export default function ModelPage() {
     else if (!ins) {
       setLoading(true)
       setDeskLoading(true)
-    } else {
-      // Soft refresh — keep painted desk, only banner spinner
+    } else if (!insightsPayloadUsable(ins)) {
       setDeskLoading(true)
     }
     setErr(null)

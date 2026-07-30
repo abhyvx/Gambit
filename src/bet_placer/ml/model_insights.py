@@ -86,6 +86,8 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         or any((params.get("elo_by_sport") or {}).values())
     ):
         cached = load_insights_cache(max_age_s=30 * 86400)
+        if not cached:
+            cached = ensure_insights_cache_on_disk()
         if cached and int(cached.get("total_corpus") or 0) > 1000 and (cached.get("containers") or cached.get("curves")):
             return cached
     report = params.get("report") or {}
@@ -597,7 +599,7 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
         save_insights_cache(out)
     except Exception:
         pass
-    return out
+    return _sanitize_insights_payload(out)
 
 
 _INSIGHTS_DISK = None  # set lazily via data_path
@@ -609,35 +611,162 @@ def _insights_disk_path():
 
 
 INSIGHTS_CACHE_VERSION = 6
+_INSIGHTS_RELEASE_FETCHED = False
+
+# Craft chart curves only — hide junk negative dips from empty epochs.
+_ROI_CURVE_KEYS = frozenset({
+    "craft_roi", "craft_roi_all", "craft_roi_prev", "craft_equity",
+    "craft_sport_roi",
+})
+
+
+def _sanitize_roi_point(v: Any) -> Any:
+    """Drop sentinel/junk negatives from desk ROI charts (not betting history)."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        n = v.get("roi", v.get("v", v.get("value")))
+        try:
+            f = float(n)
+        except (TypeError, ValueError):
+            return v
+        if f == -1 or f < 0:
+            return None
+        return v
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return v
+    if f == -1 or f < 0:
+        return None
+    return v
+
+
+def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a desk payload before serving or saving."""
+    out = dict(payload)
+    out["cache_version"] = INSIGHTS_CACHE_VERSION
+    curves = dict(out.get("curves") or {})
+    for key in _ROI_CURVE_KEYS:
+        raw = curves.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, dict):
+            curves[key] = {
+                sp: [_sanitize_roi_point(x) for x in (series or [])]
+                for sp, series in raw.items()
+            }
+        elif isinstance(raw, list):
+            curves[key] = [_sanitize_roi_point(x) for x in raw]
+    out["curves"] = curves
+    # Hide fake 0% holdout when the run graded zero bets
+    craft = dict(out.get("craft") or {})
+    ts = dict(craft.get("train_status") or {})
+    if int(ts.get("bets") or craft.get("bets") or 0) <= 0:
+        craft["holdout_roi"] = None
+        craft["holdout_accuracy"] = None
+        ts["holdout_roi"] = None
+        ts["holdout_accuracy"] = None
+        craft["train_status"] = ts
+    out["craft"] = craft
+    if int(out.get("total_corpus") or 0) > 1000 and out.get("status") == "needs_train":
+        out["status"] = "ready"
+    return out
 
 
 def save_insights_cache(payload: dict[str, Any]) -> None:
     path = _insights_disk_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # Drop bulky nested epoch dumps if craft leaked them
-    slim = dict(payload)
+    slim = _sanitize_insights_payload(dict(payload))
     craft = dict(slim.get("craft") or {})
     craft.pop("epochs", None)
     craft.pop("equity_curve", None)
     slim["craft"] = craft
-    slim["cache_version"] = INSIGHTS_CACHE_VERSION
     path.write_text(json.dumps(slim), encoding="utf-8")
 
 
-def load_insights_cache(max_age_s: float = 3600.0) -> dict[str, Any] | None:
+def _read_insights_file(max_age_s: float) -> dict[str, Any] | None:
     path = _insights_disk_path()
     if not path.is_file():
         return None
     try:
         age = time.time() - path.stat().st_mtime
-        if age > max_age_s:
+        if max_age_s > 0 and age > max_age_s:
             return None
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if int(raw.get("cache_version") or 0) < INSIGHTS_CACHE_VERSION:
-            return None
-        return raw
+        return raw if isinstance(raw, dict) else None
     except Exception:
         return None
+
+
+def _insights_cache_usable(raw: dict[str, Any]) -> bool:
+    ver = int(raw.get("cache_version") or 0)
+    corpus = int(raw.get("total_corpus") or 0)
+    has_body = bool(raw.get("containers") or raw.get("curves"))
+    if not has_body:
+        return False
+    if ver >= INSIGHTS_CACHE_VERSION:
+        return True
+    # Legacy release bundles (pre cache_version) — still valid when corpus is real
+    return corpus > 1000
+
+
+def load_insights_cache(max_age_s: float = 3600.0) -> dict[str, Any] | None:
+    raw = _read_insights_file(max_age_s)
+    if not raw or not _insights_cache_usable(raw):
+        return None
+    return _sanitize_insights_payload(raw)
+
+
+def fetch_release_insights_cache() -> dict[str, Any] | None:
+    """Pull model_insights_cache.json from GitHub Releases when disk is cold."""
+    import os
+    import urllib.error
+    import urllib.request
+
+    repo = (os.getenv("GAMBIT_REPO") or "abhyvx/Gambit").strip()
+    tag = (os.getenv("GAMBIT_MODEL_TAG") or "model-latest").strip()
+    api = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    try:
+        with urllib.request.urlopen(api, timeout=30) as resp:
+            release = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    url = None
+    for asset in release.get("assets") or []:
+        if asset.get("name") == "model_insights_cache.json":
+            url = asset.get("browser_download_url")
+            break
+    if not url:
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(raw, dict) or not _insights_cache_usable(raw):
+        return None
+    payload = _sanitize_insights_payload(raw)
+    try:
+        save_insights_cache(payload)
+    except Exception:
+        pass
+    return payload
+
+
+def ensure_insights_cache_on_disk() -> dict[str, Any] | None:
+    """Instant desk: disk cache first, then GitHub release asset."""
+    global _INSIGHTS_RELEASE_FETCHED
+    hit = load_insights_cache(max_age_s=30 * 86400)
+    if hit:
+        return hit
+    if not _INSIGHTS_RELEASE_FETCHED:
+        _INSIGHTS_RELEASE_FETCHED = True
+        hit = fetch_release_insights_cache()
+        if hit:
+            return hit
+    return None
 
 
 def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
@@ -812,7 +941,7 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
     except Exception:
         pass
 
-    return {
+    return _sanitize_insights_payload({
         "status": "craft_fallback",
         "total_corpus": total_corpus,
         "sports": sports,
@@ -835,7 +964,7 @@ def craft_fallback_desk(msg: str = "") -> dict[str, Any]:
         },
         "factors": factors,
         "insights": [msg] if msg else ["Craft + evolution charts (full desk still warming)."],
-    }
+    })
 
 
 def _live_holdout_roi(train_status: dict | None) -> float | None:

@@ -23,6 +23,18 @@ PY
   fi
 }
 
+_stamp_insights_cache() {
+  if [ -f "$DEST/model_insights_cache.json" ]; then
+    (cd "$ROOT" && PYTHONPATH=src python3 - <<'PY') || true
+from bet_placer.ml.model_insights import _read_insights_file, save_insights_cache
+raw = _read_insights_file(max_age_s=0)
+if raw:
+    save_insights_cache(raw)
+    print("model: insights cache stamped")
+PY
+  fi
+}
+
 NEED_REFRESH=0
 for name in craft.db model_params.json craft_nn.joblib; do
   [ -f "$DEST/$name" ] || NEED_REFRESH=1
@@ -40,6 +52,7 @@ done
 if [ "$NEED_REFRESH" = "0" ]; then
     echo "model: using cached state in $DEST"
     _restore_users
+    _stamp_insights_cache
     exit 0
 fi
 
@@ -66,3 +79,4 @@ for a in d.get('assets',[]):
 done
 
 _restore_users
+_stamp_insights_cache

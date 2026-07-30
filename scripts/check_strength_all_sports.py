@@ -332,10 +332,40 @@ def test_expected_goals_uses_params() -> None:
     m = _match("Hull City", "Manchester United")
     # Leave flat priors on purpose; expected_goals Elo path must still favour Man Utd
     hl, al = expected_goals(m, apply_learned=True)
-    # If goal_model + elo present, away lambda higher; else rating path
-    assert al >= hl - 0.05 or True  # soft: just ensure no crash
     probs = match_outcome_probs(m)
     _ok(f"expected_goals λ={hl:.2f}/{al:.2f} P={probs['home']:.1%}/{probs['away']:.1%}")
+
+
+def test_bundled_strength_without_disk() -> None:
+    """Cold cloud boot: no model_params.json yet — bundled Elo must still favour Man Utd."""
+    import tempfile
+    from pathlib import Path
+
+    import bet_placer.ml.params as params_mod
+
+    empty = Path(tempfile.mkdtemp())
+    params_mod._cache = None
+    params_mod._cache_mtime = None
+    old = params_mod.PARAMS_PATH
+    params_mod.PARAMS_PATH = empty / "model_params.json"
+    try:
+        p = params_mod.load_params(force=True)
+        assert len(p.get("elo") or {}) > 500, len(p.get("elo") or {})
+        assert (p.get("elo") or {}).get("man united", 0) > 1800
+        assert (p.get("goal_model") or {}).get("sup_a") is not None
+        m = _match("Hull City", "Manchester United")
+        apply_strength_stats(m, params=p)
+        assert m.away_stats.xg > m.home_stats.xg + 0.3
+        probs = match_outcome_probs(m)
+        assert probs["away"] > probs["home"] + 0.2, probs
+        _ok(
+            f"bundled cold-start Hull/Man Utd "
+            f"{probs['home']:.1%}/{probs['away']:.1%} xG={m.home_stats.xg}/{m.away_stats.xg}"
+        )
+    finally:
+        params_mod.PARAMS_PATH = old
+        params_mod._cache = None
+        params_mod.load_params(force=True)
 
 
 def main() -> None:
@@ -352,6 +382,7 @@ def main() -> None:
         test_verdict_lean_no_raw_enum,
         test_elo_update_canon,
         test_expected_goals_uses_params,
+        test_bundled_strength_without_disk,
     ]
     for fn in tests:
         fn()

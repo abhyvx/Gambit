@@ -404,6 +404,15 @@ class StakeSyncJobsComplete(BaseModel):
 @app.get("/api/health")
 def health():
     """Liveness for Render — must stay fast and never depend on Turso/Stake."""
+    def _health_elo_count() -> int:
+        try:
+            from bet_placer.ml.params import load_params
+
+            elo = (load_params() or {}).get("elo") or {}
+            return len(elo)
+        except Exception:
+            return 0
+
     try:
         settings = get_settings()
         from bet_placer.config import remote_stake_browser_enabled
@@ -427,6 +436,7 @@ def health():
             "stake_relay": bool(settings.stake_relay_secret),
             "stake_live": stake_network_enabled(),
             "stake_browser": stake_status,
+            "elo_teams": _health_elo_count(),
         }
     except Exception:
         return {"status": "ok"}
@@ -1807,10 +1817,13 @@ def analyze(
         # carry flat 1.45/1.20 priors from cache / alternate builders.
         try:
             from bet_placer.ml.team_elo import apply_strength_stats
+            from bet_placer.ml.params import load_params
 
+            # Force a fresh params read so bootstrap Elo is visible after first paint
+            load_params(force=False)
             apply_strength_stats(m)
         except Exception:
-            pass
+            logger.warning("apply_strength_stats failed for %s", getattr(m, "id", "?"), exc_info=True)
         analysis = _engine.analyze_match(m)
         bettor = None
         from bet_placer.models.stake_types import WebConsensus
@@ -1994,8 +2007,12 @@ def analyze(
             "match_budget_inr": bankroll,
             "style_note": style_note,
             "team_stats": {
-                "home": _serialize_team_stats(m.home_stats),
-                "away": _serialize_team_stats(m.away_stats),
+                "home": _serialize_team_stats(
+                    m.home_stats, elo=getattr(m, "home_elo", None)
+                ),
+                "away": _serialize_team_stats(
+                    m.away_stats, elo=getattr(m, "away_elo", None)
+                ),
             },
         }
         results.append(item)
@@ -2039,11 +2056,11 @@ def _serialize_verdict(v):
     }
 
 
-def _serialize_team_stats(ts) -> dict | None:
+def _serialize_team_stats(ts, *, elo: float | None = None) -> dict | None:
     if ts is None:
         return None
     form = "".join(ts.form_last_5 or []) or None
-    return {
+    out = {
         "xg": round(float(ts.xg or 0), 2),
         "xga": round(float(ts.xga or 0), 2),
         "goals_for": round(float(ts.goals_scored or 0), 2),
@@ -2052,6 +2069,12 @@ def _serialize_team_stats(ts) -> dict | None:
         "position": int(ts.league_position) if ts.league_position else None,
         "possession": round(float(ts.possession or 0), 1) or None,
     }
+    if elo is not None:
+        try:
+            out["elo"] = round(float(elo), 1)
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 def _serialize_markets(m):

@@ -97,7 +97,9 @@ League boards stamp flat priors (soccer ~1.45 / 1.20 home/away xG). That is a **
 3. `apply_strength_stats` overwrites flat attack/defence rates so a mid-table host cannot look like a 51% favourite over a top club.
 4. Basketball / cricket use the same identity + Elo path for two-way moneyline.
 
-Regression: `PYTHONPATH=src python3 scripts/check_strength_all_sports.py` (Hull/Man Utd, quality gaps, BB, cricket, human verdict labels). Run related `scripts/check_*.py` before shipping Recs/strength changes — do not treat one fixture as proof.
+**Cloud boot:** Elo ships in-repo as `ml/bundled_strength.json` so Render does not wait on `bootstrap_model.sh` before strength works. `load_params` merges that floor and reloads when disk `model_params.json` appears (avoids caching empty Elo forever). `/api/health` → `elo_teams` should be thousands when live.
+
+Regression: `PYTHONPATH=src python3 scripts/check_strength_all_sports.py` (Hull/Man Utd, quality gaps, BB, cricket, human verdict labels, cold-start without disk params). Run related `scripts/check_*.py` before shipping Recs/strength changes — do not treat one fixture as proof.
 
 ### How the model learns and improves
 

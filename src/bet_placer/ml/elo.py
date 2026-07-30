@@ -65,10 +65,35 @@ class EloModel:
                 s: _merge(tbl)
                 for s, tbl in (p.get("elo_by_sport") or {}).items()
             }
+            try:
+                from bet_placer.ml.params import _disk_mtime
+
+                self._params_mtime = _disk_mtime()
+            except Exception:
+                self._params_mtime = None
         except Exception:
             self._by_sport = {}
+            self._params_mtime = None
+
+    def _maybe_reload(self) -> None:
+        """Pick up bootstrap-downloaded Elo without restarting the process."""
+        try:
+            from bet_placer.ml.params import _disk_mtime, _elo_count, load_params
+
+            mtime = _disk_mtime()
+            if mtime is not None and mtime != getattr(self, "_params_mtime", None):
+                load_params(force=True)
+                self._load_learned()
+                return
+            # Boot raced bootstrap: ratings still empty but bundled/disk now available
+            if len(self.ratings) < 50 and _elo_count(load_params()) >= 50:
+                load_params(force=True)
+                self._load_learned()
+        except Exception:
+            pass
 
     def get_rating(self, team: str, sport: str | None = None) -> float:
+        self._maybe_reload()
         from bet_placer.data.team_names import canon_team
         key = canon_team(team)
         if sport and sport in (self._by_sport or {}):

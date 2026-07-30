@@ -2,17 +2,28 @@
 
 This is the *memory* of the model. The tracker fits these from real results;
 the prediction path reads them every time so the model keeps improving as more
-World Cup games finish.
+games finish.
+
+Critical for cloud: Render boots the API *before* ``bootstrap_model.sh``
+finishes downloading ``model_params.json``. If we cache an empty Elo table at
+first request, every match forever looks like 1.45/1.20 home priors. We always
+seed from ``bundled_strength.json`` (ships in the image) and re-load when the
+on-disk params file appears or changes.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
+
 from bet_placer.config import data_path
 
+logger = logging.getLogger(__name__)
+
 PARAMS_PATH = data_path("model_params.json")
+BUNDLED_STRENGTH_PATH = Path(__file__).with_name("bundled_strength.json")
 
 DEFAULT_PARAMS: dict = {
     "version": 0,
@@ -35,6 +46,8 @@ DEFAULT_PARAMS: dict = {
 }
 
 _cache: dict | None = None
+_cache_mtime: float | None = None
+_cache_bundled: bool = False
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -47,25 +60,125 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_params(force: bool = False) -> dict:
-    global _cache
-    if _cache is not None and not force:
-        return _cache
-    p = DEFAULT_PARAMS
+def _merge_elo_tables(base: dict, over: dict) -> dict:
+    """Union of Elo tables — keep the stronger rating on key collision."""
+    out = dict(base or {})
+    for k, v in (over or {}).items():
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if k not in out:
+            out[k] = fv
+            continue
+        try:
+            if fv > float(out[k]):
+                out[k] = fv
+        except (TypeError, ValueError):
+            out[k] = fv
+    return out
+
+
+def _load_bundled_strength() -> dict:
+    try:
+        if BUNDLED_STRENGTH_PATH.exists():
+            return json.loads(BUNDLED_STRENGTH_PATH.read_text())
+    except Exception:
+        logger.warning("bundled_strength.json unreadable", exc_info=True)
+    return {}
+
+
+def _disk_mtime() -> float | None:
     try:
         if PARAMS_PATH.exists():
-            p = _merge(DEFAULT_PARAMS, json.loads(PARAMS_PATH.read_text()))
+            return float(PARAMS_PATH.stat().st_mtime)
     except Exception:
-        p = DEFAULT_PARAMS
+        return None
+    return None
+
+
+def _elo_count(params: dict | None) -> int:
+    if not isinstance(params, dict):
+        return 0
+    n = len(params.get("elo") or {})
+    for tbl in (params.get("elo_by_sport") or {}).values():
+        if isinstance(tbl, dict):
+            n += len(tbl)
+    return n
+
+
+def load_params(force: bool = False) -> dict:
+    """Load params with bundled Elo floor + disk overlay.
+
+    Re-reads when ``model_params.json`` appears/changes after bootstrap, so the
+    first pre-bootstrap request cannot permanently pin an empty Elo cache.
+    """
+    global _cache, _cache_mtime, _cache_bundled
+
+    mtime = _disk_mtime()
+    if (
+        not force
+        and _cache is not None
+        and _cache_mtime == mtime
+        and (_elo_count(_cache) > 0 or mtime is None)
+    ):
+        return _cache
+
+    p = dict(DEFAULT_PARAMS)
+    bundled = _load_bundled_strength()
+    if bundled:
+        p = _merge(p, bundled)
+        # Elo tables: explicit max-merge so empty disk `{}` cannot wipe the seed
+        if isinstance(bundled.get("elo"), dict):
+            p["elo"] = _merge_elo_tables({}, bundled["elo"])
+        if isinstance(bundled.get("elo_by_sport"), dict):
+            merged_sport: dict = {}
+            for sport, tbl in bundled["elo_by_sport"].items():
+                if isinstance(tbl, dict):
+                    merged_sport[sport] = _merge_elo_tables({}, tbl)
+            p["elo_by_sport"] = merged_sport
+
+    try:
+        if PARAMS_PATH.exists():
+            disk = json.loads(PARAMS_PATH.read_text())
+            disk_elo = disk.get("elo") if isinstance(disk, dict) else None
+            disk_by = disk.get("elo_by_sport") if isinstance(disk, dict) else None
+            p = _merge(p, disk if isinstance(disk, dict) else {})
+            if isinstance(disk_elo, dict) and disk_elo:
+                p["elo"] = _merge_elo_tables(p.get("elo") or {}, disk_elo)
+            if isinstance(disk_by, dict) and disk_by:
+                sports = dict(p.get("elo_by_sport") or {})
+                for sport, tbl in disk_by.items():
+                    if isinstance(tbl, dict) and tbl:
+                        sports[sport] = _merge_elo_tables(sports.get(sport) or {}, tbl)
+                p["elo_by_sport"] = sports
+    except Exception:
+        logger.warning("model_params.json unreadable; using bundled strength", exc_info=True)
+
+    if _elo_count(p) == 0:
+        logger.warning("load_params: Elo tables empty after bundled+disk merge")
+    elif not _cache_bundled and bundled:
+        logger.info(
+            "load_params: strength ready (elo=%d, goal_model=%s, disk=%s)",
+            len(p.get("elo") or {}),
+            bool(p.get("goal_model")),
+            PARAMS_PATH.exists(),
+        )
+
     _cache = p
+    _cache_mtime = mtime
+    _cache_bundled = bool(bundled)
     return p
 
 
 def save_params(params: dict) -> None:
-    global _cache
+    global _cache, _cache_mtime
     PARAMS_PATH.parent.mkdir(parents=True, exist_ok=True)
     PARAMS_PATH.write_text(json.dumps(params, indent=2))
     _cache = params
+    _cache_mtime = _disk_mtime()
 
 
 def _logit(p: float) -> float:

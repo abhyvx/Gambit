@@ -11,6 +11,23 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v25",
+        "cycle": "bundled-elo-cold-start",
+        "at": "2026-07-30",
+        "title": "Ship Elo in the image; stop empty-cache 51% home priors on Render",
+        "fixed": [
+            "Prod still showed Hull 51% / Man Utd 21% with flat 1.45/1.20 xG after strength wiring",
+            "API booted before bootstrap downloaded model_params.json and cached empty Elo forever",
+            "Without Elo every club defaults to rating 50 → home HA → fake 51% favourites",
+        ],
+        "changes": [
+            "bundled_strength.json (Elo + goal_model for soccer/BB/cricket) ships in the Docker image",
+            "load_params merges bundled floor, reloads when disk params appear, never pins empty Elo",
+            "EloModel refreshes after bootstrap; /api/health exposes elo_teams",
+            "check_strength_all_sports covers cold-start without model_params.json",
+        ],
+    },
+    {
         "version": "v24",
         "cycle": "strength-all-sports",
         "at": "2026-07-30",

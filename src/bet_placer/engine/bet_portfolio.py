@@ -1222,12 +1222,53 @@ def _pick_thesis_anchor(
     return best
 
 
+def _match_rec_shape(ctx: dict | None, thesis: dict | None) -> str:
+    """Decide the best Recs approach for THIS fixture — not a global template.
+
+    Returns one of: single | spread | sgm | caution
+    Policy (user): prefer a high-confidence single when it fits; otherwise pick
+    whatever the match actually supports (spread / SGM / caution).
+    """
+    ctx = ctx or {}
+    thesis = thesis or {}
+    profile = ctx.get("game_profile") or {}
+    conf = (thesis.get("confidence") or {}) if isinstance(thesis.get("confidence"), dict) else {}
+    tier = str(conf.get("tier") or "").lower()
+    fav_pct = float(thesis.get("favorite_pct") or 0) / 100.0
+    draw_scenario = bool(thesis.get("draw_scenario"))
+    result_dir = thesis.get("result_dir")
+    rating_gap = abs(float(profile.get("rating_gap") or 0))
+
+    # Clear favourite on quality + model — single is the right default
+    if result_dir and (fav_pct >= CONFIDENT_WIN or (fav_pct >= COMFORTABLE_WIN and rating_gap >= 12)):
+        return "single"
+    if result_dir and fav_pct >= STRONG_WIN:
+        return "single"
+    if tier in ("lock", "strong") and result_dir:
+        return "single"
+    if result_dir and fav_pct >= COMFORTABLE_WIN:
+        return "single"
+
+    # Tight / draw-live: don't force a match-winner single
+    if draw_scenario or tier in ("coinflip", "coin-flip", "coin_flip"):
+        return "spread"
+
+    # Thin board / no lean — caution (only show something with real conviction)
+    if not result_dir and rating_gap < 6 and fav_pct < COMFORTABLE_WIN:
+        return "caution"
+    if not result_dir and fav_pct < COMFORTABLE_WIN:
+        return "spread"
+
+    return "spread"
+
+
 def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: dict | None = None) -> dict:
-    """Primary = match-discretion pick (singles / loss-min / SGM). Target cards stay on Target tab."""
+    """Primary = match-discretion pick. Prefer high-p singles when suited; else spread/SGM."""
     from bet_placer.engine.card_coherence import plan_aligns_match_thesis, plan_fights_match_thesis
 
     ctx = ctx or {}
     thesis = ctx.get("match_thesis") or {}
+    shape = _match_rec_shape(ctx, thesis)
 
     def _candidates(tab: str, pred=None) -> list[dict]:
         out = []
@@ -1243,31 +1284,11 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
             out.append(p)
         return out
 
-    primary: dict | None = None
-    # Default Recs: figure the approach per match — NOT cashout Target paths.
-    # Target / match_card is only a last-resort fallback (user owns Target tab).
-    pick_order = [
-        ("singles_focus", lambda p: p.get("_unified_aligned") and _best_win_prob(p) >= CONFIDENT_WIN),
-        ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),
-        ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
-        ("singles_focus", lambda p: _comfortable_typical(p) and _best_win_prob(p) >= COMFORTABLE_WIN),
-        ("smart_parlay", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN * 0.85),
-        ("value", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN),
-        ("min_loss", lambda p: _qualifies_loss_min(p) and _likely_profit(p) >= 0),
-        ("singles_focus", None),
-        ("smart_parlay", None),
-        ("value", None),
-        # Cashout-sized spreads only if nothing else cleared the bar
-        ("match_card", lambda p: _stern_primary_eligible(p)),
-        ("match_card", lambda p: _target_rec_eligible(p)),
-    ]
-    for tab, pred in pick_order:
-        cands = _candidates(tab, pred)
-        if not cands:
-            continue
+    def _sort_tab(tab: str, cands: list[dict]) -> list[dict]:
         if tab == "singles_focus":
+            # Conviction first, then EV — user wants high-confidence singles when suited
             cands.sort(
-                key=lambda s: (_likely_profit(s), _best_win_prob(s), _weighted_slip_score(s)),
+                key=lambda s: (_best_win_prob(s), _likely_profit(s), _weighted_slip_score(s)),
                 reverse=True,
             )
         elif tab == "min_loss":
@@ -1275,9 +1296,67 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
         elif tab == "match_card":
             cands.sort(key=_stern_rec_rank, reverse=True)
         else:
-            cands.sort(key=lambda s: (_likely_profit(s), _weighted_slip_score(s), _best_win_prob(s)), reverse=True)
-        primary = cands[0]
-        break
+            cands.sort(key=lambda s: (_best_win_prob(s), _likely_profit(s), _weighted_slip_score(s)), reverse=True)
+        return cands
+
+    # Shape → ordered approaches for THIS match (not a fixed global template)
+    if shape == "single":
+        pick_order = [
+            ("singles_focus", lambda p: p.get("_unified_aligned") and _best_win_prob(p) >= CONFIDENT_WIN),
+            ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),
+            ("singles_focus", lambda p: _best_win_prob(p) >= CONFIDENT_WIN),
+            ("singles_focus", lambda p: _comfortable_typical(p) and _best_win_prob(p) >= COMFORTABLE_WIN),
+            # If no single clears the bar for this fixture, fall through
+            ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
+            ("smart_parlay", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN * 0.85),
+            ("value", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN),
+            ("singles_focus", None),
+            ("min_loss", None),
+            ("smart_parlay", None),
+        ]
+    elif shape == "sgm":
+        pick_order = [
+            ("smart_parlay", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN * 0.85),
+            ("singles_focus", lambda p: _best_win_prob(p) >= CONFIDENT_WIN),
+            ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
+            ("smart_parlay", None),
+            ("singles_focus", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN),
+            ("value", None),
+        ]
+    elif shape == "caution":
+        pick_order = [
+            ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
+            ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),  # only a real lock
+            ("smart_parlay", lambda p: _best_win_prob(p) >= CONFIDENT_WIN * 0.9),
+            ("min_loss", lambda p: _qualifies_loss_min(p)),
+            ("value", lambda p: _best_win_prob(p) >= CONFIDENT_WIN),
+            ("singles_focus", lambda p: _best_win_prob(p) >= CONFIDENT_WIN),
+        ]
+    else:  # spread — draw-live / tight games
+        pick_order = [
+            ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
+            # Totals / BTTS singles can still be right; avoid forcing match-winner
+            ("singles_focus", lambda p: _best_win_prob(p) >= CONFIDENT_WIN and not _is_match_winner_only(p)),
+            ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),
+            ("smart_parlay", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN * 0.85),
+            ("min_loss", lambda p: _qualifies_loss_min(p)),
+            ("value", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN),
+            ("singles_focus", lambda p: _best_win_prob(p) >= CONFIDENT_WIN),
+            ("smart_parlay", None),
+        ]
+
+    # Always keep Target paths as last-resort only
+    pick_order = list(pick_order) + [
+        ("match_card", lambda p: _stern_primary_eligible(p)),
+        ("match_card", lambda p: _target_rec_eligible(p)),
+    ]
+
+    primary: dict | None = None
+    for tab, pred in pick_order:
+        cands = _sort_tab(tab, _candidates(tab, pred))
+        if cands:
+            primary = cands[0]
+            break
 
     if not primary:
         for tab in ("singles_focus", "min_loss", "smart_parlay", "value", "match_card"):
@@ -1288,12 +1367,23 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
             if primary:
                 break
 
+    if primary:
+        primary = {
+            **primary,
+            "rec_shape": shape,
+            "rec_shape_note": {
+                "single": "Clear lean — best high-confidence single for this match",
+                "spread": "Tight / draw-live — capital-preservation spread suits better than a forced winner",
+                "sgm": "Same-game combo is the better fit for this board",
+                "caution": "Thin edge — only show a pick if conviction is genuinely high",
+            }.get(shape, "Match-discretion pick"),
+        }
+
     alternatives: list[dict] = []
     if primary:
         primary_sig = _slip_signature(primary)
         primary_legs = _leg_set_signature(primary)
         alt_pool: list[dict] = []
-        # Recs alts = other match-discretion angles first; a couple Target paths ok as alts
         alt_pool.extend(_candidates("singles_focus", lambda p: _best_win_prob(p) >= 0.52))
         alt_pool.extend(_candidates("min_loss", lambda p: _qualifies_loss_min(p)))
         alt_pool.extend(_candidates("smart_parlay"))
@@ -1302,8 +1392,8 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
         alt_pool.sort(
             key=lambda p: (
                 0 if (p.get("tab_id") or p.get("id")) == "match_card" else 1,
-                p.get("worth_score", 0),
                 _best_win_prob(p),
+                p.get("worth_score", 0),
                 _likely_profit(p),
             ),
             reverse=True,
@@ -1318,9 +1408,8 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
             return (
                 1 if bucket_counts.get(bucket, 0) < bucket_quota.get(bucket, 1) else 0,
                 0 if (p.get("tab_id") or p.get("id")) == "match_card" else 1,
-                p.get("worth_score", 0),
-                -abs(n - 2),
                 _best_win_prob(p),
+                -abs(n - 2),
             )
 
         for p in sorted(alt_pool, key=_alt_rank, reverse=True):
@@ -1382,7 +1471,15 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
         "alternatives": [
             _annotate_curated(a, _curated_label(a, "Also consider")) for a in alternatives if a
         ],
+        "rec_shape": shape,
     }
+
+
+def _is_match_winner_only(slip: dict) -> bool:
+    legs = slip.get("legs") or []
+    if not legs:
+        return False
+    return all(str(l.get("market") or "") in ("match_winner", "h2h", "moneyline") for l in legs)
 
 
 def _should_skip_match(strategy_plans: dict, *, comfort: float = COMFORTABLE_WIN) -> bool:

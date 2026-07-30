@@ -116,12 +116,14 @@
 /* AMBIT: same draw duration as G lines, after G outline lands (~1.35s) */
 .entry-ambit.gambit-word {
   font-family: var(--font-brand, 'Chakra Petch', sans-serif);
-  font-weight: 700;
+  font-weight: 800;
   /* Match mark optical height — Chakra caps sit a bit short of the G box */
   font-size: calc(var(--entry-g) * 0.72);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  /* Entry canvas is always dark — keep white lockup, ignore light theme word */
   color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
   line-height: 1;
   opacity: 0;
   transform: scale(0.94);

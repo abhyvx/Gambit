@@ -1,23 +1,21 @@
 # Gambit
 
-I built Gambit because I got tired of staring at sportsbooks without a clear read on whether a price was actually good. The site is a three-sport desk for soccer, basketball, and cricket: live boards, priced markets, model grades, a slip you control, a private portfolio journal, and a learning loop that grades its own tickets on frozen holdout data.
+Gambit is a three-sport betting desk for soccer, basketball, and cricket: live boards, priced markets, model grades, a slip you control, a private portfolio journal, and a learning loop that grades tickets on frozen holdout data.
 
-Gambit is **not a bookmaker**. It does not place bets for you. It does not move money. You read the desk, you decide, and if you bet at all you do it yourself on a third-party book (Stake or anyone else). Paper metrics on the Model page are research, not a promise that live betting will pay.
-
-If that line feels blunt, good. I would rather people understand the product than get sold a fantasy.
+It is not a bookmaker. Gambit does not place bets or move money. You read the desk and decide; any real wager is on a third-party book. Paper metrics on the Model page are research, not a promise of live profit.
 
 ---
 
 ## Table of contents
 
-1. [What it actually does](#what-it-actually-does)
+1. [What it does](#what-it-does)
 2. [How recommendations and learning work](#how-recommendations-and-learning-work)
 3. [Tech stack (detailed)](#tech-stack-detailed)
 4. [Math and calculations](#math-and-calculations)
 5. [Configuration variables](#configuration-variables)
 6. [Runtime architecture](#runtime-architecture)
 7. [Product surfaces](#product-surfaces)
-8. [How we deal with the ugly parts](#how-we-deal-with-the-ugly-parts)
+8. [Operational constraints](#operational-constraints)
 9. [Repo map](#repo-map)
 10. [Run locally](#run-locally)
 11. [Security and liability](#security-and-liability)
@@ -25,25 +23,19 @@ If that line feels blunt, good. I would rather people understand the product tha
 
 ---
 
-## What it actually does
+## What it does
 
-1. **Boards**  
-   Pulls fixtures for soccer, basketball, and cricket. Prefer ESPN when it is up. Overlay Stake prices when a relay or browser path is warm. If both are thin, fall back to cached books or labeled model fair prices so open matches are never blank.
+1. **Boards** — Fixtures for soccer, basketball, and cricket (ESPN first). Stake prices overlay when a relay or browser path is warm; otherwise cached books or labeled model fair prices so open matches stay priced.
 
-2. **Strength**  
-   Team and player ratings from history, finished boards, and sport-specific fuel (club soccer, NBA/ABA, cricket formats). That feeds win probabilities across core markets: match result, totals, handicaps, and related lines.
+2. **Strength** — Team and player ratings from history and sport-specific fuel. Feeds win probabilities for match result, totals, handicaps, and related lines.
 
-3. **Prices**  
-   Compare model chance to a decimal price. Edge is calibrated model probability minus the vig-free book implied chance. Verdicts on tickets are plain language (back / caution / skip), not a black box score.
+3. **Prices** — Model chance vs decimal price. Edge is calibrated probability minus vig-free book implied chance. Ticket verdicts are plain language (back / caution / skip).
 
-4. **Slips**  
-   Build singles or multis yourself. Amounts are yours. Confirm-only journals work without connecting a book. Optional Stake API token import is for history sync, not auto-betting.
+4. **Slips** — Singles or multis you build. Confirm-only journals work without a book. Optional Stake API token import syncs history; it does not auto-bet.
 
-5. **Portfolio**  
-   Private journal per account: imported Stake history, confirmed slips, manual past bets. Settled matches update results. Optional opt-in for learning from your graded tickets.
+5. **Portfolio** — Private journal: imported Stake history, confirmed slips, manual past bets. Settled matches update results. Optional opt-in learning from graded tickets.
 
-6. **Model desk**  
-   Insight boxes across corpus, craft holdout ROI, hit rate, per-sport gates, equity / self-improvement curves, market depth, and factor counts. Craft paper aims at a hard bar (**25% overall ROI**, every sport above **0%**, hit rate at least **60%**). Until that bar clears, the desk says **Below target**. It does not pretend to be ready.
+6. **Model desk** — Holdout ROI, hit rate, per-sport gates, equity curves, market depth, factor counts. Craft bar: **25% overall ROI**, every sport above **0%**, hit rate at least **60%**. Until that clears, the desk says **Below target**.
 
 ---
 
@@ -331,25 +323,19 @@ Odds tab fallback order when Stake is blocked: **Stake overlay → fixture cache
 
 ---
 
-## How we deal with the ugly parts
+## Operational constraints
 
-**Cloudflare / Stake on cloud**  
-Datacenter IPs often get 403. Fallbacks keep the Odds tab priced and labeled.
+**Cloudflare / Stake on cloud** — Datacenter IPs often get 403. Fallbacks keep the Odds tab priced and labeled.
 
-**Free-tier memory**  
-No full `build_model_insights` on the request path. Factors do not rebuild on HTTP. Bundled catalogs and learning fragments ship in the image.
+**Free-tier memory** — No full `build_model_insights` on the request path. Factors do not rebuild on HTTP. Bundled catalogs and learning fragments ship in the image.
 
-**Cold boards**  
-Keep cached priced fixtures when ESPN disk is empty. Demo boards are labeled.
+**Cold boards** — Cached priced fixtures when ESPN disk is empty. Demo boards are labeled.
 
-**Soccer craft `n=0`**  
-Paired soccer closes are synthetic ~1.91. The old 1.30–1.50 “favorite” sampler was empty. High-`model_p` even-money sampling restored soccer tickets and green sport ROI.
+**Soccer craft `n=0`** — Paired soccer closes use synthetic ~1.91 even-money sampling with a high `model_p` floor so the sport can place holdout tickets.
 
-**Client Desk v10 stickiness**  
-24h localStorage returned without revalidate. Cache key is now `gambit_insights_v15` and rejects older `cache_version`.
+**Client insights cache** — Cache key `gambit_insights_v16` rejects older `cache_version` payloads.
 
-**Honesty**  
-Below target means below target. Red craft holdout is not painted green without a note.
+**Honesty** — Below target means below target. Red craft holdout is not painted green without a note.
 
 ---
 

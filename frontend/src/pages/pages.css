@@ -4529,11 +4529,12 @@
 }
 .gambit-word {
   font-family: var(--font-brand, 'Chakra Petch', sans-serif);
-  font-weight: 700;
+  font-weight: 800;
   font-size: 1.1rem;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #fff;
+  color: var(--brand-word, #fff);
+  text-shadow: var(--brand-word-shadow, none);
   line-height: 1;
 }
 

@@ -97,22 +97,6 @@ export function IconRefresh(props) {
   )
 }
 
-export function IconCheck(props) {
-  return (
-    <svg {...base} {...props}>
-      <path d="M20 6L9 17l-5-5" />
-    </svg>
-  )
-}
-
-export function IconX(props) {
-  return (
-    <svg {...base} {...props}>
-      <path d="M18 6L6 18M6 6l12 12" />
-    </svg>
-  )
-}
-
 const NAV_ICONS = {
   matches: IconMatches,
   model: IconModel,

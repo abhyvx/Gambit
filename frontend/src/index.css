@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Outfit:wght@500;600;700&family=Syne:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Outfit:wght@500;600;700&family=Syne:wght@600;700;800&display=swap');
 @import './pages/pages.css';
 
 /* Stake-inspired sportsbook theme */
@@ -37,6 +37,9 @@
   --brand: #1475e1;
   --brand-2: #3a8ff0;
   --brand-ink: #ffffff;
+  /* Wordmark: white on dark, near-black on light — matches mark weight */
+  --brand-word: #ffffff;
+  --brand-word-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
   --grad-brand: linear-gradient(135deg, #1475e1, #1f8fff);
   --brand-glow: rgba(20, 117, 225, 0.22);
   --brand-glow-soft: rgba(20, 117, 225, 0.1);
@@ -141,6 +144,8 @@ html[data-theme="light"] {
   --brand: #0d62c4;
   --brand-2: #0b57b0;
   --brand-ink: #ffffff;
+  --brand-word: #0a1218;
+  --brand-word-shadow: 0 1px 0 rgba(255, 255, 255, 0.85);
   --grad-brand: linear-gradient(135deg, #0d62c4, #2a7de0);
   --brand-glow: rgba(13, 98, 196, 0.16);
   --brand-glow-soft: rgba(13, 98, 196, 0.08);

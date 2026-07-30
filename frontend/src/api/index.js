@@ -41,19 +41,6 @@ export async function checkHealth() {
   return r.json()
 }
 
-export async function fetchCategories() {
-  const r = await fetch(`${API}/categories`)
-  return r.json()
-}
-
-export async function fetchSports(category = null, featured = false) {
-  const params = new URLSearchParams()
-  if (category) params.set('category', category)
-  if (featured) params.set('featured', 'true')
-  const r = await fetch(`${API}/sports?${params}`)
-  return r.json()
-}
-
 const _marketTopCache = new Map()
 const MARKET_TOP_TTL_MS = 90_000
 
@@ -216,21 +203,6 @@ export async function fetchHitTarget({
   if (!r.ok) {
     const detail = await r.text().catch(() => '')
     throw new Error(detail?.slice(0, 120) || `Hit target failed (${r.status})`)
-  }
-  return r.json()
-}
-
-export async function refreshStakeOverlay() {
-  const r = await fetch(`${API}/stake/refresh`, { method: 'POST', signal: AbortSignal.timeout(90000) })
-  if (!r.ok) throw new Error(`Stake refresh failed (${r.status})`)
-  return r.json()
-}
-
-export async function connectStakeSession() {
-  const r = await fetch(`${API}/stake/connect`, { method: 'POST', signal: AbortSignal.timeout(300000) })
-  if (!r.ok) {
-    const raw = await r.text().catch(() => '')
-    throw new Error(raw?.slice(0, 160) || `Stake connect failed (${r.status})`)
   }
   return r.json()
 }
@@ -528,33 +500,6 @@ export async function fetchStakeOdds({ home, away, budgetInr = 200 } = {}) {
   return r.json()
 }
 
-export async function fetchModelReport({ retrain = false } = {}) {
-  const params = new URLSearchParams({ retrain: String(retrain) })
-  const timeout = retrain ? 300000 : 20000
-  const r = await fetch(`${API}/model/report?${params}`, { signal: AbortSignal.timeout(timeout) })
-  if (!r.ok) throw new Error(`Model report failed (${r.status})`)
-  return r.json()
-}
-
-export async function fetchModelScorecard({ refresh = false } = {}) {
-  const params = new URLSearchParams({ refresh: String(refresh) })
-  const r = await fetch(`${API}/model/scorecard?${params}`, { signal: AbortSignal.timeout(30000) })
-  if (!r.ok) throw new Error(`Model scorecard failed (${r.status})`)
-  return r.json()
-}
-
-export async function fetchModelActivity(limit = 40) {
-  const r = await fetch(`${API}/model/activity?limit=${limit}`, { signal: AbortSignal.timeout(15000) })
-  if (!r.ok) throw new Error(`Activity log failed (${r.status})`)
-  return r.json()
-}
-
-export async function fetchPaperBook() {
-  const r = await fetch(`${API}/model/paper`, { signal: AbortSignal.timeout(15000) })
-  if (!r.ok) throw new Error(`Paper book failed (${r.status})`)
-  return r.json()
-}
-
 const _insightsCache = { ts: 0, data: null }
 const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
 // Bump key whenever desk schema/version meaning changes so stale localStorage
@@ -665,37 +610,6 @@ export async function trainModelDesk({
   return r.json()
 }
 
-export async function runPaperCycle({
-  trainWalkforward = true,
-  placeLive = true,
-  bankroll = 10000,
-  matchBudget = 200,
-  maxGames = 60,
-  untilRoi = false,
-  targetRoi = 0.25,
-  targetAcc = 0.55,
-  maxEpochs = 0, // 0 = unlimited until targets hit
-} = {}) {
-  const params = new URLSearchParams({
-    train_walkforward: String(trainWalkforward),
-    place_live: String(placeLive),
-    bankroll: String(bankroll),
-    match_budget: String(matchBudget),
-    max_games: String(maxGames),
-    until_roi: String(untilRoi),
-    target_roi: String(targetRoi),
-    target_acc: String(targetAcc),
-    max_epochs: String(maxEpochs),
-  })
-  const r = await fetch(`${API}/model/paper/cycle?${params}`, {
-    method: 'POST',
-    // Unlimited craft can run a long time — keep the request alive
-    signal: AbortSignal.timeout(untilRoi ? 7_200_000 : 300000),
-  })
-  if (!r.ok) throw new Error(`Paper cycle failed (${r.status})`)
-  return r.json()
-}
-
 export async function fetchAnalysis({
   sport,
   match,
@@ -718,11 +632,5 @@ export async function fetchAnalysis({
   if (targetCashoutInr != null) params.set('target_cashout_inr', String(targetCashoutInr))
   const r = await fetch(`${API}/analyze?${params}`, { signal: AbortSignal.timeout(60000) })
   if (!r.ok) throw new Error(`Analysis failed (${r.status})`)
-  return r.json()
-}
-
-export async function fetchBettorStyleCatalog() {
-  const r = await fetch(`${API}/bettor-style`, { signal: AbortSignal.timeout(10000) })
-  if (!r.ok) throw new Error(`Style catalog failed (${r.status})`)
   return r.json()
 }

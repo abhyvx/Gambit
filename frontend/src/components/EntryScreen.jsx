@@ -37,8 +37,6 @@ export function markEntryFromLanding() {
   try { sessionStorage.setItem(PLAY_FLAG, '1') } catch { /* ignore */ }
 }
 
-export function requestEntryReplay(_reason = 'nav') {}
-
 function isHardRefresh() {
   try {
     const nav = performance.getEntriesByType?.('navigation')?.[0]

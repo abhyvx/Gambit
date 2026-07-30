@@ -777,8 +777,9 @@ def _leg_axis_readings(leg: dict, home: str, away: str) -> dict[str, str]:
     for part in _expand_pick(leg, home, away):
         axis, direction = _axis_dir(part, home, away)
         if axis in ("goals", "btts", "result", "corners", "cards") and direction not in ("-", ""):
-            if axis == "result" and direction in ("draw", "nodraw"):
-                continue
+        if axis == "result" and direction in ("nodraw",):
+            continue
+            # Keep "draw" visible so plans that back Draw fight a home/away thesis
             readings[axis] = direction
     return readings
 
@@ -872,6 +873,10 @@ def plan_fights_match_thesis(
     for leg in plan.get("legs") or []:
         m = (leg.get("market") or "").lower()
         lbl = (leg.get("label") or "").lower()
+        sel = (leg.get("selection") or "").lower()
+        # Outright Draw fights a home/away lean
+        if m == "match_winner" and (sel == "draw" or lbl.strip() in ("draw", "x")):
+            return True
         if m in ("match_winner", "draw_no_bet", "asian_handicap", "half_time", "double_chance"):
             probe = type("O", (), {
                 "market": m, "selection": leg.get("selection"), "label": leg.get("label"),

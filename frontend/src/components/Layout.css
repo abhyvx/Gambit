@@ -608,9 +608,31 @@
   gap: 8px;
 }
 .slip-ticket-odds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   font-family: var(--mono);
   font-weight: 700;
+  color: var(--text);
+}
+.slip-odds-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.slip-odds-pair strong {
+  color: var(--text);
+}
+.slip-odds-pair .green {
   color: var(--green, #5dae80);
+}
+.slip-multi-odds-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
 }
 .slip-ticket-stake-row {
   display: grid;

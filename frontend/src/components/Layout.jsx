@@ -216,7 +216,14 @@ export default function Layout() {
                           {leg.home}{leg.away ? ` vs ${leg.away}` : ''}
                         </div>
                         <div className="slip-ticket-odds">
-                          <span>{Number(leg.odds) > 1 ? `${Number(leg.odds).toFixed(2)}×` : '-'}</span>
+                          <div className="slip-odds-pair">
+                            <span className="slip-amount-label">Odds</span>
+                            <strong>{Number(leg.odds) > 1 ? Number(leg.odds).toFixed(2) : '-'}</strong>
+                          </div>
+                          <div className="slip-odds-pair">
+                            <span className="slip-amount-label">Pays</span>
+                            <strong className="green">{Number(leg.odds) > 1 ? `${Number(leg.odds).toFixed(2)}×` : '-'}</strong>
+                          </div>
                         </div>
                         <div className="slip-ticket-stake-row">
                           <label className="slip-amount">
@@ -260,7 +267,10 @@ export default function Layout() {
                       <article className="slip-ticket slip-ticket--multi">
                         <div className="slip-ticket-top">
                           <span className="slip-ticket-kind">{slipMode === 'sgm' ? 'SGM' : 'Multi'}</span>
-                          <span className="green">{slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '-'}</span>
+                          <span className="slip-multi-odds-pair">
+                            <span className="muted">Odds {slipOdds != null ? Number(slipOdds).toFixed(2) : '-'}</span>
+                            <span className="green">Pays {slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '-'}</span>
+                          </span>
                         </div>
                         <ul className="slip-ticket-legs">
                           {(slipSingles || []).map((leg) => (

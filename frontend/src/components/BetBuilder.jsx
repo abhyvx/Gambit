@@ -532,7 +532,10 @@ export default function BetBuilder({ home, away, budget, sport }) {
                         </div>
                         <div className="slip-leg-sub">
                           {SHOW_BADGE.has(p.verdict?.tier) && <span className={`chip-tag ${TONE_CLASS[p.verdict?.tone]}`}>{p.verdict?.icon} {p.verdict?.label}</span>}
-                          <span className="slip-leg-odds">{p.odds}x</span>
+                          <span className="slip-leg-odds">
+                            <span className="muted">Odds {p.odds}</span>
+                            <span className="green">Pays {p.odds}×</span>
+                          </span>
                         </div>
                         <div className="slip-leg-stake">
                           <label>Bet ₹</label>
@@ -555,7 +558,10 @@ export default function BetBuilder({ home, away, budget, sport }) {
                         <div key={keyOf(p)} className="builder-pick">
                           {SHOW_BADGE.has(p.verdict?.tier) && <span className="bp-verdict">{p.verdict?.icon}</span>}
                           <span className="bp-label">{p.label}</span>
-                          <span className="bp-odds">{p.odds}x</span>
+                          <span className="bp-odds">
+                            <span className="muted">{p.odds}</span>
+                            <span className="green"> · {p.odds}×</span>
+                          </span>
                           <button className="bp-remove" onClick={() => toggle(p)} aria-label="Remove">×</button>
                         </div>
                       ))}
@@ -565,7 +571,14 @@ export default function BetBuilder({ home, away, budget, sport }) {
                       <input type="number" min="10" step="10" value={multiStake} onChange={(e) => setMultiStake(e.target.value)} />
                     </div>
                     <div className="slip-totals">
-                      <div><span>Combined odds</span><strong>{combinedOdds.toFixed(2)}x</strong></div>
+                      <div>
+                        <span>Combined odds</span>
+                        <strong>{combinedOdds.toFixed(2)}</strong>
+                      </div>
+                      <div>
+                        <span>Pays</span>
+                        <strong className="green">{combinedOdds.toFixed(2)}×</strong>
+                      </div>
                       <div><span>Chance all {picks.length} win</span><strong>{combinedChance != null ? `${Math.round(combinedChance * 100)}%` : 'n/a'}</strong></div>
                       <div><span>Back if it hits</span><strong className="green">{formatINR(Math.round(multiReturn))}</strong></div>
                     </div>

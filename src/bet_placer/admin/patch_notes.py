@@ -11,6 +11,24 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v20",
+        "cycle": "thesis-odds-admin",
+        "at": "2026-07-30",
+        "title": "No Draw vs home lean; Odds+Pays on slip; Admin craft zeros",
+        "fixed": [
+            "Target paths could recommend match_winner Draw while the lean was home",
+            "Bet slip showed only a bare Nx figure that looked like a payout multiplier",
+            "Admin model/craft debug showed trained_on 0, ROI 0, and epoch vs total mismatch",
+            "paper_craft activity spam with 0 settled / PnL ₹0",
+        ],
+        "changes": [
+            "Thesis filter hard-rejects Draw (and soft-restore of anti-thesis plans)",
+            "Slip/Build show Odds and Pays Nx separately; payout ₹ stays when amount is set",
+            "Admin craft uses n_epochs + best/champion/holdout ROI; corpus falls back to insights cache",
+            "Empty paper_craft bookkeeping no longer fills the activity log",
+        ],
+    },
+    {
         "version": "v19",
         "cycle": "odds-crash-recs-data",
         "at": "2026-07-30",

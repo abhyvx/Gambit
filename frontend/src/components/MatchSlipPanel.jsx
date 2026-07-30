@@ -343,6 +343,29 @@ function rejectAntiThesisPlan(plan, home, away) {
   // Only drop clear both-sides / correct-score nonsense — not every away pick
   if (blob.includes(`${h}/${a}`) || blob.includes(`${a}/${h}`)) return true
   if (blob.includes(`${h} to win`) && blob.includes(`${a} to win`) && !blob.includes('double')) return true
+
+  // If the slip's own lean is home/away, drop outright Draw winner legs
+  const thesis = String(plan?.path_thesis || plan?.thesis || plan?.result_dir || '').toLowerCase()
+  const legs = plan?.legs || []
+  const hasDrawWinner = legs.some((leg) => {
+    const m = String(leg?.market || '').toLowerCase()
+    const sel = String(leg?.selection || '').toLowerCase()
+    const lbl = String(leg?.label || '').toLowerCase()
+    return m === 'match_winner' && (sel === 'draw' || /\bdraw\b/.test(lbl))
+  })
+  if (hasDrawWinner && (thesis === 'home' || thesis === 'away' || blob.includes('home lean') || blob.includes('away lean'))) {
+    return true
+  }
+  // Also: if plan mixes a home/away winner lean text with draw winner
+  if (hasDrawWinner && (blob.includes(`${h} win`) || blob.includes(`${a} win`) || blob.includes('to win'))) {
+    // only reject when another leg is an H/A match_winner
+    const hasSideWinner = legs.some((leg) => {
+      const m = String(leg?.market || '').toLowerCase()
+      const sel = String(leg?.selection || '').toLowerCase()
+      return m === 'match_winner' && (sel === 'home' || sel === 'away')
+    })
+    if (hasSideWinner) return true
+  }
   return false
 }
 
@@ -432,9 +455,18 @@ function resolveCuratedPicks(slip, home = '', away = '') {
   }
 
   const filtered = picks.filter(Boolean).filter((p) => !rejectGarbageCombo(p) && !rejectAntiThesisPlan(p, home, away))
-  // ponytail: if filters wipe the desk, show unfiltered core plans rather than "No clean edge"
-  const out = filtered.length ? filtered : picks.filter(Boolean)
-  return sortPathsForDropdown(out)
+  // Prefer filtered coherent paths; only fall back to non-draw core singles if wiped
+  if (filtered.length) return sortPathsForDropdown(filtered)
+  const fallback = picks.filter(Boolean).filter((p) => {
+    if (rejectGarbageCombo(p)) return false
+    const legs = p?.legs || []
+    return !legs.some((leg) => {
+      const m = String(leg?.market || '').toLowerCase()
+      const sel = String(leg?.selection || '').toLowerCase()
+      return m === 'match_winner' && sel === 'draw'
+    })
+  })
+  return sortPathsForDropdown(fallback.length ? fallback : picks.filter(Boolean).slice(0, 1))
 }
 
 function annotatePlan(plan, label, typeLabel) {

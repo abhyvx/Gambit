@@ -572,10 +572,14 @@ def build_portfolios(
         if not filtered and thesis:
             filtered = filter_plans_by_thesis(original, None, thesis, home, away)
         if filtered:
-            strategy_plans[tab] = [
+            # Never soft-restore plans that fight the match lean (e.g. Draw vs home)
+            clean = [
                 p for p in filtered
                 if not plan_fights_match_thesis(p, thesis, home, away)
-            ] or filtered
+            ]
+            strategy_plans[tab] = clean if clean else (
+                [anchor] if anchor and tab == "match_card" else []
+            )
         elif anchor and tab == "match_card":
             strategy_plans[tab] = [anchor]
         elif original:
@@ -2774,7 +2778,7 @@ def _profile_bonus(o, profile: dict) -> float:
         if m == "draw_no_bet":
             b += 9
         if m == "match_winner" and sel == "draw":
-            b += 5
+            b -= 8  # don't boost Draw against a sided lean
     elif style == "chaotic":
         if m == "corners" and sel == "over":
             b += 9

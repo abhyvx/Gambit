@@ -346,12 +346,18 @@ def _aligns_thesis(opt, thesis: str | None, home: str, away: str) -> bool:
             if player_on_squad(opp_team, pick_name) and not player_on_squad(fav_team, pick_name):
                 return False
         if m in ("match_winner", "draw_no_bet", "asian_handicap", "half_time"):
-            return side in (thesis, None)
+            # Never pair a home/away lean with an outright Draw (or wrong side)
+            if side == "draw":
+                return False
+            return side == thesis
         if m == "double_chance":
             lbl = (opt.label or "").lower()
             fav = home.lower() if thesis == "home" else away.lower()
             opp = away.lower() if thesis == "home" else home.lower()
             if opp in lbl and fav not in lbl:
+                return False
+            # "Draw or Away" fights a home lean
+            if side == "draw":
                 return False
             return side in (thesis, None)
         return True
@@ -1557,7 +1563,7 @@ def _favorite_side(pool: list, home: str, away: str) -> str | None:
         side = _option_result_side(opt, home, away)
         if side in ("home", "away") and p > best_p:
             best_p, best_side = p, side
-    return best_side if best_p >= 0.52 else None
+    return best_side if best_p >= 0.50 else None
 
 
 def build_target_match_slips(

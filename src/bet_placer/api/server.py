@@ -759,26 +759,103 @@ def admin_accounts(request: Request):
     params = load_params(force=False) or {}
     craft = {}
     try:
-        snap = progress_snapshot(limit_epochs=8) or {}
+        snap = progress_snapshot(limit_epochs=40) or {}
+        ts = dict(snap.get("train_status") or {})
+        best = dict(snap.get("best") or {})
+        champ = dict(snap.get("champion") or {})
+        latest = dict(snap.get("latest") or {})
+        # Prefer real holdout/champion ROI over empty-epoch 0
+        display_roi = None
+        for src in (
+            ts.get("holdout_roi") if int(ts.get("bets") or 0) > 0 else None,
+            best.get("roi"),
+            champ.get("roi"),
+            ts.get("champion_roi"),
+            latest.get("roi") if int(latest.get("bets") or 0) > 0 else None,
+        ):
+            try:
+                if src is not None and float(src) != 0:
+                    display_roi = float(src)
+                    break
+            except (TypeError, ValueError):
+                continue
+        if display_roi is None:
+            for src in (best.get("roi"), champ.get("roi"), ts.get("holdout_roi"), latest.get("roi")):
+                try:
+                    if src is not None:
+                        display_roi = float(src)
+                        break
+                except (TypeError, ValueError):
+                    continue
+        display_acc = (
+            (ts.get("holdout_accuracy") if int(ts.get("bets") or 0) > 0 else None)
+            or best.get("accuracy")
+            or champ.get("accuracy")
+            or (latest.get("accuracy") if int(latest.get("bets") or 0) > 0 else None)
+        )
+        n_epochs = int(snap.get("n_epochs") or ts.get("epoch") or 0)
+        if not n_epochs:
+            epochs_raw = snap.get("epochs")
+            n_epochs = len(epochs_raw) if isinstance(epochs_raw, list) else int(epochs_raw or 0)
         craft = {
-            "train_status": snap.get("train_status") or {},
-            "best": {
-                k: (snap.get("best") or {}).get(k)
-                for k in ("roi", "accuracy", "bets", "at")
-            },
-            "champion": {
-                k: (snap.get("champion") or {}).get(k)
-                for k in ("roi", "accuracy", "bets", "at")
-            },
+            "train_status": ts,
+            "best": {k: best.get(k) for k in ("roi", "accuracy", "bets", "at")},
+            "champion": {k: champ.get(k) for k in ("roi", "accuracy", "bets", "at")},
             "latest": {
-                k: (snap.get("latest") or {}).get(k)
-                for k in ("epoch", "roi", "accuracy", "bets")
+                "epoch": latest.get("epoch") or ts.get("epoch"),
+                "roi": display_roi if display_roi is not None else latest.get("roi"),
+                "accuracy": display_acc if display_acc is not None else latest.get("accuracy"),
+                "bets": latest.get("bets") or best.get("bets") or ts.get("bets"),
             },
-            "epochs": snap.get("epochs") if isinstance(snap.get("epochs"), (int, float)) else len(snap.get("epochs") or []),
+            "epochs": n_epochs,
             "blocks": len(snap.get("blocks") or []),
+            "display_roi": display_roi,
+            "display_accuracy": display_acc,
         }
     except Exception as exc:
         craft = {"error": str(exc)[:160]}
+    # Corpus fallbacks from insights cache when params stub is empty on Render
+    report = params.get("report") if isinstance(params.get("report"), dict) else {}
+    trained_history = int(
+        params.get("trained_on_history")
+        or report.get("trained_on_history")
+        or params.get("trained_on")
+        or 0
+    )
+    sport_history = (
+        params.get("trained_on_sport_history")
+        or report.get("trained_on_sport_history")
+        or {}
+    )
+    updated_at = params.get("updated_at") or report.get("updated_at")
+    if trained_history <= 0:
+        try:
+            from bet_placer.ml.model_insights import load_insights_cache
+
+            desk = load_insights_cache() or {}
+            trained_history = int(desk.get("total_corpus") or 0)
+            if not sport_history:
+                sports = desk.get("sports") or {}
+                sport_history = {
+                    sp: int((sports.get(sp) or {}).get("history_n") or (sports.get(sp) or {}).get("corpus") or 0)
+                    for sp in ("soccer", "basketball", "cricket")
+                    if isinstance(sports.get(sp), dict)
+                }
+            updated_at = updated_at or desk.get("updated_at") or (desk.get("craft") or {}).get("updated_at")
+            # Lift craft ROI from desk when snapshot latest is empty
+            if craft.get("display_roi") in (None, 0, 0.0):
+                dc = desk.get("craft") or {}
+                for k in ("best_roi", "champion_roi", "holdout_roi"):
+                    try:
+                        v = float(dc[k]) if dc.get(k) is not None else None
+                    except (TypeError, ValueError, KeyError):
+                        v = None
+                    if v is not None and v != 0:
+                        craft["display_roi"] = v
+                        craft.setdefault("latest", {})["roi"] = v
+                        break
+        except Exception:
+            pass
     bundle_file = bundle_path()
     port_n = 0
     try:
@@ -792,18 +869,6 @@ def admin_accounts(request: Request):
     # When DB-backed portfolios aren't on disk, count accounts that already have bets
     if port_n <= 0:
         port_n = sum(1 for row in accounts if int(row.get("bet_count") or 0) > 0)
-    report = params.get("report") if isinstance(params.get("report"), dict) else {}
-    trained_history = int(
-        params.get("trained_on_history")
-        or report.get("trained_on_history")
-        or params.get("trained_on")
-        or 0
-    )
-    sport_history = (
-        params.get("trained_on_sport_history")
-        or report.get("trained_on_sport_history")
-        or {}
-    )
     return {
         "accounts": accounts,
         "odds_link": relay_heartbeat(),
@@ -838,7 +903,7 @@ def admin_accounts(request: Request):
                 "trained_on_history": trained_history,
                 "trained_on_sport_history": sport_history,
                 "trained_on_boards": params.get("trained_on_boards") or report.get("trained_on_boards") or {},
-                "updated_at": params.get("updated_at") or report.get("updated_at"),
+                "updated_at": updated_at,
                 "activity_log": get_activity_log(limit=12),
             },
             "craft": craft,
@@ -1636,6 +1701,22 @@ def _market_leans(match, analysis, bankroll: float, limit: int = 2) -> list[dict
         label, market_name = _human_pick(match, market, p.selection, p.line)
         book_pct = round((1 / odds.best_odds) * 100)
         model_pct = round(p.probability * 100)
+        edge_pts = model_pct - book_pct
+        if edge_pts >= 1:
+            lean_copy = (
+                f"Lean @ odds {odds.best_odds:.2f} — model {model_pct}% vs book ~{book_pct}% "
+                f"(+{edge_pts} pts). Still size small."
+            )
+        elif edge_pts <= -3:
+            lean_copy = (
+                f"Model likes this side ({model_pct}%) but the book price is tighter (~{book_pct}% at "
+                f"odds {odds.best_odds:.2f}). Not a clear edge — lean only."
+            )
+        else:
+            lean_copy = (
+                f"Soft lean @ odds {odds.best_odds:.2f} — model {model_pct}% ≈ book ~{book_pct}%. "
+                "No clear edge."
+            )
         leans.append(_annotate_pick({
             "match_id": match.id,
             "match_label": f"{match.home_team} vs {match.away_team}",
@@ -1650,12 +1731,9 @@ def _market_leans(match, analysis, bankroll: float, limit: int = 2) -> list[dict
             "true_probability": p.probability,
             "expected_value": ev,
             "confidence": p.confidence,
-            "rank_score": p.probability + (0.08 if market == "match_winner" else 0),
+            "rank_score": p.probability + (0.08 if market == "match_winner" else 0) + max(0, ev) * 0.5,
             "is_lean": True,
-            "explanation": (
-                f"Best lean @ {odds.best_odds:.2f} — model {model_pct}% vs book ~{book_pct}%. "
-                "Not a clear edge."
-            ),
+            "explanation": lean_copy,
             "stake_recommendation": {
                 "recommended_stake": rec.recommended_stake,
                 "recommended_pct": rec.recommended_pct,

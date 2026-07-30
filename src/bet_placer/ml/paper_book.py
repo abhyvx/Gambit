@@ -404,6 +404,9 @@ def apply_paper_learning(params: dict | None = None, book: dict | None = None) -
         params["rec_learning"] = rec
 
     save_params(params)
+    # Don't spam admin activity with empty live-board bookkeeping
+    if int(summary.get("settled") or 0) <= 0 and not weights and not sw:
+        return params
     log_activity(
         "paper_craft",
         (

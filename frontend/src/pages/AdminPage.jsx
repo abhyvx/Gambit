@@ -350,10 +350,19 @@ export default function AdminPage() {
             <ul className="admin-debug-list">
               <li><span>State</span><strong>{craft.train_status?.state || 'n/a'}</strong></li>
               <li><span>Epoch</span><strong>{craft.train_status?.epoch ?? craft.latest?.epoch ?? '—'}</strong></li>
-              <li><span>Latest ROI</span><strong>{craft.latest?.roi ?? '—'}</strong></li>
-              <li><span>Latest accuracy</span><strong>{craft.latest?.accuracy ?? '—'}</strong></li>
+              <li>
+                <span>Desk ROI</span>
+                <strong>{craft.display_roi ?? craft.latest?.roi ?? craft.best?.roi ?? '—'}</strong>
+              </li>
+              <li>
+                <span>Desk accuracy</span>
+                <strong>{craft.display_accuracy ?? craft.latest?.accuracy ?? craft.best?.accuracy ?? '—'}</strong>
+              </li>
               <li><span>Total epochs</span><strong>{Array.isArray(craft.epochs) ? craft.epochs.length : (craft.epochs ?? 0)}</strong></li>
               <li><span>Craft blocks</span><strong>{Array.isArray(craft.blocks) ? craft.blocks.length : (craft.blocks ?? 0)}</strong></li>
+              {craft.best?.roi != null && (
+                <li><span>Best ROI</span><strong>{craft.best.roi}</strong></li>
+              )}
               {craft.error ? <li><span>Craft debug</span><strong>{craft.error}</strong></li> : null}
             </ul>
           </article>

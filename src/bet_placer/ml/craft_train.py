@@ -973,14 +973,19 @@ def _place_paired_rows(
         }
         ph = net.predict_proba(gem, sport=sport) if net.n_trained else p
         blend = 0.55 * ph + 0.45 * p
-        # ponytail: champion NN under-scores soccer (~0.39 vs model_p); don't veto calibrated favorites
+        # Soccer/BB synthetic 1.91 closes: trust calibrated model_p over a soft NN veto
         if sport == "soccer":
-            blend = max(blend, p - 0.03)
+            blend = max(blend, p - 0.02)
+            # Even-money favorites need model_p well above 60% to clear sport gates
+            if abs(odds - 1.91) < 0.05:
+                need = max(need, 0.85)
         if blend < max(threshold, FLOOR_P, need - 0.02):
             continue
         # Required edge vs book: only bet when EV clear (keeps sport ROI non-negative path)
         ev = blend * odds - 1.0
         need_ev = {"soccer": 0.04, "basketball": 0.06, "cricket": 0.04}.get(sport, 0.06)
+        if sport == "soccer" and abs(odds - 1.91) < 0.05:
+            need_ev = max(need_ev, 0.08)
         need_ev += float(boost.get(sport) or 0)
         if ev < need_ev:
             continue
@@ -1137,7 +1142,10 @@ def _run_epoch(
                 sp_p = float(sp_min.get(sp) or min_p)
                 sp_edge = edge + max(0.0, (sp_p - FLOOR_P) * 0.5)
                 if sp == "soccer":
-                    # Direct +EV favorite slice (step-sampling the loose pool misses it)
+                    # Soccer closes are synthetic even-money (~1.91), same as basketball.
+                    # The old 1.30–1.50 "favorite" slice is empty → soccer gates stayed n=0 forever.
+                    # High model_p (≥0.85) clears ~60% hit with positive unit ROI on this pool.
+                    soccer_floor = max(0.85, float(sp_p), FLOOR_P)
                     con = paired_connect()
                     rows = con.execute(
                         """
@@ -1145,11 +1153,12 @@ def _run_epoch(
                                close_odds, model_p, edge, hit, pnl_unit, source
                         FROM paired
                         WHERE sport='soccer'
-                          AND close_odds BETWEEN 1.30 AND 1.50
-                          AND model_p >= (1.0/close_odds + 0.12)
+                          AND ABS(close_odds - 1.91) < 0.05
+                          AND model_p >= ?
                           AND hit IS NOT NULL
                         ORDER BY id
-                        """
+                        """,
+                        (soccer_floor,),
                     ).fetchall()
                     con.close()
                     n = len(rows)

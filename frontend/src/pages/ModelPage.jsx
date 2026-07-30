@@ -890,6 +890,9 @@ export default function ModelPage() {
   const containers = ins?.containers || []
   const craft = ins?.craft || {}
 
+  const deskRev = ins?.desk_revision || {}
+  const deskVer = Number(ins?.cache_version || deskRev.version || 0)
+
   return (
     <div className="page model-page insight-page">
       {deskLoading && !containers.length && (
@@ -898,6 +901,24 @@ export default function ModelPage() {
           <span>Loading desk…</span>
         </div>
       )}
+      <div className="model-desk-revision fade-up" role="status">
+        <div className="model-desk-revision-lockup">
+          <span className="model-desk-brand">Gambit</span>
+          <span className="model-desk-revision-divider" aria-hidden="true" />
+          <span className="model-desk-revision-label">
+            {deskRev.label || `Desk v${deskVer || '—'}`}
+          </span>
+        </div>
+        <ul className="model-desk-revision-notes">
+          {(deskRev.notes || [
+            'Glossary under Holdout ROI / hit rate / desk gate',
+            'Desk gate shows Below target / Hit — never a fake Training spinner',
+            'Self-improvement curve is best-so-far ROI across graded blocks',
+          ]).map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </div>
       <header className="page-header">
         <div>
           <h1>Model</h1>

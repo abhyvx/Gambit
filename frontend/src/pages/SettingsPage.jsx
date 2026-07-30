@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import {
   disconnectPortfolioSession,
   authDeleteAccount,
@@ -14,6 +15,7 @@ import './pages.css'
 export default function SettingsPage() {
   useEntryReady()
   const { user, openAuth, logout } = useAuth()
+  const { theme, setTheme, isLight } = useTheme()
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [stakeToken, setStakeToken] = useState('')
@@ -136,6 +138,30 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="panel">
+        <h2 className="panel-title">Appearance</h2>
+        <p className="panel-desc">Dark is the default. Light mode uses the same layout with a brighter palette.</p>
+        <div className="theme-choice-row" role="group" aria-label="Color theme">
+          <button
+            type="button"
+            className={`theme-choice ${!isLight ? 'is-active' : ''}`}
+            aria-pressed={!isLight}
+            onClick={() => setTheme('dark')}
+          >
+            Dark
+          </button>
+          <button
+            type="button"
+            className={`theme-choice ${isLight ? 'is-active' : ''}`}
+            aria-pressed={isLight}
+            onClick={() => setTheme('light')}
+          >
+            Light
+          </button>
+        </div>
+        <p className="muted">Current: {theme}</p>
       </section>
 
       <section className="panel">

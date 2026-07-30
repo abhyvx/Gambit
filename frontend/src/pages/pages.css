@@ -5524,6 +5524,29 @@
   font: inherit;
 }
 
+.theme-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0.35rem;
+}
+.theme-choice {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: var(--r-md);
+  padding: 0.55rem 1rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.theme-choice:hover { color: var(--text); border-color: var(--border-strong); }
+.theme-choice.is-active {
+  color: var(--brand-ink);
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
 .admin-nav {
   display: flex;
   flex-wrap: wrap;

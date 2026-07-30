@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { checkHealth } from '../api/index'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import AgeGate from './AgeGate'
 import EntryScreen from './EntryScreen'
 import GambitLogo from './GambitLogo'
@@ -52,6 +53,7 @@ export default function Layout() {
   const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
   const { user, openAuth, logout } = useAuth()
+  const { theme, toggleTheme, isLight } = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
   const navigate = useNavigate()
@@ -107,6 +109,17 @@ export default function Layout() {
           </Link>
 
           <div className="top-dash-user">
+            <button
+              type="button"
+              className={`user-chip theme-toggle-chip ${isLight ? 'is-light' : 'is-dark'}`}
+              onClick={toggleTheme}
+              aria-pressed={isLight}
+              aria-label={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+              title={isLight ? 'Dark mode' : 'Light mode'}
+            >
+              <small>Theme</small>
+              <strong>{theme === 'light' ? 'Light' : 'Dark'}</strong>
+            </button>
             <div className={`user-chip ${online ? 'is-on' : 'is-off'}`}>
               <small>API</small>
               <strong>{online ? 'Live' : 'Down'}</strong>

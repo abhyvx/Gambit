@@ -13,33 +13,36 @@ import AdminUsersPage from './pages/AdminUsersPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPages'
 import { BankrollProvider } from './context/BankrollContext'
 import { AuthProvider } from './context/AuthContext'
+import { ThemeProvider } from './context/ThemeContext'
 import './index.css'
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BankrollProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/app" element={<Layout />}>
-              <Route index element={<HomePage />} />
-              <Route path="sport/:sportId" element={<SportPage />} />
-              <Route path="worldcup" element={<WorldCupPage />} />
-              <Route path="model" element={<ModelPage />} />
-              <Route path="portfolio" element={<PortfolioPage />} />
-              <Route path="account" element={<SettingsPage />} />
-              <Route path="settings" element={<Navigate to="/app/account" replace />} />
-              <Route path="admin" element={<AdminPage />} />
-              <Route path="admin/users" element={<AdminUsersPage />} />
-              <Route path="legal/privacy" element={<PrivacyPage />} />
-              <Route path="legal/terms" element={<TermsPage />} />
-              <Route path="guide" element={<GuidePage />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </BankrollProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BankrollProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/app" element={<Layout />}>
+                <Route index element={<HomePage />} />
+                <Route path="sport/:sportId" element={<SportPage />} />
+                <Route path="worldcup" element={<WorldCupPage />} />
+                <Route path="model" element={<ModelPage />} />
+                <Route path="portfolio" element={<PortfolioPage />} />
+                <Route path="account" element={<SettingsPage />} />
+                <Route path="settings" element={<Navigate to="/app/account" replace />} />
+                <Route path="admin" element={<AdminPage />} />
+                <Route path="admin/users" element={<AdminUsersPage />} />
+                <Route path="legal/privacy" element={<PrivacyPage />} />
+                <Route path="legal/terms" element={<TermsPage />} />
+                <Route path="guide" element={<GuidePage />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </BankrollProvider>
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

@@ -432,6 +432,13 @@
   font: inherit;
   text-align: left;
 }
+.theme-toggle-chip {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.theme-toggle-chip.is-light strong { color: var(--blue-bright); }
+.theme-toggle-chip.is-dark strong { color: var(--text-muted); }
 .slip-fab {
   position: fixed;
   right: 18px;

@@ -494,6 +494,26 @@ def train_until_roi(
             target_acc=target_acc,
             match_budget=match_budget,
         )
+        # Desk containers must all be clean before we stop (no building / negative ROI)
+        desk_report: dict[str, Any] = {}
+        try:
+            from bet_placer.ml.model_insights import build_model_insights, save_insights_cache
+            from bet_placer.ml.desk_quality import desk_quality_report
+
+            desk = build_model_insights()
+            save_insights_cache(desk)
+            desk_report = desk_quality_report(desk)
+            gate_detail["desk"] = {
+                "ok": bool(desk_report.get("all_ok")),
+                "ok_count": desk_report.get("ok_count"),
+                "fail_count": desk_report.get("fail_count"),
+                "failures": list(desk_report.get("failures") or [])[:12],
+            }
+            if not desk_report.get("all_ok"):
+                cleared = False
+        except Exception as exc:
+            gate_detail["desk"] = {"ok": False, "error": str(exc)}
+            cleared = False
         # Overlay ledger so desk shows last-known soccer/BB even when they sat out
         for sp, row in sport_ledger.items():
             if int((by_sport.get(sp) or {}).get("n") or 0) > 0:

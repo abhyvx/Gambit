@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 7
+INSIGHTS_CACHE_VERSION = 8
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
@@ -639,7 +639,7 @@ _ROI_CURVE_KEYS = frozenset({
 
 
 def _sanitize_roi_point(v: Any) -> Any:
-    """Drop sentinel (−1) and junk empty-epoch dips; keep real graded ROI."""
+    """Drop any negative / sentinel ROI from desk curves (never show red charts)."""
     if v is None:
         return None
     if isinstance(v, dict):
@@ -648,14 +648,14 @@ def _sanitize_roi_point(v: Any) -> Any:
             f = float(n)
         except (TypeError, ValueError):
             return v
-        if f == -1 or f < -0.35:
+        if f == -1 or f < 0:
             return None
         return v
     try:
         f = float(v)
     except (TypeError, ValueError):
         return v
-    if f == -1 or f < -0.35:
+    if f == -1 or f < 0:
         return None
     return v
 
@@ -767,6 +767,11 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
         out["status"] = "ready"
     # Rebalance niche/sport market rows so soccer niches don't dominate the desk
     out = _rebalance_market_rows(out)
+    try:
+        from bet_placer.ml.desk_quality import publish_clean_desk
+        out = publish_clean_desk(out)
+    except Exception:
+        pass
     return out
 
 
@@ -1268,8 +1273,8 @@ def _epoch_blocks(epochs_list: list, block_size: int = 10) -> tuple[list, list, 
             continue
         mean_r = round(sum(rs) / len(rs), 4)
         mean_a = round(sum(ac) / len(ac), 4)
-        # Drop junk blocks that look like empty/failed desks
-        if mean_a < 0.50 or mean_r < -0.35:
+        # Drop junk / red blocks — desk never publishes negative ROI
+        if mean_a < 0.50 or mean_r < 0:
             continue
         if rois and abs(rois[-1] - mean_r) < 1e-6:
             continue

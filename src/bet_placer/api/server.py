@@ -257,6 +257,21 @@ async def lifespan(_app: FastAPI):
             write_users_bundle()
         except Exception:
             logger.debug("users bundle restore skipped", exc_info=True)
+        try:
+            from bet_placer.auth.seed_demo import ensure_seed_accounts
+
+            seeded = ensure_seed_accounts()
+            if seeded.get("created"):
+                logger.info("demo accounts ready: %s", seeded.get("created"))
+                try:
+                    from bet_placer.auth.persist import write_users_bundle, schedule_users_persist
+
+                    write_users_bundle()
+                    schedule_users_persist()
+                except Exception:
+                    logger.debug("demo seed bundle persist skipped", exc_info=True)
+        except Exception:
+            logger.warning("demo account seed skipped", exc_info=True)
         _warmup_data()
         _prefetch_stake_overlay()
         _warmup_stake_browser()

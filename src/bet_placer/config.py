@@ -79,7 +79,8 @@ class Settings(BaseSettings):
     default_bankroll: float = 2000.0
 
     # Optional admin (comma-separated emails). Used for /api/admin/*.
-    gambit_admin_emails: str = ""
+    # Owners are always admin in code even if this env is empty on Render.
+    gambit_admin_emails: str = "abhyudayk16@gmail.com,akhanna8@terpmail.umd.edu"
     # Optional shared admin secret header (X-Gambit-Admin).
     gambit_admin_secret: str = ""
 

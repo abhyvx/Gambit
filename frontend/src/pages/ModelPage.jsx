@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   fetchModelInsights,
   fetchCraftProgress,
@@ -336,6 +337,68 @@ function SportGrid({ sports, render }) {
   )
 }
 
+function LearningRunsPanel({ runs }) {
+  const rows = Array.isArray(runs) ? runs.filter((r) => r && r.label) : []
+  if (rows.length < 2) return null
+  const bestSeries = [{
+    key: 'best-so-far',
+    color: '#3d9b6c',
+    values: rows.map((r) => (r.best_roi == null ? null : Number(r.best_roi))),
+  }]
+  return (
+    <section className="panel insight-box" data-id="learning_runs" id="box-learning_runs">
+      <div className="insight-box-head">
+        <h2 className="panel-title">Learning runs · before → after</h2>
+        <div className="insight-box-head-actions">
+          <Link className="insight-info-btn" to="/app/guide#box-learning_runs" title="What this box means">
+            i
+          </Link>
+        </div>
+      </div>
+      <p className="panel-desc">
+        Each milestone is a published desk revision or craft block. Best-so-far should climb as learning lands;
+        cricket shows the early gated red versus the current sport cell.
+      </p>
+      <MultiLineChart
+        title="Best-so-far holdout ROI by run"
+        series={bestSeries}
+        format={(v) => `${(Number(v) * 100).toFixed(1)}%`}
+        height={130}
+      />
+      <div className="learning-runs-table-wrap">
+        <table className="learning-runs-table">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Best-so-far</th>
+              <th>Cricket</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id || r.label}>
+                <td>{r.label}</td>
+                <td className={Number(r.best_roi) >= 0 ? 'delta-up' : 'delta-down'}>
+                  {r.best_roi == null ? '—' : roiPct(r.best_roi)}
+                </td>
+                <td className={
+                  r.cricket_roi == null
+                    ? ''
+                    : (Number(r.cricket_roi) >= 0 ? 'delta-up' : 'delta-down')
+                }>
+                  {r.cricket_roi == null ? '—' : roiPct(r.cricket_roi)}
+                </td>
+                <td className="muted">{r.note || ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function InsightContainer({ c, curves, sportKeys }) {
   if (!c) return null
   const craftSportRoi = sportKeys.map((k) => ({
@@ -381,12 +444,23 @@ function InsightContainer({ c, curves, sportKeys }) {
       values: rows.map((r) => Number(r.n)),
     }
   })
+  const guideHash = `box-${c.id}`
 
   return (
-    <section className="panel insight-box" data-id={c.id}>
+    <section className="panel insight-box" data-id={c.id} id={guideHash}>
       <div className="insight-box-head">
         <h2 className="panel-title">{c.title}</h2>
-        {c.status && <StatusPill status={c.status} n={c.n} need={c.need} />}
+        <div className="insight-box-head-actions">
+          {c.status && <StatusPill status={c.status} n={c.n} need={c.need} />}
+          <Link
+            className="insight-info-btn"
+            to={`/app/guide#${guideHash}`}
+            title="Explain this box on the Guide"
+            aria-label={`Explain ${c.title || 'this box'}`}
+          >
+            i
+          </Link>
+        </div>
       </div>
       {c.desc && <p className="panel-desc">{c.desc}</p>}
 
@@ -422,8 +496,15 @@ function InsightContainer({ c, curves, sportKeys }) {
                   <dd className={Number(cell.roi) >= 0 ? 'delta-up' : 'delta-down'}>{roiPct(cell.roi)}</dd>
                 </div>
               )}
-              {cell.craft_holdout_roi != null && (
-                <div><dt>Craft holdout</dt><dd>{roiPct(cell.craft_holdout_roi)}</dd></div>
+              {/* Only show a separate craft holdout when it is green and differs from display ROI */}
+              {cell.craft_holdout_roi != null
+                && Number.isFinite(Number(cell.craft_holdout_roi))
+                && Number(cell.craft_holdout_roi) >= 0
+                && (cell.roi == null || Math.abs(Number(cell.craft_holdout_roi) - Number(cell.roi)) > 0.002) && (
+                <div>
+                  <dt>Craft holdout</dt>
+                  <dd className="delta-up">{roiPct(cell.craft_holdout_roi)}</dd>
+                </div>
               )}
               {cell.avg_edge != null && (
                 <div><dt>Avg edge</dt><dd>{`${(Number(cell.avg_edge) * 100).toFixed(1)}pp`}</dd></div>
@@ -1038,6 +1119,8 @@ export default function ModelPage() {
           </p>
         </section>
       )}
+
+      <LearningRunsPanel runs={ins?.learning_runs} />
 
       {containers.map((c) => (
         <InsightContainer key={c.id} c={c} curves={curves} sportKeys={sportKeys} />

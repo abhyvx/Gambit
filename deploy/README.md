@@ -4,8 +4,11 @@
 
 1. Open **[Render Blueprint deploy](https://dashboard.render.com/select-repo?type=blueprint)** and connect **abhyvx/Gambit**.
 2. Render reads `render.yaml` and creates the **gambit** web service.
-3. Add optional env var `ODDS_API_KEY` in the Render dashboard.
-4. Your live URL will be `https://gambit-xxxx.onrender.com` (shown after deploy).
+3. In the Render dashboard, set production secrets (see [DEPLOY.md](../DEPLOY.md)):
+   `DATABASE_URL`, `TURSO_AUTH_TOKEN`, `GAMBIT_SECRETS_KEY`, `GAMBIT_ADMIN_EMAILS`,
+   `BROWSERBASE_API_KEY`, and `CORS_ORIGINS` (your Render URL).
+4. Optional: `ODDS_API_KEY` for live book odds.
+5. Your live URL will be `https://gambit-xxxx.onrender.com` (shown after deploy).
 
 The container:
 - Serves app + API on one port (`CRAFT_DISABLE=1` — no training on the web host).

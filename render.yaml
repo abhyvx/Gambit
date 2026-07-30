@@ -17,10 +17,11 @@ services:
         value: "600"
       - key: GAMBIT_REPO
         value: abhyvx/Gambit
-      # Optional cloud Chrome (Browserbase) — 24/7 Stake odds + Portfolio Connect.
       # Set in Render dashboard (do not commit secrets):
-      #   BROWSERBASE_API_KEY
-      #   TURSO_AUTH_TOKEN
-      #   DATABASE_URL
-      #   STAKE_RELAY_SECRET
-      #   GAMBIT_SECRETS_KEY
+      #   DATABASE_URL + TURSO_AUTH_TOKEN   — persistent users/sessions/portfolios
+      #   GAMBIT_SECRETS_KEY                — encrypt per-user Stake tokens
+      #   GAMBIT_ADMIN_EMAILS               — comma-separated admin emails
+      #   CORS_ORIGINS                      — e.g. https://gambit-xxxx.onrender.com
+      #   BROWSERBASE_API_KEY               — remote Chrome for live Stake (no laptop popups)
+      #   ODDS_API_KEY                      — optional live book odds
+      #   STAKE_RELAY_SECRET                — optional legacy laptop relay only

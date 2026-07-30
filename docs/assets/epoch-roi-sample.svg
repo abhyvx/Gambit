@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">
+<rect width="100%" height="100%" fill="#0f1419"/>
+<text x="56" y="28" fill="#e8eef7" font-family="Georgia, serif" font-size="18">Holdout ROI across early empty / red epochs into positive craft</text>
+<text x="14" y="158.0" fill="#8b9bb0" font-family="ui-monospace,monospace" font-size="11" transform="rotate(-90 14,158.0)">Epoch holdout ROI</text>
+<line x1="56" y1="189.61931464174455" x2="696" y2="189.61931464174455" stroke="#3d4a5c" stroke-dasharray="4 4"/>
+<text x="692" y="185.61931464174455" fill="#8b9bb0" font-size="10" text-anchor="end">0%</text>
+<line x1="56" y1="272.0" x2="696" y2="272.0" stroke="#1c2530"/>
+<text x="48" y="276.0" fill="#6b7c90" font-size="10" text-anchor="end">-2.8%</text>
+<line x1="56" y1="215.0" x2="696" y2="215.0" stroke="#1c2530"/>
+<text x="48" y="219.0" fill="#6b7c90" font-size="10" text-anchor="end">-0.9%</text>
+<line x1="56" y1="158.0" x2="696" y2="158.0" stroke="#1c2530"/>
+<text x="48" y="162.0" fill="#6b7c90" font-size="10" text-anchor="end">1.1%</text>
+<line x1="56" y1="101.0" x2="696" y2="101.0" stroke="#1c2530"/>
+<text x="48" y="105.0" fill="#6b7c90" font-size="10" text-anchor="end">3.0%</text>
+<line x1="56" y1="44.0" x2="696" y2="44.0" stroke="#1c2530"/>
+<text x="48" y="48.0" fill="#6b7c90" font-size="10" text-anchor="end">4.9%</text>
+<polyline fill="none" stroke="#d97706" stroke-width="2.5" points="56.0,189.6 89.7,189.6 123.4,189.6 157.1,189.6 190.7,189.6 224.4,195.2 258.1,133.4 291.8,195.5 325.5,115.6 359.2,160.0 392.8,189.9 426.5,103.8 460.2,194.4 493.9,121.6 527.6,145.2 561.3,256.8 594.9,66.8 628.6,74.2 662.3,86.0 696.0,119.8"/>
+<circle cx="696.0" cy="119.77507788161995" r="3.5" fill="#d97706"/>
+<rect x="56" y="292" width="12" height="12" fill="#d97706"/>
+<text x="74" y="302" fill="#c5d0dc" font-size="12" font-family="system-ui,sans-serif">Holdout ROI</text>
+</svg>

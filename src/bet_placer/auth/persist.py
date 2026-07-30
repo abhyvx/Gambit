@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from bet_placer.config import data_path
+from bet_placer.persistence.db import db_enabled, load_portfolio_state, load_users_dict
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,24 @@ def bundle_path() -> Path:
 
 
 def export_users_bundle() -> dict[str, Any]:
+    if db_enabled():
+        users = load_users_dict()
+        portfolios = {}
+        for row in users.values():
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("id") or "").strip()
+            if not uid:
+                continue
+            state = load_portfolio_state(uid)
+            if isinstance(state, dict) and state:
+                portfolios[uid] = state
+        return {
+            "version": 1,
+            "exported_at": time.time(),
+            "users": users,
+            "portfolios": portfolios,
+        }
     users_path = data_path("users.json")
     users = {}
     if users_path.is_file():

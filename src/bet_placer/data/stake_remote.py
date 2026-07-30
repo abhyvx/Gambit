@@ -99,7 +99,18 @@ def create_remote_session(*, timeout_s: int = 7200, keep_alive: bool = True) -> 
     if ctx:
         payload["browserSettings"]["context"] = {"id": ctx, "persist": True}
 
-    session = _http_json("POST", f"{_BB_API}/sessions", payload)
+    try:
+        session = _http_json("POST", f"{_BB_API}/sessions", payload)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "Proxies are not included in the free plan" in msg:
+            raise RuntimeError(
+                "Browserbase is configured, but Stake still needs proxied Browserbase sessions. "
+                "Your current Browserbase plan does not include proxies, and plain cloud sessions "
+                "still get blocked by Stake/Cloudflare. Upgrade Browserbase or use another remote "
+                "CDP/proxy provider for live Stake access."
+            ) from exc
+        raise
     sid = str(session.get("id") or "").strip()
     connect = str(session.get("connectUrl") or "").strip()
     if not connect:

@@ -12,6 +12,15 @@ from threading import Lock
 from typing import Any
 
 from bet_placer.config import data_path
+from bet_placer.persistence.db import (
+    db_enabled,
+    delete_portfolio_state,
+    load_portfolio_state,
+    load_sessions_dict,
+    load_users_dict,
+    save_sessions_dict,
+    save_users_dict,
+)
 
 _LOCK = Lock()
 _USERS = data_path("users.json")
@@ -20,6 +29,11 @@ _PBKDF_ITERS = 120_000
 
 
 def _load(path: Path) -> dict[str, Any]:
+    if db_enabled():
+        if path == _USERS:
+            return load_users_dict()
+        if path == _SESSIONS:
+            return load_sessions_dict()
     if not path.is_file():
         return {}
     try:
@@ -30,6 +44,13 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _save(path: Path, data: dict[str, Any]) -> None:
+    if db_enabled():
+        if path == _USERS:
+            save_users_dict(data)
+            return
+        if path == _SESSIONS:
+            save_sessions_dict(data)
+            return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -144,12 +165,15 @@ def delete_account(token: str | None) -> None:
         sessions = {k: v for k, v in sessions.items() if v.get("email") != email and v.get("user_id") != uid}
         _save(_SESSIONS, sessions)
     if uid:
-        path = data_path("portfolios", f"{uid}.json")
-        try:
-            if path.is_file():
-                path.unlink()
-        except Exception:
-            pass
+        if db_enabled():
+            delete_portfolio_state(uid)
+        else:
+            path = data_path("portfolios", f"{uid}.json")
+            try:
+                if path.is_file():
+                    path.unlink()
+            except Exception:
+                pass
     try:
         from bet_placer.auth.persist import schedule_users_persist
         schedule_users_persist()
@@ -192,23 +216,33 @@ def list_accounts_for_admin() -> list[dict[str, Any]]:
     out = []
     for email, row in sorted(users.items(), key=lambda kv: kv[0]):
         uid = row.get("id")
-        port_path = data_path("portfolios", f"{uid}.json")
         has_token = False
         bet_count = 0
         sync_status = None
         sync_message = None
-        if port_path.is_file():
-            try:
-                port = json.loads(port_path.read_text(encoding="utf-8"))
-                secrets = port.get("secrets") or {}
-                has_token = bool(secrets.get("stake_api_token"))
-                bets = ((port.get("portfolio") or {}).get("bets") or [])
-                bet_count = len(bets) if isinstance(bets, list) else 0
-                conn = port.get("connection") or {}
-                sync_status = conn.get("last_sync_status")
-                sync_message = conn.get("last_sync_message")
-            except Exception:
-                pass
+        if db_enabled():
+            port = load_portfolio_state(uid) or {}
+            secrets = port.get("secrets") or {}
+            has_token = bool(secrets.get("stake_api_token"))
+            bets = ((port.get("portfolio") or {}).get("bets") or [])
+            bet_count = len(bets) if isinstance(bets, list) else 0
+            conn = port.get("connection") or {}
+            sync_status = conn.get("last_sync_status")
+            sync_message = conn.get("last_sync_message")
+        else:
+            port_path = data_path("portfolios", f"{uid}.json")
+            if port_path.is_file():
+                try:
+                    port = json.loads(port_path.read_text(encoding="utf-8"))
+                    secrets = port.get("secrets") or {}
+                    has_token = bool(secrets.get("stake_api_token"))
+                    bets = ((port.get("portfolio") or {}).get("bets") or [])
+                    bet_count = len(bets) if isinstance(bets, list) else 0
+                    conn = port.get("connection") or {}
+                    sync_status = conn.get("last_sync_status")
+                    sync_message = conn.get("last_sync_message")
+                except Exception:
+                    pass
         out.append(
             {
                 "id": uid,

@@ -251,6 +251,13 @@ def _ensure_craft_training() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     try:
+        from bet_placer.persistence.db import import_legacy_files_if_empty, init_db
+
+        init_db()
+        logger.info("database bootstrap: %s", import_legacy_files_if_empty())
+    except Exception:
+        logger.debug("database bootstrap skipped", exc_info=True)
+    try:
         from bet_placer.auth.persist import restore_users_bundle, write_users_bundle
         out = restore_users_bundle(force=False)
         logger.info("users bundle restore: %s", out)

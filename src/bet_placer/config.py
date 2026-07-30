@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     stake_odds_loop_seconds: int = 600
     # Production persistence: set a real database URL when moving beyond flat files.
     database_url: str = ""
+    turso_auth_token: str = ""
 
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
@@ -124,5 +125,13 @@ def database_status() -> dict:
         "configured": True,
         "mode": "database",
         "driver": driver,
-        "note": "Database URL configured for production persistence.",
+        "note": (
+            "Database URL configured for production persistence."
+            if driver not in {"libsql", "https", "http"}
+            else (
+                "Turso/libSQL URL configured."
+                if (s.turso_auth_token or "").strip()
+                else "Turso/libSQL URL configured, but TURSO_AUTH_TOKEN is still missing."
+            )
+        ),
     }

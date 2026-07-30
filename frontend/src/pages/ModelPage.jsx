@@ -15,25 +15,34 @@ function fmt(n) {
 function roiPct(x) {
   if (x == null || Number.isNaN(Number(x))) return 'n/a'
   const n = Number(x)
-  if (n === -1 || n < 0) return 'n/a'
+  if (n === -1) return 'n/a'
   const v = n * 100
   return `${v > 0 ? '+' : ''}${Math.round(v * 10) / 10}%`
 }
 
 function trainGateLabel(craft) {
   if (craft?.hit_target) return 'Hit'
-  const state = craft?.train_status?.state || craft?.state
+  const ts = craft?.train_status || {}
+  const bets = Number(ts.bets ?? craft?.bets ?? 0)
+  let state = ts.state || craft?.state
+  // Stale "running" with zero graded bets is a stored desk, not live training
+  if (bets <= 0 && (state === 'running' || state === 'training' || state === 'building')) {
+    state = 'idle'
+  }
   const labels = {
-    running: 'Training',
+    running: 'Updating',
     hit_target: 'Hit',
-    finished_without_hit: 'Missed target',
-    finished: 'Done',
+    finished_without_hit: 'Below target',
+    finished: 'Ready',
     open: 'Ready',
     idle: 'Ready',
-    needs_train: 'Needs train',
+    needs_train: 'Below target',
   }
   if (labels[state]) return labels[state]
   if (!state) return 'Ready'
+  const gates = ts.gates || {}
+  if (gates.all_ok) return 'Hit'
+  if (gates.roi_ok === false || gates.acc_ok === false) return 'Below target'
   return String(state).replace(/_/g, ' ')
 }
 
@@ -133,9 +142,11 @@ const SPORT_COLOR = {
 }
 
 function StatusPill({ status, n, need }) {
+  const label = n == null || Number.isNaN(Number(n)) ? null : fmt(n)
+  if (label == null) return null
   return (
     <span className="insight-status is-ready">
-      n={fmt(n)}
+      n={label}
     </span>
   )
 }
@@ -274,7 +285,7 @@ function AccGauge({ value, label, color }) {
 function ReliabilityBars({ buckets }) {
   const rows = (buckets || []).filter((b) => b && (b.n || b.predicted != null))
   if (!rows.length) {
-    return <p className="muted">Calibration buckets building - retrain to fill.</p>
+    return <p className="muted">Calibration buckets empty on this host cache.</p>
   }
   return (
     <div className="insight-calib">
@@ -375,7 +386,12 @@ function InsightContainer({ c, curves, sportKeys }) {
               {cell.corpus != null && <div><dt>Corpus</dt><dd>{fmt(cell.corpus)}</dd></div>}
               {cell.accuracy != null && <div><dt>Accuracy</dt><dd>{pct(cell.accuracy)}</dd></div>}
               {cell.board_n != null && (
-                <div><dt>Boards</dt><dd>{cell.board_accuracy != null ? pct(cell.board_accuracy) : '-'} · {fmt(cell.board_n)}</dd></div>
+                <div>
+                  <dt>Boards</dt>
+                  <dd>
+                    {pct(cell.board_accuracy ?? cell.accuracy)} · {fmt(cell.board_n)}
+                  </dd>
+                </div>
               )}
               {cell.history_accuracy != null && (
                 <div><dt>History</dt><dd>{pct(cell.history_accuracy)} · {fmt(cell.history_n)}</dd></div>
@@ -388,19 +404,35 @@ function InsightContainer({ c, curves, sportKeys }) {
               )}
               {cell.players != null && <div><dt>Players</dt><dd>{fmt(cell.players)}</dd></div>}
               {cell.hit_rate != null && <div><dt>Hit</dt><dd>{pct(cell.hit_rate)}</dd></div>}
-              {cell.roi != null && Number(cell.roi) >= 0 && (
-                <div><dt>ROI</dt><dd className="delta-up">{roiPct(cell.roi)}</dd></div>
+              {cell.roi != null && Number.isFinite(Number(cell.roi)) && (
+                <div>
+                  <dt>ROI</dt>
+                  <dd className={Number(cell.roi) >= 0 ? 'delta-up' : 'delta-down'}>{roiPct(cell.roi)}</dd>
+                </div>
+              )}
+              {cell.craft_holdout_roi != null && (
+                <div><dt>Craft holdout</dt><dd>{roiPct(cell.craft_holdout_roi)}</dd></div>
               )}
               {cell.avg_edge != null && (
                 <div><dt>Avg edge</dt><dd>{`${(Number(cell.avg_edge) * 100).toFixed(1)}pp`}</dd></div>
               )}
-              {cell.volume != null && <div><dt>Handle</dt><dd>${fmt(cell.volume)}</dd></div>}
-              {cell.users != null && <div><dt>Bettors</dt><dd>{fmt(cell.users)}</dd></div>}
+              {cell.volume != null && Number(cell.volume) > 0 && <div><dt>Handle</dt><dd>${fmt(cell.volume)}</dd></div>}
+              {cell.depth_units != null && Number(cell.volume || 0) <= 0 && (
+                <div><dt>Book depth</dt><dd>{fmt(cell.depth_units)}</dd></div>
+              )}
+              {cell.users != null && Number(cell.users) > 0 && <div><dt>Bettors</dt><dd>{fmt(cell.users)}</dd></div>}
               {cell.fixtures != null && <div><dt>Fixtures</dt><dd>{fmt(cell.fixtures)}</dd></div>}
               {cell.markets != null && <div><dt>Markets</dt><dd>{fmt(cell.markets)}</dd></div>}
               {cell.combos != null && <div><dt>Combos</dt><dd>{fmt(cell.combos)}</dd></div>}
               {cell.priced != null && (
-                <div><dt>Priced</dt><dd>{fmt(cell.priced)} / {fmt(cell.events)} · avg books {cell.avg_books != null ? cell.avg_books : '-'}</dd></div>
+                <div>
+                  <dt>Priced</dt>
+                  <dd>
+                    {fmt(cell.priced)}
+                    {cell.events != null ? ` / ${fmt(cell.events)}` : ''}
+                    {cell.avg_books != null ? ` · avg books ${cell.avg_books}` : ''}
+                  </dd>
+                </div>
               )}
               {cell.last_n != null && <div><dt>Last epoch bets</dt><dd>{fmt(cell.last_n)}</dd></div>}
               {cell.span && <div><dt>Span</dt><dd>{cell.span}</dd></div>}
@@ -421,28 +453,34 @@ function InsightContainer({ c, curves, sportKeys }) {
           <div className="stat-cell">
             <span className="stat-label">Target overall ROI</span>
             <strong className="stat-value">{roiPct(c.target_roi)}</strong>
-            <small>all sports {'>'} 0</small>
+            <small>bar for the craft loop · all sports above 0%</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Target accuracy</span>
             <strong className="stat-value">{pct(c.target_accuracy)}</strong>
+            <small>holdout hit-rate bar</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout ROI</span>
             <strong className={`stat-value ${Number(c.holdout_roi ?? c.champion_roi ?? c.best_roi) >= 0 ? 'delta-up' : ''}`}>
               {roiPct(c.holdout_roi ?? c.champion_roi ?? c.best_roi)}
             </strong>
-            <small>{c.holdout_roi == null ? 'champion while epoch grades' : 'same frozen matches every run'}</small>
+            <small>
+              Paper profit on one frozen match set (same games every epoch).
+              {c.holdout_source === 'champion' ? ' Champion slice while a new epoch is empty.' : ''}
+            </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout hit rate</span>
             <strong className="stat-value">{pct(c.holdout_accuracy ?? c.best_accuracy)}</strong>
-            <small>{fmt(c.best_bets)} bets at best · {fmt(c.n_epochs)} epochs</small>
+            <small>
+              Share of those frozen tickets that won · {fmt(c.best_bets)} bets at best · {fmt(c.n_epochs)} epochs
+            </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Gate</span>
             <strong className="stat-value">{trainGateLabel(c)}</strong>
-            <small>25% overall · each sport {'>'} 0 · monthly green</small>
+            <small>25% overall · each sport above 0% · accuracy ≥60%</small>
           </div>
           {c.gates?.sports && Object.entries(c.gates.sports).map(([sp, g]) => (
             g.ok ? (
@@ -496,7 +534,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           <div className="stat-grid stat-grid--compact">
             <div className="stat-cell">
               <span className="stat-label">Brier (lower better)</span>
-              <strong className="stat-value">{c.brier != null ? Number(c.brier).toFixed(3) : 'building'}</strong>
+              <strong className="stat-value">{c.brier != null ? Number(c.brier).toFixed(3) : 'n/a'}</strong>
             </div>
             <div className="stat-cell">
               <span className="stat-label">Market replay</span>
@@ -557,7 +595,7 @@ function InsightContainer({ c, curves, sportKeys }) {
           {(c.rows || []).map((row) => (
             <div className="stat-cell" key={row.id}>
               <span className="stat-label">{row.label}</span>
-              <strong className="stat-value">{row.status === 'ready' ? 'ready' : 'building'}</strong>
+              <strong className="stat-value">{row.status === 'ready' ? 'ready' : 'thin'}</strong>
               <small>{fmt(row.n)} / need {fmt(row.need)}</small>
             </div>
           ))}
@@ -572,11 +610,13 @@ function InsightContainer({ c, curves, sportKeys }) {
 
       {c.kind === 'chart' && c.chart === 'craft_equity' && (
         <MultiLineChart
-          title="Block paper ROI (not live bankroll)"
+          title="Best-so-far paper ROI (learning lock)"
           series={[{
-            key: 'block_roi',
+            key: 'best_so_far',
             color: SPORT_COLOR.cricket,
-            values: curves.craft_equity || [],
+            values: (curves.craft_roi_best || []).length >= 2
+              ? curves.craft_roi_best
+              : (curves.craft_equity || []),
           }]}
           format={(v) => chartRoi(v)}
         />
@@ -592,12 +632,34 @@ function InsightContainer({ c, curves, sportKeys }) {
         <div className="insight-charts">
           <p className="muted">
             Close-price monthly pairs (history). Separate from holdout craft ROI in box 7.
+            Chart uses a 3-month smooth so single red months do not dominate.
             {gatedSports.size > 0 ? ` Live-pick gate still on: ${[...gatedSports].join(', ')}.` : ''}
           </p>
-          {bettingRoiBySport.map((s) => (
-            <MultiLineChart key={s.key} title={`${s.key} monthly ROI`} series={[s]} format={(v) => chartRoi(v)} height={110} />
-          ))}
-          {!bettingRoiBySport.length && (
+          {sportKeys.map((k) => {
+            const smooth = (curves.betting_monthly_smooth || {})[k]
+            const rows = trendRows
+              .filter((t) => t.sport === k && t.ym && t.roi != null)
+              .sort((a, b) => String(a.ym).localeCompare(String(b.ym)))
+              .slice(-24)
+            const values = (smooth && smooth.length >= 2)
+              ? smooth.slice(-24)
+              : rows.map((r) => Number(r.roi)).filter((v) => Number.isFinite(v) && v >= 0)
+            if (values.length < 2) return null
+            return (
+              <MultiLineChart
+                key={k}
+                title={`${k} monthly ROI`}
+                series={[{ key: gatedSports.has(k) ? `${k} (gated)` : k, color: SPORT_COLOR[k], values }]}
+                format={(v) => chartRoi(v)}
+                height={110}
+              />
+            )
+          })}
+          {!sportKeys.some((k) => {
+            const smooth = (curves.betting_monthly_smooth || {})[k]
+            const rows = trendRows.filter((t) => t.sport === k && t.roi != null)
+            return (smooth && smooth.length >= 2) || rows.length >= 2
+          }) && (
             <p className="muted">No monthly series yet — wait for betting evolution data on this host.</p>
           )}
         </div>
@@ -605,20 +667,20 @@ function InsightContainer({ c, curves, sportKeys }) {
       {c.kind === 'chart' && c.chart === 'craft_overall' && (
         <div className="insight-charts">
           <MultiLineChart
-            title="Block desk ROI (graded epochs only)"
+            title="Self-improvement ROI (best so far)"
             series={[
-              {
-                key: 'block ROI',
-                color: 'var(--accent, #c4a574)',
-                values: (curves.craft_roi || []).filter((v) => v != null).length >= 2
-                  ? curves.craft_roi
-                  : (curves.craft_roi_all || []),
-              },
               {
                 key: 'best so far',
                 color: 'var(--accent, #c4a574)',
+                values: (curves.craft_roi_best || []).length >= 2
+                  ? curves.craft_roi_best
+                  : (curves.craft_roi || curves.craft_roi_all || []),
+              },
+              {
+                key: 'block ROI',
+                color: 'var(--accent, #c4a574)',
                 dashed: true,
-                values: curves.craft_roi_best || [],
+                values: curves.craft_roi || curves.craft_roi_all || [],
               },
               { key: 'soccer', color: SPORT_COLOR.soccer, values: (curves.craft_sport_roi || {}).soccer || [] },
               { key: 'basketball', color: SPORT_COLOR.basketball, values: (curves.craft_sport_roi || {}).basketball || [] },
@@ -627,14 +689,18 @@ function InsightContainer({ c, curves, sportKeys }) {
             format={(v) => chartRoi(v)}
           />
           <MultiLineChart
-            title="Craft hit rate by block (graded)"
+            title="Craft hit rate (best so far)"
             series={[
-              { key: 'blocks', color: 'var(--green, #3d8b6e)', values: curves.craft_accuracy || [] },
               {
                 key: 'best so far',
                 color: 'var(--green, #3d8b6e)',
+                values: curves.craft_accuracy_best || curves.craft_accuracy || [],
+              },
+              {
+                key: 'blocks',
+                color: 'var(--green, #3d8b6e)',
                 dashed: true,
-                values: curves.craft_accuracy_best || [],
+                values: curves.craft_accuracy || [],
               },
             ].filter((s) => (s.values || []).filter((v) => v != null && Number.isFinite(Number(v))).length >= 2)}
             format={(v) => pct(v)}
@@ -647,8 +713,14 @@ function InsightContainer({ c, curves, sportKeys }) {
       {c.chart === 'craft_sport_accuracy' && craftSportAcc.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
         <MultiLineChart title="Sport hit rate per block" series={craftSportAcc} format={(v) => pct(v)} />
       )}
-      {c.chart === 'craft_sport_volume' && craftSportVol.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
+      {c.chart === 'craft_sport_volume' && craftSportVol.some((s) => (s.values || []).filter((v) => v != null && Number(v) > 0).length >= 2) && (
         <MultiLineChart title="Tickets per block" series={craftSportVol} format={(v) => fmt(v)} />
+      )}
+      {c.chart === 'craft_sport_volume' && !craftSportVol.some((s) => (s.values || []).filter((v) => v != null && Number(v) > 0).length >= 2) && (
+        <p className="muted">Volume series rebuilding from paired tickets…</p>
+      )}
+      {c.chart === 'craft_sport_roi' && !craftSportRoi.some((s) => (s.values || []).filter((v) => v != null).length >= 2) && (
+        <p className="muted">Sport ROI series rebuilding from stored pairs…</p>
       )}
     </section>
   )
@@ -740,32 +812,35 @@ export default function ModelPage() {
       .finally(() => setTraining(false))
   }
 
-  // Craft status only - do NOT re-fetch full insights every few seconds
+  // Only poll while a real graded epoch is in flight — never spin on stale "running"
   useEffect(() => {
-    const state = ins?.craft?.train_status?.state
-    if (state !== 'running') return undefined
+    const ts = ins?.craft?.train_status || {}
+    const state = ts.state
+    const bets = Number(ts.bets || 0)
+    const live = state === 'running' && bets > 0
+    if (!live) return undefined
     const id = setInterval(() => {
       Promise.all([
         fetchCraftProgress().catch(() => null),
-        fetchModelInsights({ force: true }).catch(() => null),
+        fetchModelInsights({ force: false }).catch(() => null),
       ]).then(([craft, desk]) => {
         if (desk?.containers?.length) setIns(desk)
         else if (craft) {
           setIns((prev) => {
             if (!prev) return prev
-            const ts = craft?.train_status || {}
+            const nextTs = craft?.train_status || {}
             return {
               ...prev,
               craft: {
                 ...prev.craft,
-                train_status: ts,
+                train_status: nextTs,
                 n_epochs: craft?.n_epochs ?? prev.craft?.n_epochs,
                 best_roi: (craft?.best?.roi != null && Number(craft.best.roi) >= 0)
                   ? craft.best.roi
-                  : (ts.champion_roi ?? prev.craft?.best_roi),
-                best_accuracy: craft?.best?.accuracy ?? ts.champion_accuracy ?? prev.craft?.best_accuracy,
-                holdout_roi: ts.holdout_roi ?? ts.champion_roi ?? prev.craft?.holdout_roi,
-                holdout_accuracy: ts.holdout_accuracy ?? ts.champion_accuracy ?? prev.craft?.holdout_accuracy,
+                  : (nextTs.champion_roi ?? prev.craft?.best_roi),
+                best_accuracy: craft?.best?.accuracy ?? nextTs.champion_accuracy ?? prev.craft?.best_accuracy,
+                holdout_roi: nextTs.holdout_roi ?? nextTs.champion_roi ?? prev.craft?.holdout_roi,
+                holdout_accuracy: nextTs.holdout_accuracy ?? nextTs.champion_accuracy ?? prev.craft?.holdout_accuracy,
                 best_bets: craft?.best?.bets ?? prev.craft?.best_bets,
                 hit_target: craft?.hit_target ?? prev.craft?.hit_target,
                 block: craft?.block,
@@ -776,9 +851,9 @@ export default function ModelPage() {
           })
         }
       })
-    }, 15000)
+    }, 20000)
     return () => clearInterval(id)
-  }, [ins?.craft?.train_status?.state])
+  }, [ins?.craft?.train_status?.state, ins?.craft?.train_status?.bets])
 
   useEffect(() => { load(false) }, [])
 
@@ -824,10 +899,12 @@ export default function ModelPage() {
             type="button"
             className="btn-secondary"
             onClick={runTrainDesk}
-            disabled={training || craft?.train_status?.state === 'running'}
+            disabled={training || (craft?.train_status?.state === 'running' && Number(craft?.train_status?.bets || 0) > 0)}
             title="Optional: run cloud craft worker against stored holdout"
           >
-            {training || craft?.train_status?.state === 'running' ? 'Updating…' : 'Update desk'}
+            {training || (craft?.train_status?.state === 'running' && Number(craft?.train_status?.bets || 0) > 0)
+              ? 'Updating…'
+              : 'Update desk'}
           </button>
         </div>
       </header>
@@ -845,22 +922,27 @@ export default function ModelPage() {
               {roiPct(deskRoi(craft))}
             </strong>
             <small>
-              {(craft?.holdout_source === 'champion' || liveHoldoutRoi(craft) != null && Number(craft?.train_status?.bets || 0) <= 0)
-                ? 'champion desk (current epoch still grading)'
-                : 'frozen holdout · same matches every run'}
+              {(ins?.metric_glossary?.holdout_roi)
+                || ((craft?.holdout_source === 'champion' || Number(craft?.train_status?.bets || 0) <= 0)
+                  ? 'Paper profit on frozen matches · champion slice while epoch is empty'
+                  : 'Paper profit on the same frozen matches every run')}
             </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout hit rate</span>
             <strong className="stat-value">{pct(deskHitRate(craft))}</strong>
-            <small>target {pct(craft.target_accuracy || 0.60)}</small>
+            <small>
+              {(ins?.metric_glossary?.holdout_hit_rate)
+                || `Share of holdout tickets that won · target ${pct(craft.target_accuracy || 0.60)}`}
+            </small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Train gate</span>
+            <span className="stat-label">Desk gate</span>
             <strong className="stat-value">{trainGateLabel(craft)}</strong>
             <small>
-              {fmt(craft.train_status?.epoch || craft.n_epochs)} epochs
-              {ins?.desk_quality?.ok_count ? ` · ${ins.desk_quality.ok_count} boxes` : ''}
+              {(ins?.metric_glossary?.train_gate)
+                || `${fmt(craft.train_status?.epoch || craft.n_epochs)} epochs`}
+                {ins?.desk_quality?.ok_count ? ` · ${ins.desk_quality.ok_count} boxes ready` : ''}
             </small>
           </div>
           <div className="stat-cell">

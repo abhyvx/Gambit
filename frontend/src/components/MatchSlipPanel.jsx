@@ -56,36 +56,161 @@ function planActiveLegs(plan) {
   const legs = plan?.legs || []
   if (!legs.length) return []
 
-  const isSpread = (
-    plan?.placement_mode === 'separate_singles'
-    || plan?.slip_type === 'spread_card'
-    || (plan?.tab_id === 'match_card' && !planIsStakeSgm(plan))
-  )
-  if (isSpread) {
-    const withStake = legs.filter((l) => Number(l.stake_inr) > 0)
-    if (withStake.length) return withStake
-    return legs.filter((l) => l.label || l.market)
-  }
+  // Always keep every coherent leg for display + add — never drop a 3rd SGM leg
+  // just because stake_inr is 0 on one of them.
+  const named = legs.filter((l) => l && (l.label || l.market || l.selection || l.combo_parts?.length))
+  if (named.length) return named
+  return legs
+}
 
-  const isStakeSgm = planIsStakeSgm(plan)
-  const active = legs.filter((l) => {
-    const stake = Number(l.stake_inr) || 0
-    if (stake > 0) return true
-    if (l.role === 'parlay_leg' || l.role === 'stake_combo') return true
-    const ret = Number(l.return_inr) || 0
-    return ret > 0 && Boolean(l.label || l.market)
-  })
-  if (active.length) return active
-  if (isStakeSgm) return legs.slice(0, 1)
-  if (Number(plan.total_stake_inr) > 0) {
-    return legs.filter((l) => l.label || l.market || l.odds)
+function humanMarketName(market, line) {
+  const m = String(market || '').toLowerCase()
+  const map = {
+    match_winner: 'Match Result',
+    double_chance: 'Double Chance',
+    draw_no_bet: 'Draw No Bet',
+    over_under_goals: line != null ? `Total ${line}` : 'Totals',
+    btts: 'Both Teams To Score',
+    asian_handicap: 'Handicap',
+    corners: 'Corners',
+    cards: 'Bookings',
+    player_goal: 'Player',
+    half_time: 'Halves',
+    exact_score: 'Correct Score',
+    stake_combo: 'Same Game Multi',
+    team_first_goal: 'First Goal',
+    team_prop: 'Team Prop',
   }
-  return active
+  if (map[m]) return map[m]
+  return String(market || 'Market').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function cleanTicketText(s) {
+  return String(s || '')
+    .replace(/[—–]/g, ' - ')
+    .replace(/\s+-\s+/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Parse a human combo bullet ("Over 2.5 goals") into a slip leg shape. */
+function parseComboPartText(text, home = '', away = '') {
+  const raw = cleanTicketText(text)
+  if (!raw) return null
+  const t = raw.toLowerCase()
+  if (t.includes('both teams') || t === 'yes' || t === 'no' || /\bbtts\b/.test(t)) {
+    const sel = (t === 'no' || (/\bno\b/.test(t) && !/\byes\b/.test(t))) ? 'no' : 'yes'
+    return {
+      market: 'btts',
+      selection: sel,
+      line: null,
+      label: `Both teams to score - ${sel === 'yes' ? 'Yes' : 'No'}`,
+    }
+  }
+  const ou = t.match(/(over|under)\s*([\d.]+)/)
+  if (ou) {
+    const side = ou[1]
+    const line = Number(ou[2])
+    return {
+      market: 'over_under_goals',
+      selection: side,
+      line,
+      label: `${side.charAt(0).toUpperCase() + side.slice(1)} ${line} goals`,
+    }
+  }
+  const h = String(home || '').toLowerCase()
+  const a = String(away || '').toLowerCase()
+  if (h && (t === h || t.includes(`${h} to win`) || t === `${h} win`)) {
+    return { market: 'match_winner', selection: 'home', line: null, label: `${home} to win` }
+  }
+  if (a && (t === a || t.includes(`${a} to win`) || t === `${a} win`)) {
+    return { market: 'match_winner', selection: 'away', line: null, label: `${away} to win` }
+  }
+  if (t === 'draw' || t.startsWith('draw ')) {
+    return { market: 'match_winner', selection: 'draw', line: null, label: 'Draw' }
+  }
+  return {
+    market: 'match_winner',
+    selection: raw,
+    line: null,
+    label: raw,
+  }
+}
+
+function expandLegsForSlip(legs = [], home = '', away = '') {
+  const out = []
+  for (const leg of legs || []) {
+    if (!leg) continue
+    const structured = Array.isArray(leg.combo_legs) ? leg.combo_legs : null
+    const parts = Array.isArray(leg.combo_parts) ? leg.combo_parts : null
+    const isCombo = String(leg.market || '').toLowerCase() === 'stake_combo'
+      || leg.role === 'stake_combo'
+      || (structured && structured.length > 1)
+      || (parts && parts.length > 1)
+
+    let parsed = null
+    if (isCombo && structured && structured.length > 1) {
+      parsed = structured.map((p) => {
+        if (!p || typeof p !== 'object') return parseComboPartText(p, home, away)
+        const selRaw = String(p.selection || '')
+        const ou = selRaw.toLowerCase().match(/^(over|under)\s+([\d.]+)$/)
+        return {
+          market: p.market || 'match_winner',
+          selection: ou ? ou[1] : (p.selection || p.label),
+          line: p.line != null ? p.line : (ou ? Number(ou[2]) : null),
+          label: cleanTicketText(p.label || p.selection || 'Pick'),
+          odds: Number(p.odds || 0),
+        }
+      }).filter(Boolean)
+    } else if (isCombo && parts && parts.length > 1) {
+      parsed = parts.map((p) => {
+        if (p && typeof p === 'object' && (p.market || p.selection)) {
+          return {
+            market: p.market || 'match_winner',
+            selection: p.selection || p.label,
+            line: p.line ?? null,
+            label: cleanTicketText(p.label || p.selection || 'Pick'),
+            odds: Number(p.odds || 0),
+          }
+        }
+        return parseComboPartText(p, home, away)
+      }).filter(Boolean)
+    } else if (isCombo) {
+      const fromLabel = comboSubPicks(leg, home, away)
+      if (fromLabel.length > 1) {
+        parsed = fromLabel.map((p) => parseComboPartText(p, home, away)).filter(Boolean)
+      }
+    }
+
+    if (parsed && parsed.length > 1) {
+      const comboOdds = Number(leg.odds || leg.decimal_odds || 0)
+      const perOdds = comboOdds > 1
+        ? Math.max(1.01, Math.round((comboOdds ** (1 / parsed.length)) * 100) / 100)
+        : 0
+      for (const part of parsed) {
+        const odds = Number(part.odds) > 1 ? Number(part.odds) : perOdds
+        out.push({
+          ...part,
+          odds,
+          stake_inr: undefined,
+          from_combo: true,
+        })
+      }
+      continue
+    }
+
+    out.push({
+      ...leg,
+      label: cleanTicketText(leg.label || leg.selection || 'Pick'),
+      market_name: leg.market_name || leg.market_label || humanMarketName(leg.market, leg.line),
+    })
+  }
+  return out
 }
 
 function pathTicketCount(plan) {
   if (!plan?.legs?.length) return 0
-  return planActiveLegs(plan).length || plan.legs.length
+  return expandLegsForSlip(planActiveLegs(plan)).length || plan.legs.length
 }
 
 function planHitsTarget(plan, targetCashout, budgetInr) {
@@ -115,18 +240,18 @@ const signedINR = (n) => `${n >= 0 ? '+' : ''}${formatINR(n)}`
 function comboSubPicks(legOrLabel, home = '', away = '') {
   if (legOrLabel && typeof legOrLabel === 'object') {
     if (Array.isArray(legOrLabel.combo_parts) && legOrLabel.combo_parts.length > 1) {
-      return legOrLabel.combo_parts
+      return legOrLabel.combo_parts.map((p) => cleanTicketText(typeof p === 'string' ? p : (p.label || p.selection || '')))
     }
     const raw = legOrLabel.selection || legOrLabel.label
     return comboSubPicks(raw, home, away)
   }
-  const label = String(legOrLabel || '')
+  const label = cleanTicketText(legOrLabel || '')
   if (!label) return []
   return label.split(/\s*&\s*/).map((part) => {
     const s = part.replace(/\s*@\s*[\d.]+x\s*$/i, '').trim()
     const low = s.toLowerCase()
-    if (low === 'yes') return 'Both teams to score: Yes'
-    if (low === 'no') return 'Both teams to score: No'
+    if (low === 'yes') return 'Both teams to score - Yes'
+    if (low === 'no') return 'Both teams to score - No'
     if (home && low === home.toLowerCase()) return `${home} to win`
     if (away && low === away.toLowerCase()) return `${away} to win`
     if (low === 'draw') return 'Draw'
@@ -191,18 +316,18 @@ function buildSlipTickets(strategy, activeLegs, isStakeSgm, home = '', away = ''
 }
 
 function formatTicketLabel(leg, home, away) {
-  const raw = (leg?.label || '').trim()
+  const raw = cleanTicketText(leg?.label || '')
   if (raw && !/^handicap\b/i.test(raw) && !/^\s*handicap\b/i.test(raw)) {
     return raw
   }
   const m = leg?.market || ''
   const sel = (leg?.selection || '').toLowerCase()
   if (m === 'btts' || /both teams to score/i.test(m)) {
-    return `Both teams to score: ${sel === 'no' ? 'No' : 'Yes'}`
+    return `Both teams to score - ${sel === 'no' ? 'No' : 'Yes'}`
   }
-  if (m === 'over_under_goals' || sel === 'over' || sel === 'under') {
+  if (m === 'over_under_goals' || sel === 'over' || sel === 'under' || /^(over|under)\s/.test(sel)) {
     if (leg?.line != null) {
-      const side = sel === 'under' ? 'Under' : 'Over'
+      const side = sel.startsWith('under') ? 'Under' : 'Over'
       return `${side} ${leg.line} goals`
     }
   }
@@ -335,30 +460,39 @@ function rejectGarbageCombo(plan) {
   return parts.length >= 2 && new Set(parts).size === 1
 }
 
-function rejectAntiThesisPlan(plan, home, away) {
+function rejectAntiThesisPlan(plan, home, away, matchThesis = null) {
   if (!home || !away || !plan) return false
   const h = home.toLowerCase()
   const a = away.toLowerCase()
   const blob = JSON.stringify(plan).toLowerCase()
-  // Only drop clear both-sides / correct-score nonsense — not every away pick
+  // Only drop clear both-sides / correct-score nonsense - not every away pick
   if (blob.includes(`${h}/${a}`) || blob.includes(`${a}/${h}`)) return true
   if (blob.includes(`${h} to win`) && blob.includes(`${a} to win`) && !blob.includes('double')) return true
 
-  // If the slip's own lean is home/away, drop outright Draw winner legs
-  const thesis = String(plan?.path_thesis || plan?.thesis || plan?.result_dir || '').toLowerCase()
   const legs = plan?.legs || []
   const hasDrawWinner = legs.some((leg) => {
     const m = String(leg?.market || '').toLowerCase()
     const sel = String(leg?.selection || '').toLowerCase()
     const lbl = String(leg?.label || '').toLowerCase()
-    return m === 'match_winner' && (sel === 'draw' || /\bdraw\b/.test(lbl))
+    return m === 'match_winner' && (sel === 'draw' || sel === 'x' || /\bdraw\b/.test(lbl))
   })
-  if (hasDrawWinner && (thesis === 'home' || thesis === 'away' || blob.includes('home lean') || blob.includes('away lean'))) {
+
+  // Prefer live match thesis from the slip (result_dir: home|away)
+  const thesisDir = String(
+    matchThesis?.result_dir
+    || plan?.path_thesis
+    || plan?.thesis
+    || plan?.result_dir
+    || '',
+  ).toLowerCase()
+  if (hasDrawWinner && (thesisDir === 'home' || thesisDir === 'away')) {
+    return true
+  }
+  if (hasDrawWinner && (blob.includes('home lean') || blob.includes('away lean'))) {
     return true
   }
   // Also: if plan mixes a home/away winner lean text with draw winner
   if (hasDrawWinner && (blob.includes(`${h} win`) || blob.includes(`${a} win`) || blob.includes('to win'))) {
-    // only reject when another leg is an H/A match_winner
     const hasSideWinner = legs.some((leg) => {
       const m = String(leg?.market || '').toLowerCase()
       const sel = String(leg?.selection || '').toLowerCase()
@@ -454,7 +588,8 @@ function resolveCuratedPicks(slip, home = '', away = '') {
     }
   }
 
-  const filtered = picks.filter(Boolean).filter((p) => !rejectGarbageCombo(p) && !rejectAntiThesisPlan(p, home, away))
+  const thesis = slip?.match_thesis || slip?.human_context?.match_thesis || null
+  const filtered = picks.filter(Boolean).filter((p) => !rejectGarbageCombo(p) && !rejectAntiThesisPlan(p, home, away, thesis))
   // Prefer filtered coherent paths; only fall back to non-draw core singles if wiped
   if (filtered.length) return sortPathsForDropdown(filtered)
   const fallback = picks.filter(Boolean).filter((p) => {
@@ -463,7 +598,8 @@ function resolveCuratedPicks(slip, home = '', away = '') {
     return !legs.some((leg) => {
       const m = String(leg?.market || '').toLowerCase()
       const sel = String(leg?.selection || '').toLowerCase()
-      return m === 'match_winner' && sel === 'draw'
+      const lbl = String(leg?.label || '').toLowerCase()
+      return m === 'match_winner' && (sel === 'draw' || sel === 'x' || /\bdraw\b/.test(lbl))
     })
   })
   return sortPathsForDropdown(fallback.length ? fallback : picks.filter(Boolean).slice(0, 1))
@@ -714,7 +850,7 @@ function OptionPicker({ plans, index, onSelect, heading, id = 'path-select' }) {
 
 export default function MatchSlipPanel({ slip, home, away, fanPrediction, status, score, sport }) {
   const {
-    perMatchBudget, updatePerMatchBudget, targetCashout, updateTargetCashout, bettorStyle, addLeg,
+    perMatchBudget, updatePerMatchBudget, targetCashout, updateTargetCashout, addLegs,
   } = useBankroll()
   const [budgetDraft, setBudgetDraft] = useState(String(perMatchBudget))
   const [targetDraft, setTargetDraft] = useState(String(targetCashout))
@@ -749,7 +885,6 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     if (!refreshStake && !isRetry) setSlipLoadError(null)
     return fetchMatchSlipRefresh({
       home, away, budgetInr: perMatchBudget, targetCashoutInr: targetCashout, refreshStake, sport,
-      goal: bettorStyle?.goal, risk: bettorStyle?.risk, structure: bettorStyle?.structure,
     })
       .then((data) => {
         if (matchGen !== matchGenRef.current || seq !== loadSeqRef.current) return data
@@ -774,7 +909,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
           setSlipRefreshing(false)
         }
       })
-  }, [home, away, status, perMatchBudget, targetCashout, sport, bettorStyle])
+  }, [home, away, status, perMatchBudget, targetCashout, sport])
 
   const loadStake = () => {
     if (!home || !away || status === 'completed') return
@@ -928,30 +1063,47 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
 
   const addPlanToSlip = (plan, legs) => {
     const eventId = activeSlip?.match_id || `${home}-${away}`
-    let added = 0
-    for (const leg of (legs || plan?.legs || [])) {
-      const odds = Number(leg.odds) || 0
+    const source = expandLegsForSlip(legs?.length ? legs : (plan?.legs || []), home, away)
+    const payload = []
+    for (const leg of source) {
+      const odds = Number(leg.odds ?? leg.decimal_odds ?? leg.best_odds) || 0
       if (!(odds > 1)) continue
-      const label = leg.label || leg.selection || 'Pick'
-      const id = `rec-${eventId}-${leg.market || 'mkt'}-${leg.selection || label}-${odds}`
-      const ok = addLeg({
+      const label = cleanTicketText(leg.label || leg.selection || 'Pick')
+      const market = leg.market || 'match_winner'
+      let selection = leg.selection || label
+      let line = leg.line ?? null
+      const ou = String(selection).toLowerCase().match(/^(over|under)\s+([\d.]+)$/)
+      if (ou) {
+        selection = ou[1]
+        line = line != null ? line : Number(ou[2])
+      }
+      const id = `rec-${eventId}-${market}-${selection}-${line ?? ''}-${odds}`
+      const marketName = cleanTicketText(
+        leg.market_label || leg.market_name || humanMarketName(market, line),
+      )
+      payload.push({
         id,
         eventId,
         home,
         away,
         label,
-        market: leg.market || 'match_winner',
-        marketName: leg.market_label || leg.market || '',
-        selection: leg.selection || label,
+        market,
+        marketName: /_/.test(marketName) ? humanMarketName(market, line) : marketName,
+        selection,
+        line,
         odds,
         stake: Number(leg.stake_inr) >= 10 ? Number(leg.stake_inr) : undefined,
         sportKey: sport,
         our_probability: leg.our_probability,
         gem_kind: plan?.pick_type || plan?.tab_id || 'rec',
       })
-      if (ok) added += 1
     }
-    setAddedNote(added ? `Added ${added} ticket${added === 1 ? '' : 's'} to bet slip` : 'Could not add. Check odds or slip rules.')
+    const { added, reasons } = addLegs(payload)
+    setAddedNote(
+      added
+        ? `Added ${added} ticket${added === 1 ? '' : 's'} to bet slip`
+        : (reasons?.[0] || 'Could not add. Check odds or slip rules.'),
+    )
     window.setTimeout(() => setAddedNote(null), 2500)
   }
 

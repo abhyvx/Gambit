@@ -22,7 +22,7 @@ TARGET_MIN_STAKE = 20
 
 
 def _ceil_stake_inr(need: float) -> float:
-    """₹5 steps above platform min — avoids wasting deploy on ₹10 round-up."""
+    """₹5 steps above platform min  -  avoids wasting deploy on ₹10 round-up."""
     return max(TARGET_MIN_STAKE, math.ceil(float(need) / 5) * 5)
 
 
@@ -53,7 +53,7 @@ def size_independent_route_stakes(
     *,
     max_deploy_pct: float = 0.88,
 ) -> list[float] | None:
-    """Stakes for separate singles — each leg nets `profit` if it alone wins."""
+    """Stakes for separate singles  -  each leg nets `profit` if it alone wins."""
     if not odds_list:
         return None
     cap = budget * max_deploy_pct
@@ -86,7 +86,7 @@ def estimate_balanced_spread_stakes(
     route_odds: float,
     target_profit: float,
 ) -> tuple[float, float] | None:
-    """Anchor break-even + route sized for profit — same math as calibrate_spread_stakes."""
+    """Anchor break-even + route sized for profit  -  same math as calibrate_spread_stakes."""
     a_odds = max(float(anchor_odds or 0), 1.02)
     r_odds = max(float(route_odds or 0), 1.02)
     anchor_stake = min_stake_break_even_solo(a_odds, 0)
@@ -264,7 +264,7 @@ def calibrate_spread_stakes(
     if anchor:
         anchor["stake_inr"] = anchor_stake
 
-    # Grow medium insurance from spare deploy — route stake rises with support, so iterate.
+    # Grow medium insurance from spare deploy  -  route stake rises with support, so iterate.
     for leg in support:
         leg["stake_inr"] = TARGET_MIN_STAKE
     for _ in range(48):
@@ -369,6 +369,13 @@ def polish_slip_legs(slip: dict, home: str, away: str, ctx: dict | None = None) 
     for leg in legs:
         pl = dict(leg)
         if pl.get("market") == "stake_combo" or pl.get("role") in ("stake_combo", "target_lotto"):
+            try:
+                from bet_placer.engine.card_coherence import decompose_stake_combo
+                structured = decompose_stake_combo(pl, home, away)
+                if len(structured) >= 2:
+                    pl["combo_legs"] = structured
+            except Exception:
+                pass
             parts = format_combo_parts(pl, home, away)
             if parts:
                 pl["combo_parts"] = parts
@@ -411,8 +418,8 @@ def polish_slip_legs(slip: dict, home: str, away: str, ctx: dict | None = None) 
     return out
 
 # ── Intuitive win-chance tiers (we never treat 50% as “good enough to bet”) ──
-COMFORTABLE_WIN = 0.56       # minimum “I’d consider this” — clearly better than a coin flip
-CONFIDENT_WIN = 0.62         # loss-min tab — genuinely safer side
+COMFORTABLE_WIN = 0.56       # minimum “I’d consider this”  -  clearly better than a coin flip
+CONFIDENT_WIN = 0.62         # loss-min tab  -  genuinely safer side
 STRONG_WIN = 0.68            # very high confidence label
 
 # ── Loss-min tab: preserve capital first (NOT profit-max) ──
@@ -500,10 +507,10 @@ def build_portfolios(
     target_profit = target_profit_inr(budget_inr, target_cashout)
     ctx = {**ctx, "target_cashout_inr": target_cashout, "target_profit_inr": target_profit}
 
-    # Style sets the comfort floor (Settings → goal/risk), not a hardcoded 56%.
-    style = ctx.get("betting_style") or {}
-    comfort = float(style.get("min_probability") or COMFORTABLE_WIN)
-    comfort = max(0.40, min(0.68, comfort))
+    # Main match cards choose structure per match — ignore Settings goal/risk/structure.
+    comfort = float(COMFORTABLE_WIN)
+    comfort = max(0.50, min(0.68, comfort))
+    ctx = {**(ctx or {}), "betting_style": None}
 
     pool = (
         _stake_pool(options, overlay, stake_only, home, away, ctx=ctx)
@@ -604,7 +611,7 @@ def build_portfolios(
     if _should_skip_match(strategy_plans, comfort=comfort) and not curated.get("primary"):
         empty = _empty("skip", "Skip this match", budget_inr, profile)
         empty["why"] = caution_reason or (
-            "We checked spreads, singles, and parlays — nothing clears our bar. "
+            "We checked spreads, singles, and parlays  -  nothing clears our bar. "
             "Keep your full budget for this game."
         )
         empty["skip_recommended"] = True
@@ -642,7 +649,7 @@ def build_portfolios(
 
     bet_slips = [s for s in bet_slips if _slip_ev(s) >= -8]
     if not bet_slips:
-        # Keep best available plan even if EV is soft — don't blank the board.
+        # Keep best available plan even if EV is soft  -  don't blank the board.
         for key in ("match_card", "min_loss", "singles_focus", "value", "smart_parlay"):
             for p in strategy_plans.get(key) or []:
                 if p.get("legs"):
@@ -679,7 +686,7 @@ def build_portfolios(
         caution = True
         caution_reason = (
             caution_reason
-            or "Our top pick still loses on the most common outcome — skip or pick a different tab."
+            or "Our top pick still loses on the most common outcome  -  skip or pick a different tab."
         )
     return _portfolio_result(
         recommended,
@@ -726,7 +733,7 @@ def _portfolio_result(recommended, bet_slips, profile, stake_only, live_h2h_odds
         (recommended.get("why") if isinstance(recommended, dict) else None)
         if effective_skip else None
     ) or (
-        "Nothing here wins on the typical outcome — skip this match or try Hit target for a swing path."
+        "Nothing here wins on the typical outcome  -  skip this match or try Hit target for a swing path."
         if effective_skip else None
     )
     return {
@@ -751,7 +758,7 @@ def _portfolio_result(recommended, bet_slips, profile, stake_only, live_h2h_odds
         "odds_note": (
             "Each slip uses only markets Stake lists for this game, at Stake's real prices."
             if stake_only else
-            "Model odds only — open the Odds tab to connect Stake and verify every pick before betting."
+            "Model odds only  -  open the Odds tab to connect Stake and verify every pick before betting."
         ),
         "live_h2h_odds": live_h2h_odds,
     }
@@ -853,7 +860,7 @@ def _comfortable_typical(slip: dict, max_loss_pct: float = 0.40) -> bool:
 
 
 def _plan_is_spread_style(plan: dict) -> bool:
-    """True for 3+ separate tickets — the user's actual betting style."""
+    """True for 3+ separate tickets  -  the user's actual betting style."""
     legs = plan.get("legs") or []
     ptype = plan.get("plan_type") or ""
     if ptype == "single" or len(legs) < 3:
@@ -902,7 +909,7 @@ def _plan_from_spread_slip(slip: dict, target: float) -> dict | None:
 
 
 def _stern_primary_eligible(slip: dict) -> bool:
-    """Top rec bar — safer paths only, not swing/lotto-heavy cards."""
+    """Top rec bar  -  safer paths only, not swing/lotto-heavy cards."""
     if not _target_rec_eligible(slip):
         return False
     legs = slip.get("legs") or []
@@ -936,7 +943,7 @@ def _stern_primary_eligible(slip: dict) -> bool:
 
 
 def _profit_route_quality(p: dict) -> int:
-    """Prefer likely profit routes — never raw payout."""
+    """Prefer likely profit routes  -  never raw payout."""
     legs = p.get("legs") or []
     route = next(
         (
@@ -958,7 +965,7 @@ def _profit_route_quality(p: dict) -> int:
 
 
 def _core_market_score(slip: dict) -> int:
-    """Prefer 1X2 / ML / DNB / OU / BTTS / AH — demote cards/corners props as top rec."""
+    """Prefer 1X2 / ML / DNB / OU / BTTS / AH  -  demote cards/corners props as top rec."""
     core = {
         "match_winner", "double_chance", "draw_no_bet", "over_under_goals",
         "btts", "asian_handicap", "h2h", "moneyline",
@@ -1006,7 +1013,7 @@ def _stern_rec_rank(p: dict) -> tuple:
 
 
 def _target_rec_eligible(slip: dict) -> bool:
-    """Target paths for Recs — balanced spread with a route to the cashout goal."""
+    """Target paths for Recs  -  balanced spread with a route to the cashout goal."""
     tab = slip.get("tab_id") or slip.get("id") or ""
     if tab != "match_card":
         return False
@@ -1040,7 +1047,7 @@ def _target_rec_eligible(slip: dict) -> bool:
 
 
 def _primary_rec_candidate(slip: dict) -> bool:
-    """Everyday singles/spreads — typical outcome must not bleed too much of the budget."""
+    """Everyday singles/spreads  -  typical outcome must not bleed too much of the budget."""
     tab = slip.get("tab_id") or slip.get("id") or ""
     if tab == "match_card":
         return _target_rec_eligible(slip)
@@ -1048,7 +1055,7 @@ def _primary_rec_candidate(slip: dict) -> bool:
 
 
 def _is_realistic_slip(slip: dict) -> bool:
-    """Drop paths that aren't worth showing — relaxed for target-sized plans."""
+    """Drop paths that aren't worth showing  -  relaxed for target-sized plans."""
     legs = slip.get("legs") or []
     if not legs:
         return False
@@ -1125,7 +1132,7 @@ def _pick_reason_text(slip: dict) -> str:
         if headline and tier:
             return f"{tier}: {headline}"
         if wl:
-            return wl.replace("—", ",").replace("~", "")
+            return wl.replace("—", ",").replace(" - ", ",").replace("~", "")
         if hits and target:
             return f"Sized for {format_inr(target)} if one ticket wins alone"
         return f"Target spread, about {win_pct}% any line helps. Typical {format_inr(likely)}."
@@ -1174,7 +1181,7 @@ def _pick_thesis_anchor(
     away: str,
     profile: dict,
 ) -> dict | None:
-    """Best thesis-aligned plan — drives what every tab is allowed to show."""
+    """Best thesis-aligned plan  -  drives what every tab is allowed to show."""
     from bet_placer.engine.card_coherence import path_is_coherent, plan_aligns_match_thesis
 
     thesis = ctx.get("match_thesis") or {}
@@ -1404,7 +1411,7 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
 
 
 def _should_skip_match(strategy_plans: dict, *, comfort: float = COMFORTABLE_WIN) -> bool:
-    """Skip only when every tab is empty or clearly worthless — not when data is thin."""
+    """Skip only when every tab is empty or clearly worthless  -  not when data is thin."""
     if any(
         p.get("worth_taking") and (p.get("hit_probability") or 0) >= 0.12
         for p in strategy_plans.get("match_card") or []
@@ -1433,7 +1440,7 @@ def budget_leak_ok(p: dict) -> float:
 
 
 def _assess_match_caution(strategy_plans: dict) -> tuple[bool, str | None]:
-    """Honest flags — thin edges get a caution, not a blank board."""
+    """Honest flags  -  thin edges get a caution, not a blank board."""
     min_loss = strategy_plans.get("min_loss") or []
     singles = strategy_plans.get("singles_focus") or []
     value = strategy_plans.get("value") or []
@@ -1442,11 +1449,11 @@ def _assess_match_caution(strategy_plans: dict) -> tuple[bool, str | None]:
     if card or min_loss or singles or value:
         core = [p for tab in ("match_card", "min_loss", "singles_focus", "value") for p in strategy_plans.get(tab, [])]
         if core and max(_best_win_prob(p) for p in core) < 0.48 and max(_slip_ev(p) for p in core) < 0:
-            return True, "Edges are soft — size down or use Hit target for a swing."
+            return True, "Edges are soft  -  size down or use Hit target for a swing."
         return False, None
 
     if not min_loss and not singles and not value:
-        return True, "No safe spread and no singles — Combos tab may still have a path."
+        return True, "No safe spread and no singles  -  Combos tab may still have a path."
     return False, None
 
 
@@ -1487,7 +1494,7 @@ def _diversify_tab_plans(strategy_plans: dict, home: str, away: str) -> dict:
         for p in plans:
             sig = _slip_signature(p)
             fams = _plan_market_families(p)
-            # Combos tab must be multi-leg / SGM — drop lone singles
+            # Combos tab must be multi-leg / SGM  -  drop lone singles
             if tab == "smart_parlay":
                 n = len([l for l in (p.get("legs") or []) if l.get("label") or l.get("market")])
                 if n < 2 and "combo" not in fams:
@@ -1573,16 +1580,16 @@ def _confidence_label(p: float) -> str:
 
 
 def _single_likely_scenario(p: float, stake: float, win_profit: float, lose_profit: float) -> tuple[float, str]:
-    """Most-likely case for a single — never use 50% as the comfort bar."""
+    """Most-likely case for a single  -  never use 50% as the comfort bar."""
     if p >= CONFIDENT_WIN:
-        return win_profit, f"Most likely: wins (~{p:.0%} chance) — {_confidence_label(p)}."
+        return win_profit, f"Most likely: wins (~{p:.0%} chance)  -  {_confidence_label(p)}."
     if p >= COMFORTABLE_WIN:
         return win_profit, (
             f"Likely wins (~{p:.0%}), but {1 - p:.0%} of the time you still lose {format_inr(stake)}."
         )
     return lose_profit, (
         f"Most likely: loses (~{1 - p:.0%} miss rate). "
-        f"Below our {COMFORTABLE_WIN:.0%} minimum — not worth your money."
+        f"Below our {COMFORTABLE_WIN:.0%} minimum  -  not worth your money."
     )
 
 
@@ -1686,7 +1693,7 @@ def _scenarios_loss_min_spread(legs: list[dict], reserve: float) -> dict:
             "label": "All miss",
             "profit_inr": round(-total, 0),
             "description": (
-                f"Every bet loses (~{p_all_lose:.0%}) — down {format_inr(total)}, "
+                f"Every bet loses (~{p_all_lose:.0%})  -  down {format_inr(total)}, "
                 f"but you still keep {format_inr(reserve)} unbet."
             ),
         },
@@ -1694,7 +1701,7 @@ def _scenarios_loss_min_spread(legs: list[dict], reserve: float) -> dict:
             "label": "Most likely",
             "profit_inr": round(ev, 0),
             "description": (
-                f"~{p_at_least_one:.0%} chance at least one wins — "
+                f"~{p_at_least_one:.0%} chance at least one wins  -  "
                 f"your {format_inr(reserve)} reserve is safe either way."
             ),
         },
@@ -1738,7 +1745,7 @@ def _build_loss_min_spread(
         "description": f"{n} small bets · {labels}",
         "why": (
             f"Spread {format_inr(total)} across {n} likely picks ({min_p:.0%}+ each). "
-            f"Keep {format_inr(reserve)} ({reserve / budget:.0%} of budget) untouched — "
+            f"Keep {format_inr(reserve)} ({reserve / budget:.0%} of budget) untouched  -  "
             f"one miss doesn't wipe you out."
         ),
         "risk": "low",
@@ -1757,7 +1764,7 @@ def _enumerate_loss_min_options(
     pool, budget, profile, home, away, stake_only,
     human_context=None,
 ) -> list[dict]:
-    """Loss-min: spread-only (2–3 small stakes). No singles — those live on One best bet."""
+    """Loss-min: spread-only (2–3 small stakes). No singles  -  those live on One best bet."""
     ctx = human_context or {}
     unified_lead = None
     unified = ctx.get("unified_picks") or []
@@ -1880,7 +1887,7 @@ def _target_plan_to_slip(plan: dict, target: float, home: str, away: str) -> dic
         path_label = tickets_label
     elif not path_label:
         path_label = tickets_label
-    # Never append leg names again — path_label_from_legs is the single source of truth.
+    # Never append leg names again  -  path_label_from_legs is the single source of truth.
 
     if ptype == "stake_combo":
         slip_type = "stake_sgm"
@@ -1919,7 +1926,7 @@ def short_leg_preview(label: str, max_len: int = 28) -> str:
 
 
 def _leg_set_signature(slip_or_plan: dict) -> tuple:
-    """Dedupe paths by the actual tickets — not labels or stake sizing."""
+    """Dedupe paths by the actual tickets  -  not labels or stake sizing."""
     return tuple(sorted(
         (l.get("market"), l.get("selection"), l.get("line"))
         for l in (slip_or_plan.get("legs") or [])
@@ -2028,7 +2035,7 @@ def _tier_target_plans(
     max_paths: int = MAX_MATCH_CARD_PATHS,
     target: float | None = None,
 ) -> list[dict]:
-    """Pick distinct paths — balance ticket count, combos, and risk."""
+    """Pick distinct paths  -  balance ticket count, combos, and risk."""
     if not plans:
         return []
 
@@ -2162,7 +2169,7 @@ def _stake_sgm_display_paths(
             "path_thesis": "sgm",
             "path_legs": [lbl],
             "name": " Stake combo",
-            "description": f"{lbl} @ {odds}x — nets {format_inr(target_profit)} profit if it wins",
+            "description": f"{lbl} @ {odds}x  -  nets {format_inr(target_profit)} profit if it wins",
             "legs": [leg],
             "total_stake_inr": stake,
             "reserve_inr": budget - stake,
@@ -2198,8 +2205,8 @@ def _build_match_card_alternatives(
 
     ctx = human_context or {}
     target = float(ctx.get("target_cashout_inr") or max(budget * 2.5, budget + 500))
-    style = ctx.get("betting_style") or {}
-    prefers_spread = bool(style.get("prefers_spread_singles", True))
+    # Main cards pick structure per match (not Settings style)
+    prefers_spread = True
     all_opts = list(ctx.get("_all_options") or pool)
 
     plans: list[dict] = []
@@ -2266,7 +2273,7 @@ def _build_match_card_alternatives(
     ):
         _add_slip(slip)
 
-    # 2. Verified Stake SGMs — real combo prices from Stake Combos tab
+    # 2. Verified Stake SGMs  -  real combo prices from Stake Combos tab
     overlay = ctx.get("stake_overlay")
     if overlay and overlay.get("stake_combos"):
         for p in _stake_sgm_display_paths(overlay, budget, pool, home, away, ctx, max_n=2):
@@ -2291,7 +2298,7 @@ def _build_match_card_alternatives(
     for p in plans:
         if not p.get("worth_taking") and _path_reaches_target(p, target):
             p["worth_taking"] = True
-    plans = [_score_plan_worth(p, ctx, style) for p in plans]
+    plans = [_score_plan_worth(p, ctx, None) for p in plans]
     selected = _tier_target_plans(plans, prefers_spread=prefers_spread, target=target)
 
     slips: list[dict] = []
@@ -2355,7 +2362,7 @@ def _build_single_alternatives(pool, budget, profile, home, away, stake_only, ex
                 break
         if matched and aligned_pick:
             why = aligned_pick.get("why") or aligned_pick.get("reason") or (
-                "High-confidence lead — same read as easy money / build slip."
+                "High-confidence lead  -  same read as easy money / build slip."
             )
             primary = _build_single_from_option(
                 matched, "singles_focus", " One best bet", why,
@@ -2387,7 +2394,7 @@ def _build_single_alternatives(pool, budget, profile, home, away, stake_only, ex
 
 
 def _build_value_alternatives(pool, budget, profile, home, away, stake_only, exclude_keys=None) -> list[dict]:
-    """Value tab: diverse singles only — no fake multi-leg slips."""
+    """Value tab: diverse singles only  -  no fake multi-leg slips."""
     ex = exclude_keys or set()
     raw: list[dict] = []
 
@@ -2442,7 +2449,7 @@ def _build_parlay_alternatives(
         alts.sort(key=lambda s: (_best_win_prob(s), -float(s.get("combined_odds") or 0)), reverse=True)
         return alts
 
-    # No scraped SGM — still offer real combo options (estimated, verify on Stake).
+    # No scraped SGM  -  still offer real combo options (estimated, verify on Stake).
     return _estimated_parlay_alts(
         pool, budget, profile, stake_only, home, away, max_n=max_n, exclude_keys=exclude_keys,
     )
@@ -2582,7 +2589,7 @@ def _slip_from_stake_combo(
     home: str = "",
     away: str = "",
 ) -> dict | None:
-    """One verified Stake same-game combo — never multiply single-line odds."""
+    """One verified Stake same-game combo  -  never multiply single-line odds."""
     from bet_placer.engine.stake_sgm import estimate_stake_combo_probability
     from bet_placer.markets.labels import format_combo_label
 
@@ -2621,10 +2628,10 @@ def _slip_from_stake_combo(
         "id": "stake_combo",
         "plan_type": "stake_combo",
         "name": "Stake combo",
-        "description": f"{leg['label']} @ {odds}x — scraped from Stake Combos",
+        "description": f"{leg['label']} @ {odds}x  -  scraped from Stake Combos",
         "why": (
             f"This exact combo exists on Stake under Combos: “{combo.get('stake_market')}”. "
-            f"Price is from Stake — ~{hit_pct}% model chance."
+            f"Price is from Stake  -  ~{hit_pct}% model chance."
         ),
         "risk": "high",
         "legs": [leg],
@@ -2681,7 +2688,7 @@ def _scenarios_parlay(stake: float, comb_odds: float, cp: float, n_legs: int = 2
         "worst_case": {
             "label": "Misses",
             "profit_inr": -stake,
-            "description": f"Combo misses — lose {format_inr(stake)}.",
+            "description": f"Combo misses  -  lose {format_inr(stake)}.",
         },
         "likely_case": {
             "label": "Win chance",
@@ -2751,7 +2758,7 @@ def _model_pool(options: list, home: str, away: str, ctx: dict | None = None) ->
 
 
 def _profile_bonus(o, profile: dict) -> float:
-    """How well THIS bet fits THIS game's character — drives match-specific picks
+    """How well THIS bet fits THIS game's character  -  drives match-specific picks
     so we don't recommend the same favorite double-chance in every game."""
     style = profile.get("style")
     m, sel, line = o.market, o.selection, o.line
@@ -3055,7 +3062,7 @@ def _build_single_from_pick(
     return {
         "id": id_,
         "name": name,
-        "description": f"{leg['label']} — {prob:.0%} win chance · stake {format_inr(stake)}",
+        "description": f"{leg['label']}  -  {prob:.0%} win chance · stake {format_inr(stake)}",
         "why": why or pick.get("why") or "Aligned with the build-slip thesis.",
         "risk": "medium",
         "legs": [leg],
@@ -3090,7 +3097,7 @@ def _build_single_from_option(
     return {
         "id": id_,
         "name": name,
-        "description": f"{leg['label']} — {opt.our_probability:.0%} win chance · stake {format_inr(stake)}",
+        "description": f"{leg['label']}  -  {opt.our_probability:.0%} win chance · stake {format_inr(stake)}",
         "why": why,
         "risk": "low" if id_ == "min_loss" else "medium" if id_ == "singles_focus" else "high",
         "legs": [leg],
@@ -3133,7 +3140,7 @@ def _build_single_slip(
     return {
         "id": id_,
         "name": name,
-        "description": f"{opt.label} — {opt.our_probability:.0%} chance",
+        "description": f"{opt.label}  -  {opt.our_probability:.0%} chance",
         "why": why,
         "risk": "low" if id_ == "min_loss" else "medium" if id_ == "singles_focus" else "high",
         "legs": [leg],
@@ -3207,7 +3214,7 @@ def _pick_recommended_slip(slips: list[dict], budget: float = 0, profile: dict |
     viable = [s for s in slips if s.get("legs") and _is_realistic_slip(s) and _likely_profit(s) >= 0]
     if not viable:
         empty = _empty("skip", "Skip this match", budget, profile or {})
-        empty["why"] = "Nothing here wins on the typical outcome — skip this match."
+        empty["why"] = "Nothing here wins on the typical outcome  -  skip this match."
         return empty
 
     singles = [s for s in viable if s.get("tab_id") == "singles_focus" and s.get("_unified_aligned")]
@@ -3329,7 +3336,7 @@ def _scenarios_multi(legs: list[dict], reserve: float) -> dict:
             "One wins, one loses",
             p_exactly_one,
             best_partial_profit,
-            f"Most common (~{p_exactly_one:.0%}): one leg wins, one loses — usually {best_partial_desc}.",
+            f"Most common (~{p_exactly_one:.0%}): one leg wins, one loses  -  usually {best_partial_desc}.",
         ),
         (
             "All win",
@@ -3342,7 +3349,7 @@ def _scenarios_multi(legs: list[dict], reserve: float) -> dict:
     likely_label, likely_p, likely_profit, likely_desc = max(outcomes, key=lambda x: x[1])
     if likely_label == "One wins, one loses" and likely_profit < 0:
         likely_desc = (
-            f"Typical (~{likely_p:.0%}): one leg wins, one loses — "
+            f"Typical (~{likely_p:.0%}): one leg wins, one loses  -  "
             f"net {format_inr(likely_profit)}."
         )
 

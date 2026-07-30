@@ -106,7 +106,7 @@ def build_match_slip(
     skip_recommended = bool(portfolios.get("skip_recommended"))
     skip_reason = portfolios.get("skip_reason")
 
-    # Prefer any strategy with legs over a blank SKIP — user asked for recs, not silence.
+    # Prefer any strategy with legs over a blank SKIP  -  user asked for recs, not silence.
     if (not active.get("legs") or rec_id == "skip") and strategy_plans:
         for key in ("match_card", "min_loss", "singles_focus", "value", "smart_parlay"):
             plans = strategy_plans.get(key) or []
@@ -122,7 +122,7 @@ def build_match_slip(
     if not active.get("legs") or rec_id == "skip":
         # Last resort: still CAUTION with empty plan rather than hard SKIP_MATCH noise
         slip_verdict = "CAUTION"
-        headline = f"Thin board — {match_name}"
+        headline = f"Thin board  -  {match_name}"
         plain = skip_reason or (
             f"Model markets are thin for this fixture. "
             f"Keep most of {budget_per_match_inr:,.0f} or pick from the Odds / Build tabs."
@@ -130,23 +130,23 @@ def build_match_slip(
         skip_recommended = True
     elif skip_recommended:
         slip_verdict = "CAUTION"
-        headline = f"Thin edge — {match_name}"
+        headline = f"Thin edge  -  {match_name}"
         plain = (skip_reason or "Nothing here clears our bar on the typical outcome.") + " " + _plain_portfolio(active, factors, budget_per_match_inr)
     elif rec_id == "match_card":
         slip_verdict = "BET"
-        headline = f"Your match card — {match_name}"
+        headline = f"Your match card  -  {match_name}"
         plain = _plain_portfolio(active, factors, budget_per_match_inr)
     elif rec_id == "smart_parlay":
         slip_verdict = "CAUTION"
-        headline = f"Smart parlay — {match_name}"
+        headline = f"Smart parlay  -  {match_name}"
         plain = _plain_portfolio(active, factors, budget_per_match_inr)
     elif rec_id == "singles_focus":
         slip_verdict = "BET"
-        headline = f"Best single — {match_name}"
+        headline = f"Best single  -  {match_name}"
         plain = _plain_portfolio(active, factors, budget_per_match_inr)
     else:
         slip_verdict = "BET"
-        headline = f"Loss-minimizing plan — {match_name}"
+        headline = f"Loss-minimizing plan  -  {match_name}"
         plain = _plain_portfolio(active, factors, budget_per_match_inr)
 
     return MatchBetSlip(
@@ -231,7 +231,7 @@ def _build_human_story(ctx: dict, home: str, away: str) -> list[str]:
     st = ctx.get("stake_stats") or {}
     if ctx.get("stake_priced") and st.get("total_bets"):
         story.append(
-            f" Priced from Stake — {st['total_bets']:,} bets / "
+            f" Priced from Stake  -  {st['total_bets']:,} bets / "
             f"${st.get('total_bet_value_usd', 0):,.0f} staked on this game"
         )
     return story

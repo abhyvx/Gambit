@@ -16,6 +16,31 @@ const NAV = [
   { to: '/app/guide', label: 'Guide', icon: 'guide' },
 ]
 
+function humanizeMarket(name, market) {
+  const raw = String(name || market || '').replace(/[—–]/g, ' - ').trim()
+  if (!raw) return ''
+  const key = String(market || name || '').toLowerCase()
+  const map = {
+    match_winner: 'Match Result',
+    double_chance: 'Double Chance',
+    draw_no_bet: 'Draw No Bet',
+    over_under_goals: 'Totals',
+    btts: 'Both Teams To Score',
+    asian_handicap: 'Handicap',
+    stake_combo: 'Same Game Multi',
+    corners: 'Corners',
+    cards: 'Bookings',
+    half_time: 'Halves',
+    exact_score: 'Correct Score',
+    player_goal: 'Player',
+    team_first_goal: 'First Goal',
+    team_prop: 'Team Prop',
+  }
+  if (map[key]) return map[key]
+  if (!/_/.test(raw)) return raw
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 export default function Layout() {
   const [status, setStatus] = useState(null)
   const {
@@ -210,8 +235,11 @@ export default function Layout() {
                           </span>
                           <button type="button" className="slip-leg-x" onClick={() => removeLeg(leg.id)} aria-label="Remove">×</button>
                         </div>
-                        {leg.marketName && <div className="slip-mkt">{leg.marketName}</div>}
-                        <strong className="slip-ticket-pick">{leg.label}</strong>
+                        {(() => {
+                          const mkt = humanizeMarket(leg.marketName, leg.market)
+                          return mkt ? <div className="slip-mkt">{mkt}</div> : null
+                        })()}
+                        <strong className="slip-ticket-pick">{String(leg.label || '').replace(/[—–]/g, ' - ')}</strong>
                         <div className="muted slip-ticket-match">
                           {leg.home}{leg.away ? ` vs ${leg.away}` : ''}
                         </div>

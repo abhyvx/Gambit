@@ -875,8 +875,12 @@ def plan_fights_match_thesis(
         m = (leg.get("market") or "").lower()
         lbl = (leg.get("label") or "").lower()
         sel = (leg.get("selection") or "").lower()
-        # Outright Draw fights a home/away lean
-        if m == "match_winner" and (sel == "draw" or lbl.strip() in ("draw", "x")):
+        # Outright Draw fights a home/away lean (label may be "Draw @ 7x")
+        if m == "match_winner" and (
+            sel in ("draw", "x")
+            or lbl.strip() in ("draw", "x")
+            or re.search(r"\bdraw\b", lbl)
+        ):
             return True
         if m in ("match_winner", "draw_no_bet", "asian_handicap", "half_time", "double_chance"):
             probe = type("O", (), {

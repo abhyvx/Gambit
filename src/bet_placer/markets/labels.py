@@ -25,7 +25,7 @@ def _looks_vague_label(label: str) -> bool:
 
 
 def _total_unit(line: float | None, sport: str | None = None) -> str:
-    """Goals / points / runs — prefer sport when known."""
+    """Goals / points / runs  - prefer sport when known."""
     sp = (sport or "").lower()
     if sp.startswith("basket") or "nba" in sp or "wnba" in sp:
         return "points"
@@ -103,13 +103,13 @@ def format_market_label(
             return f"{'Over' if side == 'over' else 'Under'} {ln} {unit}"
         return f"{'Over' if side == 'over' else 'Under'} {unit}"
     if m == "btts":
-        return f"Both teams to score — {'Yes' if sel == 'yes' else 'No'}"
+        return f"Both teams to score  - {'Yes' if sel == 'yes' else 'No'}"
     if m == "corners":
         return f"{'Over' if sel == 'over' else 'Under'} {line} Corners"
     if m == "cards":
         return f"{'Over' if sel == 'over' else 'Under'} {line} Cards"
     if m == "half_time":
-        return f"Half Time — {home if sel == 'home' else away if sel == 'away' else 'Draw'}"
+        return f"Half Time  - {home if sel == 'home' else away if sel == 'away' else 'Draw'}"
     if m == "exact_score":
         return f"Correct Score {sel}"
     if m == "asian_handicap":
@@ -123,7 +123,7 @@ def format_market_label(
         return f"{player or selection} Anytime Goalscorer"
     if m == "team_prop":
         return f"{selection}"
-    return f"{m}: {sel}" + (f" {line}" if line else "")
+    return (str(sel).replace("_", " ").title() if sel else "Pick") + (f" {line}" if line is not None else "")
 
 
 def market_category(market: MarketType | str, line: float | None = None, sport: str | None = None) -> str:
@@ -156,7 +156,7 @@ _CORE_BET_MARKETS = frozenset({
 
 
 def is_core_bet_market(market: str) -> bool:
-    """Markets we model and recommend — not exotic Stake props."""
+    """Markets we model and recommend  - not exotic Stake props."""
     return str(market or "") in _CORE_BET_MARKETS
 
 
@@ -168,7 +168,7 @@ def format_leg_label(
     away: str,
     raw_label: str | None = None,
 ) -> str:
-    """Plain-English line for a ticket card — never bare 'Yes' or '2nd Half'."""
+    """Plain-English line for a ticket card  - never bare 'Yes' or '2nd Half'."""
     m = str(market or "").strip()
     sel = (selection or "").strip()
     low = sel.lower()
@@ -184,7 +184,7 @@ def format_leg_label(
 
     ml = m.lower()
     if m == "btts" or "both teams to score" in ml:
-        return f"Both teams to score — {'Yes' if low == 'yes' else 'No'}"
+        return f"Both teams to score  - {'Yes' if low == 'yes' else 'No'}"
     if low in ("over", "under") or raw.lower().startswith(("over ", "under ")):
         ln = line
         if ln is None:
@@ -209,12 +209,12 @@ def format_leg_label(
         if not _looks_vague_label(raw):
             return raw
     if low in ("yes", "no") and ("both" in ml or "btts" in m):
-        return f"Both teams to score — {sel.title()}"
+        return f"Both teams to score  - {sel.title()}"
     if low in ("1st half", "2nd half"):
-        return f"Highest-scoring half — {sel}"
+        return f"Highest-scoring half  - {sel}"
     if raw and not _looks_vague_label(raw):
         return raw
-    return f"{m}: {sel}" if sel else m
+    return (str(sel).replace("_", " ").title() if sel else "Pick")
 
 
 def format_combo_label(
@@ -225,7 +225,7 @@ def format_combo_label(
     *,
     stake_market: str | None = None,
 ) -> str:
-    """Readable Stake same-game combo — e.g. 'Canada to win & Both teams to score — Yes @ 10x'."""
+    """Readable Stake same-game combo  - e.g. 'Canada to win & Both teams to score  - Yes @ 10x'."""
     from bet_placer.engine.card_coherence import decompose_stake_combo
 
     s = re.sub(r"\s*@\s*[\d.]+x\s*$", "", (raw or "").strip(), flags=re.I).strip()
@@ -249,8 +249,8 @@ def format_combo_label(
     else:
         body = _STAKE_COMBO_SUFFIX_RE.sub("", s).strip()
         body = re.sub(r"\bBoth Teams to Score\b", "Both teams to score", body, flags=re.I)
-        body = re.sub(r"\bUnder ([\d.]+)\s*&\s*No\b", r"Under \1 goals & Both teams to score — No", body, flags=re.I)
-        body = re.sub(r"\bOver ([\d.]+)\s*&\s*Yes\b", r"Over \1 goals & Both teams to score — Yes", body, flags=re.I)
+        body = re.sub(r"\bUnder ([\d.]+)\s*&\s*No\b", r"Under \1 goals & Both teams to score  - No", body, flags=re.I)
+        body = re.sub(r"\bOver ([\d.]+)\s*&\s*Yes\b", r"Over \1 goals & Both teams to score  - Yes", body, flags=re.I)
         body = re.sub(r"\s+", " ", body)
     if odds and float(odds) > 1:
         return f"{body} @ {float(odds):g}x"
@@ -291,7 +291,7 @@ def format_combo_parts(leg: dict, home: str, away: str) -> list[str]:
                 continue
             low = seg.lower()
             if low in ("yes", "no"):
-                out.append(f"Both teams to score — {seg.title()}")
+                out.append(f"Both teams to score  - {seg.title()}")
             elif _sel_side(seg, home, away) in ("home", "away", "draw"):
                 team = home if _sel_side(seg, home, away) == "home" else away if _sel_side(seg, home, away) == "away" else "Draw"
                 out.append(f"{team} to win" if team != "Draw" else "Draw")

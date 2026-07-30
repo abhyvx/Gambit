@@ -99,33 +99,49 @@ export function BankrollProvider({ children }) {
   }
 
   const addLeg = (leg) => {
-    let ok = false
-    let queued = null
+    const result = addLegs([leg])
+    return result.added > 0
+  }
+
+  const addLegs = (incoming = []) => {
+    const batch = (incoming || []).filter(Boolean)
+    if (!batch.length) return { added: 0, reasons: [] }
+    let accepted = []
+    const reasons = []
     setLegs((prev) => {
-      const check = canAddLeg(prev, leg)
-      if (!check.ok) {
-        setSlipMsg(check.reason)
-        return prev
+      let next = [...(prev || [])]
+      accepted = []
+      for (const raw of batch) {
+        const check = canAddLeg(next, raw)
+        if (!check.ok) {
+          reasons.push(check.reason)
+          continue
+        }
+        next = [...next, raw]
+        accepted.push(raw)
       }
-      ok = true
-      setSlipMsg(null)
-      const id = leg.id
-      // Ignore tiny recommended stubs (e.g. ₹1) — leave Amount blank for the user.
-      if (Number(leg.stake) >= 10) {
-        setLegStakes((st) => (st[id] != null && st[id] !== '' ? st : { ...st, [id]: String(leg.stake) }))
-      }
-      queued = { ...leg, id }
-      setSlipOpen(true)
-      return [...prev, leg]
+      return next
     })
-    if (ok && queued) {
-      // Track every rec for the model (unit stake until amount is set).
-      const stake = Math.max(Number(queued.stake) || 0, 1)
-      if (Number(queued.odds) > 1) {
-        recordSlipLegs([{ ...queued, stake, gem_kind: queued.gem_kind || 'rec' }]).catch(() => {})
+    if (accepted.length) {
+      setSlipMsg(null)
+      setSlipOpen(true)
+      const stakePatch = {}
+      for (const q of accepted) {
+        if (Number(q.stake) >= 10) stakePatch[q.id] = String(q.stake)
       }
+      if (Object.keys(stakePatch).length) {
+        setLegStakes((st) => ({ ...stakePatch, ...st }))
+      }
+      for (const q of accepted) {
+        const stake = Math.max(Number(q.stake) || 0, 1)
+        if (Number(q.odds) > 1) {
+          recordSlipLegs([{ ...q, stake, gem_kind: q.gem_kind || 'rec' }]).catch(() => {})
+        }
+      }
+    } else if (reasons[0]) {
+      setSlipMsg(reasons[0])
     }
-    return ok
+    return { added: accepted.length, reasons }
   }
 
   const removeLeg = (id) => {
@@ -292,6 +308,7 @@ export function BankrollProvider({ children }) {
       slipMsg,
       setSlipMsg,
       addLeg,
+      addLegs,
       removeLeg,
       setSlip,
       clearSlip,

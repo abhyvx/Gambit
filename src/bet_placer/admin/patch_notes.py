@@ -11,6 +11,24 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v21",
+        "cycle": "recs-sgm-slip-copy",
+        "at": "2026-07-30",
+        "title": "Match-discretion recs; full SGM add; clean ticket copy",
+        "fixed": [
+            "Main Recs still followed Settings goal/risk/structure instead of per-match discretion",
+            "3-leg SGM/top path only added 2 legs (totals lines treated as duplicates)",
+            "Bet tickets showed snake_case market keys and em dashes",
+            "Draw @ high odds could still appear against a home/away lean",
+        ],
+        "changes": [
+            "Main match-slip / Sport / Matches analyze calls omit betting style; engine ignores style for cards",
+            "Slip rules are line-aware; SGM combo_parts expand into distinct legs; batch addLegs",
+            "Labels and slip UI humanize markets and replace em dashes with plain hyphens",
+            "Thesis gate catches Draw labels like Draw @ 7x; UI filters anti-thesis Draw paths",
+        ],
+    },
+    {
         "version": "v20",
         "cycle": "thesis-odds-admin",
         "at": "2026-07-30",

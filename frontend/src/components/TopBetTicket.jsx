@@ -28,7 +28,7 @@ function sourceLabel(src) {
   return ''
 }
 
-/** Stake-style vertical bet ticket — add without amount; payout only when amount set. */
+/** Stake-style vertical bet ticket - add without amount; payout only when amount set. */
 export default function TopBetTicket({ bet, onOpenMatch }) {
   const { addLeg, setSlipMsg, setSlipOpen } = useBankroll()
   const [stake, setStake] = useState('')
@@ -37,14 +37,20 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
   const payout = odds && stakeNum > 0 ? Math.round(stakeNum * odds) : null
   const tag = sportTag(bet.sport_key)
   const isCombo = bet.ticket_kind === 'combo' || bet.market === 'stake_combo'
-  const comboParts = (bet.legs || []).map((l) => l.label).filter(Boolean)
+  const comboParts = (bet.legs || []).map((l) => String(l.label || '').replace(/[—–]/g, ' - ')).filter(Boolean)
+  const marketLabel = String(bet.market_name || (isCombo ? 'Combo' : 'Match Result'))
+    .replace(/[—–]/g, ' - ')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+  const pickLabel = String(bet.label || '').replace(/[—–]/g, ' - ')
 
   const add = () => {
     const n = Number(stake)
     const ok = addLeg(legFromBet({
       ...bet,
+      label: pickLabel,
       market: bet.market || (isCombo ? 'stake_combo' : 'match_winner'),
-      market_name: bet.market_name || (isCombo ? 'Combo' : 'Match Result'),
+      market_name: marketLabel,
     }, n > 0 ? n : null))
     if (ok) setSlipOpen?.(true)
   }
@@ -76,8 +82,8 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
       </button>
 
       <div className="bet-ticket-v-pick">
-        <small>{bet.market_name || bet.league || 'Match'}</small>
-        <strong>{bet.label}</strong>
+        <small>{marketLabel || bet.league || 'Match'}</small>
+        <strong>{pickLabel}</strong>
         {comboParts.length > 1 && (
           <ul className="bet-ticket-v-legs">
             {comboParts.map((p) => <li key={p}>{p}</li>)}

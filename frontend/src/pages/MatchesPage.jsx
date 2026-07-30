@@ -247,9 +247,6 @@ export default function MatchesPage() {
         sport: apiSport,
         eventId: ev.id,
         bankroll: perMatchBudget,
-        goal: bettorStyle.goal,
-        risk: bettorStyle.risk,
-        structure: bettorStyle.structure,
         targetCashoutInr: targetCashout,
       }).then((r) => ({ ev, a: r.matches?.[0] }))),
     ).then((results) => {
@@ -293,9 +290,6 @@ export default function MatchesPage() {
       sport: apiSport,
       eventId: ev.id,
       bankroll: perMatchBudget,
-      goal: bettorStyle.goal,
-      risk: bettorStyle.risk,
-      structure: bettorStyle.structure,
       targetCashoutInr: targetCashout,
     })
       .then((r) => {

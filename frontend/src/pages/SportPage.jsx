@@ -470,9 +470,6 @@ export default function SportPage() {
       sport: apiSport,
       eventId: ev.id,
       bankroll: perMatchBudget,
-      goal: bettorStyle.goal,
-      risk: bettorStyle.risk,
-      structure: bettorStyle.structure,
       targetCashoutInr: targetCashout,
     })
       .then((r) => {
@@ -627,9 +624,6 @@ export default function SportPage() {
       sport: apiSport,
       eventId: row.id,
       bankroll: perMatchBudget,
-      goal: bettorStyle.goal,
-      risk: bettorStyle.risk,
-      structure: bettorStyle.structure,
       targetCashoutInr: targetCashout,
     })
       .then((r) => {

@@ -237,7 +237,7 @@ def _build_easy_money_picks(
     away: str,
     ctx: dict,
 ) -> list[dict]:
-    """High win-rate spots only — separate from situational story bets.
+    """High win-rate spots only  -  separate from situational story bets.
 
     Bar is intentionally strict: if nothing clears it, we return [] rather than
     dressing up a 50/50 narrative as 'easy money'.
@@ -298,7 +298,7 @@ def _build_easy_money_picks(
             "tag": " Easy money",
             "why": (
                 f"High-confidence read (~{pct}% to land) on a core market that fits how this "
-                "game should play — not a long-shot story bet."
+                "game should play  -  not a long-shot story bet."
             ),
             "reason": f"~{pct}% win chance · core market · thesis-aligned",
             "confidence_tier": "lock" if p >= 0.70 else "strong",
@@ -423,7 +423,7 @@ def build_smart_picks(
         situational.append(enrich(o, angle, p * 50 + angle.get("priority", 5) * 4))
         slate[sig] = slate.get(sig, 0) + 1
 
-    # Second pass: fill to minimum — slate caps are for the page, not this match
+    # Second pass: fill to minimum  -  slate caps are for the page, not this match
     if len(situational) < _MIN_SITUATIONAL:
         for angle in ranked:
             if len(situational) >= _MIN_SITUATIONAL:
@@ -483,7 +483,7 @@ def build_smart_picks(
         "stage_note": stage,
         "skip_reasons": (
             [] if (easy_money or situational)
-            else (["No high-confidence or situational market resolved."] if stake_ok else ["Model-priced slate is thin — connect Stake for more lines."])
+            else (["No high-confidence or situational market resolved."] if stake_ok else ["Model-priced slate is thin  -  connect Stake for more lines."])
         ),
         "spotlight": (easy_money[0] if easy_money else unified[0]) if (easy_money or unified) else None,
         "easy_money_note": (
@@ -522,7 +522,7 @@ def _parlay_from_picks(picks: list[dict], home: str, away: str) -> dict | None:
         "legs": [{"label": p.get("label"), "odds": p.get("odds"), "probability_pct": p.get("our_probability_pct")} for p in legs[:3]],
         "combined_odds": round(odds, 2),
         "combined_probability_pct": round(prob * 100, 1),
-        "note": "Illustrative only — not a verified Stake combo. Check Stake Combos for real SGM prices.",
+        "note": "Illustrative only  -  not a verified Stake combo. Check Stake Combos for real SGM prices.",
     }
 
 
@@ -568,7 +568,7 @@ def align_slip_with_picks(slip_dict: dict, picks: dict) -> dict:
         slip_dict["easy_money_headline"] = easy[0].get("label")
         slip_dict["easy_money_why"] = easy[0].get("why")
     if not easy:
-        slip_dict["easy_money_note"] = "No bet cleared the high-confidence bar for this match — situational picks are lower conviction."
+        slip_dict["easy_money_note"] = "No bet cleared the high-confidence bar for this match  -  situational picks are lower conviction."
     if easy and slip_dict.get("strategy_plans", {}).get("singles_focus"):
         plans = slip_dict["strategy_plans"]["singles_focus"]
         if plans and isinstance(plans, list):

@@ -170,7 +170,7 @@ def analyze_worldcup(
         if not include_completed:
             wc_matches = [m for m in wc_matches if m.status in ("upcoming", "live")]
     else:
-        # "Today" tab — calendar today (UTC) plus anything live, any stage.
+        # "Today" tab  -  calendar today (UTC) plus anything live, any stage.
         today = datetime.now(timezone.utc).date()
         wc_matches = [
             m for m in all_wc
@@ -191,7 +191,7 @@ def analyze_worldcup(
     reach_final = tournament_odds.get("reach_final") or {}
     top_paths = tournament_odds.get("top_paths") or []
 
-    # Stake overlay: cache only on page load — never block the World Cup API on
+    # Stake overlay: cache only on page load  -  never block the World Cup API on
     # a browser fetch (Cloudflare can hang 240s+). Stake prices load when you
     # open a match's Stake odds tab or the bet builder.
     stake_overlay_map = get_stake_overlay_map(
@@ -253,9 +253,9 @@ def analyze_worldcup(
         if wc.narrative:
             factors.append(wc.narrative)
         if wc.home_must_win:
-            factors.append(f"{wc.home} MUST WIN — desperation raises variance")
+            factors.append(f"{wc.home} MUST WIN  -  desperation raises variance")
         if wc.away_must_win:
-            factors.append(f"{wc.away} MUST WIN — high motivation but risky")
+            factors.append(f"{wc.away} MUST WIN  -  high motivation but risky")
 
         value_bets = find_value_bets(match, adjusted, factors)
         for bet in value_bets:
@@ -272,9 +272,9 @@ def analyze_worldcup(
                 source_count=0,
                 confidence=0.3,
                 dominant_narrative=wc.narrative or (
-                    f"{stage_label(wc.matchday)} — win-or-go-home"
+                    f"{stage_label(wc.matchday)}  -  win-or-go-home"
                     if wc.is_knockout
-                    else "Group stage — check team morale and must-win pressure"
+                    else "Group stage  -  check team morale and must-win pressure"
                 ),
                 fade_public=abs(wc.public_sentiment_home) > 0.2,
             )
@@ -499,7 +499,7 @@ def analyze_worldcup(
         "budget_inr": budget_inr,
         "data_source": "espn_live",
         "odds_source": "espn_draftkings",
-        "odds_note": "Live scores from ESPN. Payouts from DraftKings (via ESPN) — check Stake for your exact prices.",
+        "odds_note": "Live scores from ESPN. Payouts from DraftKings (via ESPN)  -  check Stake for your exact prices.",
         "groups": groups_summary,
         "tournament_odds": tournament_odds,
         "matches": match_analyses,
@@ -510,7 +510,7 @@ def analyze_worldcup(
         },
         "source": "espn_live",
         "message": (
-            f"LIVE from ESPN — {live_count} in progress, {completed_count} finished, "
+            f"LIVE from ESPN  -  {live_count} in progress, {completed_count} finished, "
             f"{knockout_count} knockout fixtures in feed. "
             f"{active_label} active. Real book payouts (DraftKings)."
         ),
@@ -617,14 +617,10 @@ def rebuild_match_slip_for_teams(
 
     fan_take = fan_read(wc.home, wc.away, home_pts, away_pts, wc.home_must_win, wc.away_must_win)
     from bet_placer.engine.analyst_read import analyst_read
-    from bet_placer.engine.bettor_style import resolve_engine_style
     from bet_placer.engine.game_profile import profile_match
 
-    betting_style = resolve_engine_style(
-        goal, risk, structure,
-        budget_inr=budget_per_match_inr,
-        target_cashout_inr=target_cashout_inr,
-    )
+    # Main match cards choose structure per match  -  do not apply Settings style here
+    betting_style = None
     human_ctx = {
         "team_strength": {
             "home": get_team_rating(wc.home),
@@ -700,8 +696,9 @@ def rebuild_match_slip_for_teams(
     )
     out = align_slip_with_picks(serialize_slip(slip), unified)
     if isinstance(out, dict):
-        out["betting_style"] = betting_style
-        out["style_note"] = betting_style.get("summary")
+        out["betting_style"] = None
+        out["style_note"] = "Match discretion - structure chosen per fixture"
+        out["match_thesis"] = thesis or out.get("match_thesis")
     return out
 
 
@@ -735,7 +732,6 @@ def rebuild_league_match_slip(
     from bet_placer.math.normalize import normalize_estimates
     from bet_placer.models.enums import MarketType
     from bet_placer.engine.analyst_read import analyst_read
-    from bet_placer.engine.bettor_style import resolve_engine_style
     from bet_placer.engine.game_profile import profile_match
 
     resolved = _resolve_league_match(home, away, sport=sport)
@@ -776,11 +772,8 @@ def rebuild_league_match_slip(
     intuition = AnalystIntuition()
     raw_probs = predict_all_markets(match)
     adjusted = normalize_estimates(intuition.adjust_probabilities(match, raw_probs))
-    betting_style = resolve_engine_style(
-        goal, risk, structure,
-        budget_inr=budget_per_match_inr,
-        target_cashout_inr=target_cashout_inr,
-    )
+    # Main match cards choose structure per match  -  ignore Settings style
+    betting_style = None
 
     human_ctx = {
         "team_strength": {
@@ -848,8 +841,9 @@ def rebuild_league_match_slip(
     )
     out = align_slip_with_picks(serialize_slip(slip), unified)
     if isinstance(out, dict):
-        out["betting_style"] = betting_style
-        out["style_note"] = betting_style.get("summary")
+        out["betting_style"] = None
+        out["style_note"] = "Match discretion - structure chosen per fixture"
+        out["match_thesis"] = thesis or out.get("match_thesis")
     return out
 
 
@@ -873,15 +867,15 @@ def _top_bets_from_unified(unified_picks: dict, enriched: list) -> list:
 
 
 def _knockout_stakes_text(wc) -> str:
-    return f"{stage_label(wc.matchday)} — elimination game, no second chances"
+    return f"{stage_label(wc.matchday)}  -  elimination game, no second chances"
 
 
 def _group_stakes_text(group: str, standings: list[dict]) -> str:
     if not standings:
-        return f"Group {group} — check standings"
+        return f"Group {group}  -  check standings"
     top = standings[0]["team"]
     pts = standings[0]["pts"]
-    return f"Group {group}: {top} leads with {pts} pts — qualification race affects motivation"
+    return f"Group {group}: {top} leads with {pts} pts  -  qualification race affects motivation"
 
 
 def _serialize_plan(plan) -> dict:

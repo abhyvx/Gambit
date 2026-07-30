@@ -1,8 +1,8 @@
-"""Per-match spread card — how you actually bet.
+"""Per-match spread card  -  how you actually bet.
 
 2–4 separate Stake singles on a coherent spread: anchor, support, swing,
 plus one target lotto route that can pay the cashout goal if it wins alone.
-Other legs are budget/thesis-sized — not every ticket must hit the full target.
+Other legs are budget/thesis-sized  -  not every ticket must hit the full target.
 No fake same-game multis (never multiplies single-line odds).
 """
 
@@ -27,7 +27,7 @@ _MIN_ANCHOR_STAKE = 40          # anchors need real skin, not lottery tickets
 _MAX_DEPLOY_PCT = 0.80          # never bet more than 80% of budget
 _MIN_RESERVE_PCT = 0.15         # always keep at least this untouched
 
-# Tier definitions — odds/probability windows + share of deployable budget.
+# Tier definitions  -  odds/probability windows + share of deployable budget.
 # Roles selected in this order. `budget_share` is the tier's slice of the
 # deployable pot; `target_share` is how much of the user's cashout goal
 # each ticket alone should return if it wins.
@@ -39,7 +39,7 @@ _TIERS = (
     {"role": "lottery2", "label": "Longshot",  "odds_min": 5.00, "odds_max": 30.0, "min_prob": 0.06, "budget_share": 0.04, "target_share": 1.00, "max_ticket_pct": 0.06},
 )
 
-# Rank-grid variant notes — generic; replace with leg names in the UI.
+# Rank-grid variant notes  -  generic; replace with leg names in the UI.
 _GENERIC_VARIANT_NOTES = frozenset({
     "Best mix", "Alt support line", "Alt swing line", "Alt longshot", "Alt anchor",
     "Support + swing mix", "More longshots", "Safer anchor mix",
@@ -69,7 +69,7 @@ def _opt_prob(opt) -> float:
 
 
 def path_label_from_legs(legs: list, max_names: int = 3) -> str:
-    """Human-readable path id from the actual tickets — not tier template names."""
+    """Human-readable path id from the actual tickets  -  not tier template names."""
     names = [l.get("label") or "" for l in legs if l.get("label")]
     if not names:
         return ""
@@ -90,7 +90,7 @@ def _match_card_pool(
     options: list, overlay: dict | None, stake_only: bool, home: str, away: str,
     *, board_stake: bool = False,
 ) -> list:
-    """Wider pool than the regular slip tabs — keeps longshots the safety filters reject."""
+    """Wider pool than the regular slip tabs  -  keeps longshots the safety filters reject."""
     from bet_placer.data.team_stars import player_goal_eligible
     from bet_placer.engine.stake_odds import option_on_stake, stake_overlay_ready
     from bet_placer.markets.labels import is_core_bet_market
@@ -116,7 +116,7 @@ def _match_card_pool(
 
 
 def _human_context_score_boost(opt, profile: dict, home: str, away: str, ctx: dict) -> float:
-    """Fan read, stakes, morale, chemistry — heavier when they matter most."""
+    """Fan read, stakes, morale, chemistry  -  heavier when they matter most."""
     boost = 0.0
     label = _opt_label(opt).lower()
     rating_gap = float(profile.get("rating_gap") or 0)
@@ -181,7 +181,7 @@ def _human_context_score_boost(opt, profile: dict, home: str, away: str, ctx: di
     if gs and knockout and ("win" in label or fav in label):
         boost += 6
 
-    # World Cup form — xG/GF/GC from match stats snapshot
+    # World Cup form  -  xG/GF/GC from match stats snapshot
     form = ctx.get("form_snapshot") or {}
     for side, team in (("home", home), ("away", away)):
         fs = form.get(side) or {}
@@ -283,7 +283,7 @@ def _handicap_line_value(opt) -> float | None:
 
 
 def _is_sensible_pick(opt, tier_role: str) -> bool:
-    """Block bizarre extreme lines on core tiers — keep spreads realistic."""
+    """Block bizarre extreme lines on core tiers  -  keep spreads realistic."""
     m = (opt.market or "").lower()
     if m == "asian_handicap":
         line = _handicap_line_value(opt)
@@ -541,7 +541,7 @@ def _pick_for_tier(pool, tier, picked, profile, home, away, ctx, rank: int = 0, 
 # ─────────────────────────── stake allocation ──────────────────────────
 
 def _round_stake(x: float) -> float:
-    """Stake INR increments — nearest ₹10, min ₹10."""
+    """Stake INR increments  -  nearest ₹10, min ₹10."""
     return max(_MIN_STAKE, round(x / 10.0) * 10.0)
 
 
@@ -551,8 +551,8 @@ def _size_leg(opt_or_leg, target: float, budget: float, tier: dict) -> float:
     ever exceeding the per-ticket budget cap.
 
     Two candidates:
-      * `target_share * target / odds`  — sized to contribute this share of the goal
-      * `budget_share * deploy`         — flat proportional slice of the bankroll
+      * `target_share * target / odds`   -  sized to contribute this share of the goal
+      * `budget_share * deploy`          -  flat proportional slice of the bankroll
     Take the smaller of the two, floored by tier minimum, capped by max_ticket_pct.
     """
     odds = float(opt_or_leg.get("odds") if isinstance(opt_or_leg, dict) else opt_or_leg.odds)
@@ -579,7 +579,7 @@ def _pick_stake_combos(
     home: str = "",
     away: str = "",
 ) -> list[dict]:
-    """Real Stake combos aligned with the card — at most one small SGM add-on."""
+    """Real Stake combos aligned with the card  -  at most one small SGM add-on."""
     if not overlay:
         return []
     from bet_placer.engine.card_coherence import stake_combo_fits_card
@@ -651,7 +651,7 @@ def _scenarios_card(legs: list[dict], reserve: float, budget: float, target: flo
             "label": "All miss",
             "profit_inr": round(-total, 0),
             "description": (
-                f"Every ticket loses (~{p_all_lose:.0%}) — down {format_inr(total)}. "
+                f"Every ticket loses (~{p_all_lose:.0%})  -  down {format_inr(total)}. "
                 f"{format_inr(reserve)} stays unbet, no bankroll wipeout."
             ),
         },
@@ -686,13 +686,12 @@ def _scenarios_card(legs: list[dict], reserve: float, budget: float, target: flo
 def _n_legs(betting_style: dict | None, target_multiplier: float, budget: float = 300) -> int:
     from bet_placer.engine.bet_portfolio import max_tickets_for_budget
 
-    style = betting_style or {}
+    # Match-discretion ticket count — Settings style does not drive main cards
     cap = max_tickets_for_budget(budget)
-    avg = float(style.get("avg_bets_per_fixture") or 3)
-    base = int(min(cap, max(3 if target_multiplier >= 3.5 else 2, round(avg))))
+    base = 3 if target_multiplier >= 3.5 else 2
     if target_multiplier >= 4.0:
         base = min(cap, base + 1)
-    return max(3 if target_multiplier >= 3.5 else 2, min(base, cap))
+    return max(base, min(base, cap))
 
 
 def _min_stake_for_target(odds: float, target: float) -> float:
@@ -713,7 +712,7 @@ def _build_target_hit_legs(
     max_legs: int = 4,
     min_legs: int = 2,
 ) -> list[dict]:
-    """Separate singles — each sized to hit the profit target if it wins alone."""
+    """Separate singles  -  each sized to hit the profit target if it wins alone."""
     from bet_placer.engine.bet_portfolio import (
         max_tickets_for_budget,
         size_independent_route_stakes,
@@ -836,7 +835,7 @@ def _append_target_lotto(
     ctx: dict,
     thesis: str | None = None,
 ) -> list[dict]:
-    """Pick swing SGM/single sized to net profit target — balanced with insurance."""
+    """Pick swing SGM/single sized to net profit target  -  balanced with insurance."""
     from bet_placer.engine.bet_portfolio import (
         estimate_balanced_spread_stakes,
         fit_spread_stakes_to_budget,
@@ -958,7 +957,7 @@ def _append_target_lotto(
         if _opt_market(opt) == "player_goal" and not player_goal_eligible(home, away, _opt_get(opt, "selection")):
             continue
         if _opt_market(opt) == "player_goal":
-            continue  # never the main profit route — too volatile for target cards
+            continue  # never the main profit route  -  too volatile for target cards
         odds = _opt_odds(opt)
         if odds < 3.5:
             continue
@@ -1079,7 +1078,7 @@ def _fold_stake_combos_into_legs(
             "our_probability_pct": round(hit_prob * 100, 1),
             "ev_pct": 0,
             "role": "target_lotto",
-            "reason": "Swing SGM — small stake mixed with singles",
+            "reason": "Swing SGM  -  small stake mixed with singles",
             "payout_text": f"₹{int(stake):,} → ₹{int(stake * odds):,}",
             "return_inr": round(stake * odds, 0),
             "odds_source": "stake",
@@ -1092,7 +1091,7 @@ def _fold_stake_combos_into_legs(
 
 
 def _finalize_spread_card(legs: list[dict], budget: float) -> list[dict]:
-    """Dedupe to one swing + max 3 tickets — sizing handled by calibrate."""
+    """Dedupe to one swing + max 3 tickets  -  sizing handled by calibrate."""
     from bet_placer.engine.bet_portfolio import _INSURANCE_ROLES, _ROUTE_ROLES
 
     routes = [l for l in legs if (l.get("role") or "") in _ROUTE_ROLES]
@@ -1211,7 +1210,7 @@ def _trim_to_ticket_count(
 def _drop_conflicting_legs(
     legs: list[dict], target: float, budget: float, home: str, away: str,
 ) -> list[dict]:
-    """Remove legs that fight the rest — keep target routes and anchors first."""
+    """Remove legs that fight the rest  -  keep target routes and anchors first."""
     from bet_placer.engine.card_coherence import path_is_coherent
 
     if len(legs) < 2:
@@ -1238,7 +1237,7 @@ def _drop_conflicting_legs(
 def _partial_calibrate_spread(
     legs: list[dict], budget: float, target_profit: float,
 ) -> list[dict]:
-    """Scale stakes to budget when full profit target won't fit — still build the spread."""
+    """Scale stakes to budget when full profit target won't fit  -  still build the spread."""
     from bet_placer.engine.bet_portfolio import (
         TARGET_MIN_STAKE,
         _INSURANCE_ROLES,
@@ -1364,7 +1363,7 @@ def build_match_card_slip(
 
     ctx = {**ctx, "_all_options": all_options or pool}
 
-    # Anchor (+ optional support) before profit route — 3-ticket spreads when tier_count >= 3.
+    # Anchor (+ optional support) before profit route  -  3-ticket spreads when tier_count >= 3.
     want_tickets = tier_count if tier_count is not None else n
     tier_n = min(max(1, want_tickets - 1), len(_TIERS)) if not skip_lotto else min(2, n)
     legs = _build_card_legs(
@@ -1405,7 +1404,7 @@ def build_match_card_slip(
     if not legs:
         return None
 
-    # Optional extra insurance — only if likely (≥48% model) and coherent.
+    # Optional extra insurance  -  only if likely (≥48% model) and coherent.
     if not skip_lotto and len(legs) < want_tickets:
         deployed = sum(l["stake_inr"] for l in legs)
         spare = budget * _MAX_DEPLOY_PCT - deployed
@@ -1521,7 +1520,7 @@ def build_match_card_slip(
         ),
         "why": (
             (f"{path_label} · " if path_label else "")
-            + f"Spread card for {format_inr(target)} goal — anchor, support, and a profit route."
+            + f"Spread card for {format_inr(target)} goal  -  anchor, support, and a profit route."
             + partial_note
             + f" {format_inr(total)} across {len(legs)} tickets, {format_inr(reserve)} kept."
             + f" One winner: {'+' if profit_1 >= 0 else ''}{format_inr(profit_1)} net."
@@ -1577,7 +1576,7 @@ def build_target_match_slips(
     human_context: dict | None = None,
     max_slips: int = 2,
 ) -> list[dict]:
-    """Target-sized match cards — separate coherent paths, same logic as Hit target."""
+    """Target-sized match cards  -  separate coherent paths, same logic as Hit target."""
     from bet_placer.engine.card_coherence import path_is_coherent
 
     ctx = human_context or {}
@@ -1660,7 +1659,7 @@ def build_coherent_match_paths(
     max_paths: int = 3,
     target: float | None = None,
 ) -> list[dict]:
-    """Separate paths per team/read — each path is internally non-contradictory."""
+    """Separate paths per team/read  -  each path is internally non-contradictory."""
     from bet_placer.engine.card_coherence import path_is_coherent
 
     ctx = human_context or {}
@@ -1795,7 +1794,7 @@ def build_match_card_variants(
     human_context: dict | None = None,
     max_variants: int = 3,
 ) -> list[dict]:
-    """A few distinct spread cards — quality over quantity."""
+    """A few distinct spread cards  -  quality over quantity."""
     variants: list[dict] = []
     seen: set = set()
 
@@ -1852,7 +1851,7 @@ def build_balanced_sized_paths(
     stake_only: bool,
     human_context: dict | None = None,
 ) -> list[dict]:
-    """2 / 3 / 4-ticket spreads — distinct sizes, not always 5–6 legs."""
+    """2 / 3 / 4-ticket spreads  -  distinct sizes, not always 5–6 legs."""
     ctx = human_context or {}
     all_opts = ctx.get("_all_options") or pool
     fav = _favorite_side(all_opts, home, away)

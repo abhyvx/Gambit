@@ -1,4 +1,4 @@
-"""Target-cashout planner — find bet combinations that reach a payout goal.
+"""Target-cashout planner  -  find bet combinations that reach a payout goal.
 
 Uses scraped Stake odds for singles and only lists same-game multis that exist
 as pre-built Stake combo markets (never multiplies single-line odds).
@@ -86,7 +86,7 @@ def build_target_plans(
     combo_cap = 10 if target_hit else (6 if mult >= 8 else 4 if mult >= 5 else 3)
 
     if target_hit:
-        # Multi-ticket stacks first — 3+ separate Stake slips, one sized to hit target.
+        # Multi-ticket stacks first  -  3+ separate Stake slips, one sized to hit target.
         plans.extend(_search_ticket_stack(
             pool, budget, target, profile, stake_only, ctx, home, away,
         )[:16])
@@ -138,7 +138,7 @@ def build_target_plans(
         plans.extend(_search_volume_singles(
             pool, budget, target, profile, stake_only, ctx, betting_style, home, away,
         )[:10])
-    # ponytail: split = all legs must win — wrong semantics for hit-target (use spread card)
+    # ponytail: split = all legs must win  -  wrong semantics for hit-target (use spread card)
     if not target_hit:
         plans.extend(_search_splits(pool, budget, target, profile, stake_only, ctx, home, away)[:6])
     plans.extend(_search_stake_combos(
@@ -180,7 +180,7 @@ def build_target_plans(
     plans.sort(key=lambda p: _rank_key(p, ctx), reverse=True)
     plans = _pick_ranked_plans(plans, MAX_PLANS, ctx)
     plans = [_annotate_plan(p, i + 1, home, away, budget=budget, target=target) for i, p in enumerate(plans)]
-    # Re-sort after ticket_count is known — separate Stake slips beat one parlay in target mode.
+    # Re-sort after ticket_count is known  -  separate Stake slips beat one parlay in target mode.
     target_hit = bool(ctx.get("target_hit_mode"))
     plans.sort(
         key=lambda p: _display_rank_key(p, target_hit),
@@ -267,7 +267,7 @@ def _round_up(n: float) -> float:
 
 
 def _leg_worth_bonus(opt, ctx: dict) -> float:
-    """Boost legs the model already likes — easy money / thesis picks."""
+    """Boost legs the model already likes  -  easy money / thesis picks."""
     bonus = 0.0
     ev = float(getattr(opt, "ev_pct", 0) or 0)
     if ev > 0:
@@ -287,7 +287,7 @@ def _leg_worth_bonus(opt, ctx: dict) -> float:
 
 
 def _wide_pool(pool: list, ctx: dict, stake_only: bool, home: str, away: str) -> list:
-    """Longshots and niche markets — same wider pool as match cards."""
+    """Longshots and niche markets  -  same wider pool as match cards."""
     from bet_placer.engine.match_card import _match_card_pool
 
     overlay = ctx.get("stake_overlay")
@@ -376,7 +376,7 @@ def _sanitize_plans(plans: list) -> list[dict]:
         legs = p.get("legs") or []
         if ptype != "combo" and any(l.get("role") == "parlay_leg" for l in legs):
             continue
-        # Reject fake SGMs — but allow match_card with verified Stake combo legs
+        # Reject fake SGMs  -  but allow match_card with verified Stake combo legs
         verified_sgm_card = (
             ptype == "match_card"
             and legs
@@ -437,7 +437,7 @@ def _search_singles(pool, budget, target, profile, stake_only, ctx, home, away) 
             "plan_type": "single",
             "plan_type_label": "Single bet",
             "name": " Single to target",
-            "description": f"{opt.label} @ {opt.odds}x — stake {format_inr(stake)}",
+            "description": f"{opt.label} @ {opt.odds}x  -  stake {format_inr(stake)}",
             "why": (
                 f"One bet: if it wins you get {format_inr(ret)} "
                 f"({format_inr(profit)} profit). "
@@ -498,7 +498,7 @@ def _pick_labels(ctx: dict) -> set[str]:
 
 
 def _combo_thesis_anchor_ok(combo, thesis_side: str | None, home: str, away: str) -> bool:
-    """Parlay must tell one story — favorite result and/or their scorers, not the other side."""
+    """Parlay must tell one story  -  favorite result and/or their scorers, not the other side."""
     if not thesis_side or thesis_side == "neutral":
         return True
     from bet_placer.engine.match_card import _option_result_side
@@ -532,7 +532,7 @@ def _combo_thesis_anchor_ok(combo, thesis_side: str | None, home: str, away: str
 
 
 def _combo_story_score(combo, ctx: dict, thesis_side: str | None, home: str, away: str) -> float:
-    """Boost legs that match this fixture's picks and narrative — not a fixed template."""
+    """Boost legs that match this fixture's picks and narrative  -  not a fixed template."""
     score = 0.0
     markets = {(getattr(c, "market", None) or "").lower() for c in combo}
     picks = _pick_labels(ctx)
@@ -548,7 +548,7 @@ def _combo_story_score(combo, ctx: dict, thesis_side: str | None, home: str, awa
 
 
 def _combo_match_fit(combo, profile: dict, ctx: dict, home: str, away: str) -> float:
-    """How well this combo fits THIS match profile — varies by fixture."""
+    """How well this combo fits THIS match profile  -  varies by fixture."""
     style = profile.get("style") or "balanced"
     markets = {(getattr(c, "market", "") or "").lower() for c in combo}
     labels = " ".join((getattr(c, "label", "") or "").lower() for c in combo)
@@ -604,7 +604,7 @@ def _combo_match_fit(combo, profile: dict, ctx: dict, home: str, away: str) -> f
 
 
 def _combo_hit_probability(combo, profile: dict | None = None, thesis_side: str | None = None) -> float:
-    """Coherent same-match legs correlate — boost depends on match style, not one template."""
+    """Coherent same-match legs correlate  -  boost depends on match style, not one template."""
     probs = [float(getattr(o, "our_probability", 0) or 0) for o in combo]
     if not probs:
         return 0.0
@@ -623,7 +623,7 @@ def _combo_hit_probability(combo, profile: dict | None = None, thesis_side: str 
 
 
 def _dedupe_combo_templates(plans: list[dict], max_n: int) -> list[dict]:
-    """Don't fill the board with the same market mix — one per template shape."""
+    """Don't fill the board with the same market mix  -  one per template shape."""
     picked: list[dict] = []
     seen_markets: set = set()
     seen_labels: set = set()
@@ -717,7 +717,7 @@ def _search_combo_routes(pool, budget, target, profile, stake_only, ctx, home, a
                 "plan_type": "combo",
                 "plan_type_label": f"Estimated custom combo · {n} legs",
                 "name": "Custom combo route",
-                "description": f"{n} judged legs @ {round(odds, 2)}x — stake {format_inr(stake)}",
+                "description": f"{n} judged legs @ {round(odds, 2)}x  -  stake {format_inr(stake)}",
                 "why": (
                     f"{story}{profile.get('style', 'match')}-fit custom combo for {home} vs {away}. "
                     f"All {n} legs must hit together. ~{hp:.0%} chance → {format_inr(ret)} "
@@ -779,7 +779,7 @@ def _search_stake_combos(
     overlay, budget, target, stake_only,
     pool=None, home: str = "", away: str = "", ctx: dict | None = None,
 ) -> list[dict]:
-    """Only Stake pre-built combo markets — real SGM prices, not multiplied singles."""
+    """Only Stake pre-built combo markets  -  real SGM prices, not multiplied singles."""
     from bet_placer.engine.stake_sgm import search_stake_combos
     from bet_placer.engine.card_coherence import stake_combo_fits_thesis
 
@@ -829,7 +829,7 @@ def _search_stake_combos(
             "plan_type": "stake_combo",
             "plan_type_label": "Stake SGM (verified combo)",
             "name": " Stake combo",
-            "description": f"{c['label']} @ {c['odds']}x — scraped from Stake Combos",
+            "description": f"{c['label']} @ {c['odds']}x  -  scraped from Stake Combos",
             "why": (
                 f"This exact combo exists on Stake under Combos. "
                 f"Stake {format_inr(stake)} → {format_inr(ret)} if it wins "
@@ -861,7 +861,7 @@ def _search_stake_combos(
 
 
 def _search_splits(pool, budget, target, profile, stake_only, ctx, home, away) -> list[dict]:
-    """Independent singles — if all win, combined return hits target."""
+    """Independent singles  -  if all win, combined return hits target."""
     cands = [
         o for o in pool
         if o.our_probability >= MIN_LEG_PROB and o.odds > 1.1
@@ -937,7 +937,7 @@ def _allocate_split(combo, budget, target, profile, stake_only, home: str = "", 
         "name": " Separate singles (all hit)",
         "description": f"{n} independent singles on Stake · {labels}",
         "why": (
-            f"Place {n} separate singles — not a same-game multi. "
+            f"Place {n} separate singles  -  not a same-game multi. "
             f"If all win you collect {format_inr(round(ret, 0))} (~{cp:.0%})."
         ),
         "path_headline": f"{n} separate singles → {format_inr(round(ret, 0))} if all hit",
@@ -959,7 +959,7 @@ def _allocate_split(combo, budget, target, profile, stake_only, home: str = "", 
 def _search_target_hit_routes(
     pool, budget, target, profile, stake_only, ctx, home, away,
 ) -> list[dict]:
-    """Separate singles — each sized to pay target; rank by chance any route wins."""
+    """Separate singles  -  each sized to pay target; rank by chance any route wins."""
     from bet_placer.engine.match_card import _build_target_hit_legs
 
     search = _wide_pool(pool, ctx, stake_only, home, away)
@@ -993,7 +993,7 @@ def _search_target_hit_routes(
             "plan_type": "coverage",
             "plan_type_label": f"Target routes · {n} singles",
             "name": f" {n} routes to {format_inr(target)}",
-            "description": f"{n} separate singles — any one pays {format_inr(target)} if it wins",
+            "description": f"{n} separate singles  -  any one pays {format_inr(target)} if it wins",
             "why": _target_route_why(legs, target, p_win),
             "path_headline": _target_route_headline(legs, target, p_win),
             "legs": legs,
@@ -1037,13 +1037,13 @@ def _target_route_why(legs: list[dict], target: float, p_win: float) -> str:
     pct = round(float(best.get("our_probability") or 0) * 100, 1)
     return (
         f"Each ticket pays {format_inr(target)} if it wins. "
-        f"~{p_win:.0%} chance at least one lands — "
+        f"~{p_win:.0%} chance at least one lands  -  "
         f"best line {best.get('label')} ({pct}%)."
     )
 
 
 def _search_coverage(pool, budget, target, profile, stake_only, ctx, betting_style, home, away) -> list[dict]:
-    """Separate singles — each sized so if THAT bet wins you hit the profit target."""
+    """Separate singles  -  each sized so if THAT bet wins you hit the profit target."""
     from bet_placer.engine.match_card import _aligns_thesis
     from bet_placer.engine.bet_portfolio import (
         leg_net_if_solo_win,
@@ -1106,7 +1106,7 @@ def _search_coverage(pool, budget, target, profile, stake_only, ctx, betting_sty
                 "plan_type": "coverage",
                 "plan_type_label": f"Separate singles · {n} routes",
                 "name": f" {n} routes to {format_inr(target)}",
-                "description": f"{n} separate singles — any one can hit your target if it wins",
+                "description": f"{n} separate singles  -  any one can hit your target if it wins",
                 "why": _target_route_why(legs, target, p_win),
                 "path_headline": _target_route_headline(legs, target, p_win),
                 "legs": legs,
@@ -1163,7 +1163,7 @@ def _ticket_stack_leg(
 def _search_ticket_stack(
     pool, budget, target, profile, stake_only, ctx, home, away,
 ) -> list[dict]:
-    """3–8 separate Stake slips — cheap probable tickets + one sized to hit target."""
+    """3–8 separate Stake slips  -  cheap probable tickets + one sized to hit target."""
     from bet_placer.engine.card_coherence import path_is_coherent, stake_combo_fits_thesis, stake_combo_is_garbage
     from bet_placer.engine.match_card import _aligns_thesis
     from bet_placer.engine.bet_portfolio import (
@@ -1271,11 +1271,11 @@ def _search_ticket_stack(
             "plan_type_label": f"{n} separate tickets",
             "name": f" {n}-ticket stack",
             "description": (
-                f"{n} separate bets on Stake — {format_inr(total)} deployed. "
+                f"{n} separate bets on Stake  -  {format_inr(total)} deployed. "
                 f"Target ticket nets {format_inr(net)} if it wins."
             ),
             "why": (
-                f"{n} separate Stake slips — {n - 1} probable ticket{'s' if n > 2 else ''} "
+                f"{n} separate Stake slips  -  {n - 1} probable ticket{'s' if n > 2 else ''} "
                 f"at {format_inr(MIN_STAKE)} plus one target route at {format_inr(t_stake)}. "
                 f"Losing the others is fine. ~{p_any:.0%} any winner · "
                 f"target ~{t_prob:.0%}."
@@ -1326,7 +1326,7 @@ def _search_ticket_stack(
 def _search_spray_routes(
     pool, budget, target, profile, stake_only, ctx, home, away,
 ) -> list[dict]:
-    """Several probable cheap tickets + routes sized to hit target — no anchor/lotto tiers."""
+    """Several probable cheap tickets + routes sized to hit target  -  no anchor/lotto tiers."""
     from bet_placer.engine.match_card import _aligns_thesis
     from bet_placer.engine.bet_portfolio import (
         leg_net_if_solo_win,
@@ -1388,7 +1388,7 @@ def _search_spray_routes(
                     "plan_type_label": f"{n} separate tickets",
                     "name": f" {n}-ticket spread",
                     "description": (
-                        f"{n} separate bets — {format_inr(total)} deployed. "
+                        f"{n} separate bets  -  {format_inr(total)} deployed. "
                         f"If the target route wins you net {format_inr(net)}."
                     ),
                     "why": (
@@ -1476,7 +1476,7 @@ def _stake_combo_leg(
 def _search_moderate_sgm_portfolio(
     pool, budget, target, profile, stake_only, ctx, home, away,
 ) -> list[dict]:
-    """2–3 verified Stake SGMs (2–8x) as separate tickets — like real Stake slips."""
+    """2–3 verified Stake SGMs (2–8x) as separate tickets  -  like real Stake slips."""
     overlay = ctx.get("stake_overlay")
     if not overlay:
         return []
@@ -1589,7 +1589,7 @@ def _search_moderate_sgm_portfolio(
             "plan_type_label": f"Stake SGMs · {len(legs)} separate tickets",
             "name": f" {len(legs)} Stake SGMs",
             "description": (
-                f"{len(legs)} verified same-game multis on Stake — "
+                f"{len(legs)} verified same-game multis on Stake  -  "
                 f"{format_inr(total)} deployed · lead SGM ~{p_target:.0%}"
             ),
             "why": (
@@ -1699,11 +1699,11 @@ def _search_spread_portfolio(
     max_deploy = budget * 0.88  # ponytail: slightly higher cap so 3-ticket spreads can fit
 
     def _max_insurance(_route_odds: float) -> int:
-        # ponytail: ticket count from budget, not route odds — 6x routes still get 3+ slips.
+        # ponytail: ticket count from budget, not route odds  -  6x routes still get 3+ slips.
         return min(6, max(1, max_tickets_for_budget(budget) - 1))
 
     def _min_insurance(route_odds: float) -> int:
-        """Sub-7x routes can't fit 3+ tickets at profit target — need 1 insurance only."""
+        """Sub-7x routes can't fit 3+ tickets at profit target  -  need 1 insurance only."""
         if route_odds < 7.0:
             return 1
         return 2 if budget >= 80 else 1
@@ -1804,7 +1804,7 @@ def _search_spread_portfolio(
             "plan_type_label": f"Spread portfolio · {n} separate tickets",
             "name": f" {n}-ticket spread",
             "description": (
-                f"{n} separate bets on Stake — {format_inr(total)} deployed, "
+                f"{n} separate bets on Stake  -  {format_inr(total)} deployed, "
                 f"{format_inr(reserve)} kept · lotto ticket nets {format_inr(net)} if it hits"
             ),
             "why": (
@@ -1841,7 +1841,7 @@ def _search_spread_portfolio(
     med_top = medium[:10]
     lotto_top = lotto[:10]
 
-    # Stake combo routes first — higher odds unlock more small insurance tickets.
+    # Stake combo routes first  -  higher odds unlock more small insurance tickets.
     for hp, combo, odds in combo_routes[:12]:
         cap = _max_insurance(odds)
         lo = _min_insurance(odds)
@@ -1900,7 +1900,7 @@ def _search_spread_portfolio(
 def _search_volume_singles(
     pool, budget, target, profile, stake_only, ctx, betting_style, home, away,
 ) -> list[dict]:
-    """Spread budget across 3–5 thesis-aligned singles — combined wins reach target."""
+    """Spread budget across 3–5 thesis-aligned singles  -  combined wins reach target."""
     from bet_placer.engine.match_card import _aligns_thesis
 
     search = _wide_pool(pool, ctx, stake_only, home, away)
@@ -1953,11 +1953,11 @@ def _search_volume_singles(
                 "plan_type_label": f"Match card · {n} separate singles",
                 "name": " Spread singles (your style)",
                 "description": (
-                    f"{n} separate singles ~{format_inr(per_stake)} each — "
+                    f"{n} separate singles ~{format_inr(per_stake)} each  -  "
                     f"combined wins can reach {format_inr(target)}"
                 ),
                 "why": (
-                    f"{n} separate probable singles on this match — "
+                    f"{n} separate probable singles on this match  -  "
                     f"~{p_any:.0%} chance at least one lands "
                     f"(avg leg ~{avg_prob:.0%}). Spread beats one longshot ticket."
                 ),
@@ -1997,7 +1997,7 @@ def _search_volume_singles(
 
 
 def _prefer_probable_spreads(plans: list[dict]) -> list[dict]:
-    """Target-paying routes first — sorted by real win chance, not 'any leg hits'."""
+    """Target-paying routes first  -  sorted by real win chance, not 'any leg hits'."""
     paying = [p for p in plans if (p.get("win_probability") or 0) > 0]
     if not paying:
         return plans
@@ -2016,7 +2016,7 @@ def _prefer_probable_spreads(plans: list[dict]) -> list[dict]:
 
 
 def _score_plan_worth(plan: dict, ctx: dict, betting_style: dict | None = None) -> dict:
-    """How suitable this path is — not just whether it can hit target."""
+    """How suitable this path is  -  not just whether it can hit target."""
     style = betting_style or {}
     wp = float(plan.get("win_probability") or plan.get("hit_probability") or 0)
     hp = wp
@@ -2171,7 +2171,7 @@ def _path_steps(plan: dict) -> list[dict]:
             "step": len(legs) + 1,
             "title": "Realistic outcome",
             "detail": (
-                f"Expect some to lose — ~{plan.get('hit_probability_pct')}% chance at least one line helps. "
+                f"Expect some to lose  -  ~{plan.get('hit_probability_pct')}% chance at least one line helps. "
                 f"A longshot landing can cover the card."
             ),
             "probability_pct": plan.get("hit_probability_pct"),
@@ -2372,7 +2372,7 @@ def _moderate_route_tier(plan: dict) -> int:
 
 
 def _display_rank_key(plan: dict, target_hit: bool) -> tuple:
-    """UI order — in target mode, coherent moderate combos should surface first."""
+    """UI order  -  in target mode, coherent moderate combos should surface first."""
     wp = float(plan.get("win_probability") or 0)
     hp = float(plan.get("hit_probability") or 0)
     n_tix = plan.get("ticket_count") or len([
@@ -2405,7 +2405,7 @@ def _dedupe_plans(plans: list[dict]) -> list[dict]:
 
 
 def _plan_signature(plan: dict) -> tuple:
-    """Dedupe by actual leg set — not stake sizing or plan labels."""
+    """Dedupe by actual leg set  -  not stake sizing or plan labels."""
     legs = tuple(sorted(
         (l.get("market"), l.get("selection"), l.get("line"))
         for l in plan.get("legs", [])
@@ -2414,7 +2414,7 @@ def _plan_signature(plan: dict) -> tuple:
 
 
 def _plan_win_probability(plan: dict, budget: float, target: float) -> float:
-    """Chance this path actually reaches the cashout target — not 'any leg wins'."""
+    """Chance this path actually reaches the cashout target  -  not 'any leg wins'."""
     from bet_placer.engine.bet_portfolio import leg_net_if_solo_win, target_profit_inr
 
     legs = plan.get("legs") or []
@@ -2469,7 +2469,7 @@ def _plan_win_probability(plan: dict, budget: float, target: float) -> float:
 
 
 def _plan_profit_summary(plan: dict, budget: float, target: float) -> dict:
-    """Net profit on this path — not the user's gross cashout goal."""
+    """Net profit on this path  -  not the user's gross cashout goal."""
     from bet_placer.engine.bet_portfolio import leg_net_if_solo_win, target_profit_inr
 
     legs = plan.get("legs") or []
@@ -2585,7 +2585,7 @@ def _result(
         "game_profile": profile or {},
         "betting_style": style,
         "engine": "target_planner_v10",
-        "engine_note": "Thesis-aligned routes — favorite lean, props, and real win probability",
+        "engine_note": "Thesis-aligned routes  -  favorite lean, props, and real win probability",
         "summary": (
             reason if impossible else
             (
@@ -2648,7 +2648,7 @@ def plan_hit_target_for_match(
         if wc.status == "completed":
             return {
                 "available": False,
-                "reason": "Match finished — no bets to plan.",
+                "reason": "Match finished  -  no bets to plan.",
                 "impossible": True,
                 "plans": [],
                 "home": wc.home,
@@ -2695,7 +2695,7 @@ def plan_hit_target_for_match(
         if getattr(match, "status", None) == "completed":
             return {
                 "available": False,
-                "reason": "Match finished — no bets to plan.",
+                "reason": "Match finished  -  no bets to plan.",
                 "impossible": True,
                 "plans": [],
                 "home": home_n,
@@ -2735,7 +2735,7 @@ def plan_hit_target_for_match(
     human_context["stake_overlay"] = stake_overlay
 
     probabilities = predict_all_markets(match)
-    # Build priced board BEFORE portfolio resolve — otherwise cloud (no Stake) returns []
+    # Build priced board BEFORE portfolio resolve  -  otherwise cloud (no Stake) returns []
     try:
         from bet_placer.engine.bet_builder import _match_thesis, build_match_flat_board
         from bet_placer.engine.smart_picks import build_smart_picks

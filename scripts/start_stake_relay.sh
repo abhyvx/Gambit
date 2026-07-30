@@ -1,24 +1,20 @@
 #!/bin/bash
-# Keep Stake odds flowing to Render from THIS laptop (Cloudflare works here).
-# First run: a Chrome window may open — finish the "Just a moment…" check, then leave this running.
+# One-shot Stake → Render push. Does NOT leave a terminal loop running.
+# For scheduled updates without a 24/7 process: ./scripts/install_stake_relay_agent.sh
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 [ -f .env ] && set -a && source .env && set +a
 
 export STAKE_USE_BROWSER=true
-# Visible Chrome required once for Cloudflare — headless alone fails on CF
 export STAKE_BROWSER_HEADLESS="${STAKE_BROWSER_HEADLESS:-false}"
 if [ -z "${STAKE_RELAY_SECRET:-}" ]; then
   echo "Set STAKE_RELAY_SECRET before starting the Stake relay." >&2
   exit 1
 fi
 export GAMBIT_CLOUD_URL="${GAMBIT_CLOUD_URL:-https://gambit-yqng.onrender.com}"
-# After a good push, seed GitHub release so Render bootstrap survives redeploys
 export STAKE_UPLOAD_RELEASE="${STAKE_UPLOAD_RELEASE:-1}"
-# Prefer real Stake — don't push ESPN shells from the long-running relay
 export STAKE_SKIP_ESPN="${STAKE_SKIP_ESPN:-1}"
-# strip accidental spaces
 GAMBIT_CLOUD_URL="$(echo "$GAMBIT_CLOUD_URL" | tr -d '[:space:]')"
 export GAMBIT_CLOUD_URL
 
@@ -28,8 +24,8 @@ if [ -z "$GAMBIT_CLOUD_URL" ] || echo "$GAMBIT_CLOUD_URL" | grep -q YOUR-SERVICE
 fi
 
 source .venv/bin/activate 2>/dev/null || true
-echo "Pushing Stake → $GAMBIT_CLOUD_URL (every ${STAKE_RELAY_INTERVAL:-300}s)"
-echo "If Chrome opens: complete Cloudflare once, do not close the profile window."
-echo "First-time tip: PYTHONPATH=src python3 scripts/connect_stake_and_push.py"
-PYTHONPATH=src python3 scripts/push_stake_cache.py || true
-PYTHONPATH=src python3 scripts/stake_relay.py
+echo "One-shot Stake push → $GAMBIT_CLOUD_URL"
+echo "Chrome may open once for Cloudflare — finish the check, then this script exits."
+echo "For every-10-min updates without a terminal: ./scripts/install_stake_relay_agent.sh"
+PYTHONPATH=src python3 scripts/push_stake_cache.py
+echo "Done. No background process left running."

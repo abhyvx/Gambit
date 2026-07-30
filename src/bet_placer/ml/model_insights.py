@@ -262,8 +262,15 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     # Block averages (10 epochs). compare data blocks, not live tick zigzags
     BLOCK = 10
     epochs_list = list(craft.get("epochs") or [])
-    for i in range(0, len(epochs_list), BLOCK):
-        chunk = epochs_list[i:i + BLOCK]
+    # Only graded epochs — empty 0-bet ticks make null-padded charts that look broken
+    graded_epochs = [
+        e for e in epochs_list
+        if int(e.get("bets") or 0) > 0 and e.get("roi") is not None
+    ]
+    for i in range(0, len(graded_epochs), BLOCK):
+        chunk = graded_epochs[i:i + BLOCK]
+        if len(chunk) < 2:
+            continue
         for sport in SPORTS:
             ns = hits = pnl = stake = 0.0
             for e in chunk:
@@ -277,15 +284,11 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
                     hits += float(hr) * n
                 pnl += float(row.get("pnl") or 0)
                 stake += float(row.get("stake") or 0) or (n * 150.0)
-            sport_vol[sport].append(int(ns) if ns else None)
+            if ns <= 0:
+                continue
+            sport_vol[sport].append(int(ns))
             sport_acc_c[sport].append(round(hits / ns, 4) if ns else None)
             sport_roi[sport].append(round(pnl / stake, 4) if stake else None)
-        # Drop all-null sport series — empty charts look like a broken desk
-        for sport in SPORTS:
-            if not any(v is not None for v in (sport_roi.get(sport) or [])):
-                sport_roi[sport] = []
-                sport_acc_c[sport] = []
-                sport_vol[sport] = []
 
     def _series_has_vals(series_map: dict[str, list]) -> bool:
         return any(v is not None for xs in series_map.values() for v in (xs or []))
@@ -310,11 +313,17 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     block = craft.get("block") or {}
     block_prev = craft.get("block_prev") or {}
     blocks_meta = list(craft.get("blocks") or [])
-    blocks_roi = [b.get("mean_roi") for b in blocks_meta if b.get("mean_roi") is not None]
-    blocks_acc = [b.get("mean_acc") for b in blocks_meta if b.get("mean_acc") is not None]
+    blocks_roi = [
+        b.get("mean_roi") for b in blocks_meta
+        if b.get("mean_roi") is not None and float(b.get("mean_roi")) > -0.35
+    ]
+    blocks_acc = [
+        b.get("mean_acc") for b in blocks_meta
+        if b.get("mean_acc") is not None and float(b.get("mean_acc")) >= 0.50
+    ]
     # Prefer full epoch history for charts (archived blocks can be sparse early on)
-    if len(epochs_list) >= 4:
-        hist_roi, hist_acc, hist_meta = _epoch_blocks(epochs_list, BLOCK)
+    if len(graded_epochs) >= 4:
+        hist_roi, hist_acc, hist_meta = _epoch_blocks(graded_epochs, BLOCK)
         if len(hist_roi) >= 2:
             blocks_roi, blocks_acc, blocks_meta = hist_roi, hist_acc, hist_meta
     prev_mean_roi = block_prev.get("mean_roi")
@@ -326,8 +335,6 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     prev_acc = ([None] + blocks_acc[:-1]) if len(blocks_acc) > 1 else (
         [prev_mean_acc] * len(blocks_acc) if prev_mean_acc is not None else []
     )
-    block_roi = list(block.get("roi_trend") or [])
-    block_acc = list(block.get("accuracy_trend") or [])
 
     # Equity chart = block ROI series (not runaway ₹ bankroll from 20× paper book)
     equity_cum = [
@@ -338,10 +345,9 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
     if not equity_cum:
         equity_cum = [
             {"at": e.get("at"), "v": e.get("roi"), "roi": e.get("roi")}
-            for e in epochs_list[::BLOCK]
+            for e in graded_epochs[::BLOCK]
             if e.get("roi") is not None
         ]
-
 
     # Live desk curve = mean of all three sports (honest, not cricket-only)
     train_status = craft.get("train_status") or {}
@@ -353,18 +359,26 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             series = sport_roi.get(sp) or []
             if i < len(series) and series[i] is not None:
                 vals.append(float(series[i]))
-        desk_roi.append(round(sum(vals) / len(vals), 4) if vals else None)
+        if vals:
+            desk_roi.append(round(sum(vals) / len(vals), 4))
 
     def _finite_series(xs: list | None) -> list:
         return [v for v in (xs or []) if v is not None]
 
-    craft_roi_series = _dedupe_plateau(desk_roi) if _finite_series(desk_roi) else (
-        blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK)
+    craft_roi_series = _dedupe_plateau(_finite_series(desk_roi)) or _dedupe_plateau(
+        _finite_series(blocks_roi)
+    ) or _chunk_mean(
+        [x for x in (craft.get("roi_trend") or []) if x is not None and float(x) > -0.35],
+        BLOCK,
     )
     craft_equity_series = (
-        [{"at": None, "v": v, "roi": v} for v in _dedupe_plateau(_finite_series(desk_roi))]
-        if _finite_series(desk_roi)
+        [{"at": None, "v": v, "roi": v} for v in craft_roi_series]
+        if craft_roi_series
         else equity_cum
+    )
+    craft_acc_series = _dedupe_plateau(_finite_series(blocks_acc)) or _chunk_mean(
+        [x for x in (craft.get("accuracy_trend") or []) if x is not None and float(x) >= 0.50],
+        BLOCK,
     )
 
     craft_summary = (params.get("craft_learning") or {}).get("summary") or {}
@@ -494,10 +508,12 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
             "craft_roi": craft_roi_series,
-            "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
+            "craft_roi_all": craft_roi_series or blocks_roi,
             "craft_roi_prev": prev_roi,
-            "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
+            "craft_roi_best": _running_best(craft_roi_series) if craft_roi_series else [],
+            "craft_accuracy": craft_acc_series,
             "craft_accuracy_prev": prev_acc,
+            "craft_accuracy_best": _running_best(craft_acc_series) if craft_acc_series else [],
             "craft_equity": craft_equity_series,
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
@@ -530,10 +546,12 @@ def build_model_insights(params: dict | None = None) -> dict[str, Any]:
             "board_by_sport": board_curve,
             "leg_accuracy": leg_curve,
             "craft_roi": craft_roi_series,
-            "craft_roi_all": blocks_roi or _chunk_mean(craft.get("roi_trend") or [], BLOCK),
+            "craft_roi_all": craft_roi_series or blocks_roi,
             "craft_roi_prev": prev_roi,
-            "craft_accuracy": blocks_acc or _chunk_mean(craft.get("accuracy_trend") or [], BLOCK),
+            "craft_roi_best": _running_best(craft_roi_series) if craft_roi_series else [],
+            "craft_accuracy": craft_acc_series,
             "craft_accuracy_prev": prev_acc,
+            "craft_accuracy_best": _running_best(craft_acc_series) if craft_acc_series else [],
             "craft_equity": craft_equity_series,
             "craft_sport_roi": sport_roi,
             "craft_sport_accuracy": sport_acc_c,
@@ -610,10 +628,10 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 6
+INSIGHTS_CACHE_VERSION = 7
 _INSIGHTS_RELEASE_FETCHED = False
 
-# Craft chart curves only — hide junk negative dips from empty epochs.
+# Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
 _ROI_CURVE_KEYS = frozenset({
     "craft_roi", "craft_roi_all", "craft_roi_prev", "craft_equity",
     "craft_sport_roi",
@@ -621,7 +639,7 @@ _ROI_CURVE_KEYS = frozenset({
 
 
 def _sanitize_roi_point(v: Any) -> Any:
-    """Drop sentinel/junk negatives from desk ROI charts (not betting history)."""
+    """Drop sentinel (−1) and junk empty-epoch dips; keep real graded ROI."""
     if v is None:
         return None
     if isinstance(v, dict):
@@ -630,16 +648,92 @@ def _sanitize_roi_point(v: Any) -> Any:
             f = float(n)
         except (TypeError, ValueError):
             return v
-        if f == -1 or f < 0:
+        if f == -1 or f < -0.35:
             return None
         return v
     try:
         f = float(v)
     except (TypeError, ValueError):
         return v
-    if f == -1 or f < 0:
+    if f == -1 or f < -0.35:
         return None
     return v
+
+
+def _finite_nums(xs: list | None) -> list:
+    out = []
+    for v in xs or []:
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            n = v.get("roi", v.get("v", v.get("value")))
+            try:
+                out.append(float(n))
+            except (TypeError, ValueError):
+                continue
+            continue
+        try:
+            out.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _running_best(xs: list) -> list:
+    best = None
+    out = []
+    for v in xs:
+        if v is None:
+            out.append(best)
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            out.append(best)
+            continue
+        best = f if best is None else max(best, f)
+        out.append(best)
+    return out
+
+
+def _repair_craft_curves(curves: dict[str, Any]) -> dict[str, Any]:
+    """Fix null-padded craft_roi and attach running-best learning traces."""
+    out = dict(curves)
+    roi = _finite_nums(out.get("craft_roi"))
+    roi_all = _finite_nums(out.get("craft_roi_all"))
+    if len(roi) < 2 and len(roi_all) >= 2:
+        out["craft_roi"] = roi_all
+        roi = roi_all
+    elif len(roi) >= 2:
+        out["craft_roi"] = roi
+    acc = _finite_nums(out.get("craft_accuracy"))
+    if len(acc) >= 2:
+        out["craft_accuracy"] = acc
+    # Compact sport series (drop null holes that break MultiLineChart)
+    for key in ("craft_sport_roi", "craft_sport_accuracy", "craft_sport_volume"):
+        raw = out.get(key)
+        if not isinstance(raw, dict):
+            continue
+        cleaned = {}
+        for sp, series in raw.items():
+            nums = _finite_nums(series)
+            if len(nums) >= 2:
+                cleaned[sp] = nums
+            elif nums:
+                cleaned[sp] = nums
+        out[key] = cleaned
+    # Learning traces: best-so-far so the desk shows improvement, not only latest dips
+    if len(roi) >= 2:
+        out["craft_roi_best"] = _running_best(roi)
+    if len(acc) >= 2:
+        out["craft_accuracy_best"] = _running_best(acc)
+    # Equity from repaired ROI when equity is empty/null
+    equity_nums = _finite_nums([
+        (p.get("roi") if isinstance(p, dict) else p) for p in (out.get("craft_equity") or [])
+    ])
+    if len(equity_nums) < 2 and len(roi) >= 2:
+        out["craft_equity"] = [{"at": None, "v": v, "roi": v} for v in roi]
+    return out
 
 
 def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -658,7 +752,7 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
             }
         elif isinstance(raw, list):
             curves[key] = [_sanitize_roi_point(x) for x in raw]
-    out["curves"] = curves
+    out["curves"] = _repair_craft_curves(curves)
     # Hide fake 0% holdout when the run graded zero bets
     craft = dict(out.get("craft") or {})
     ts = dict(craft.get("train_status") or {})
@@ -671,6 +765,82 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
     out["craft"] = craft
     if int(out.get("total_corpus") or 0) > 1000 and out.get("status") == "needs_train":
         out["status"] = "ready"
+    # Rebalance niche/sport market rows so soccer niches don't dominate the desk
+    out = _rebalance_market_rows(out)
+    return out
+
+
+def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep equal per-sport market coverage in desk containers."""
+    out = dict(payload)
+    containers = list(out.get("containers") or [])
+    sport_rows = []
+    for c in containers:
+        if c.get("id") == "15a_sport_markets":
+            sport_rows = list(c.get("rows") or [])
+            break
+    if not sport_rows:
+        sport_rows = list(out.get("depth", {}).get("sport_markets") or [])
+    # Pull from niches tagged with sport if needed
+    by_sport: dict[str, list] = {s: [] for s in SPORTS}
+    for row in sport_rows:
+        sp = row.get("sport")
+        if not sp:
+            label = str(row.get("market") or "")
+            for cand in SPORTS:
+                if label.startswith(f"{cand} ·") or label.startswith(f"{cand} "):
+                    sp = cand
+                    break
+        if sp in by_sport:
+            by_sport[sp].append(row)
+    balanced = []
+    for sp in SPORTS:
+        balanced.extend(sorted(by_sport.get(sp) or [], key=lambda r: -(r.get("n") or 0))[:6])
+    if balanced:
+        for i, c in enumerate(containers):
+            if c.get("id") == "15a_sport_markets":
+                containers[i] = {
+                    **c,
+                    "title": "15a · Markets by sport",
+                    "desc": (
+                        "Equal desk for soccer, basketball, and cricket — "
+                        "moneyline, totals, spreads, and sport niches (AH/DNB/DC/corners/cards)."
+                    ),
+                    "rows": balanced,
+                }
+            if c.get("id") == "15_niche_replay":
+                # True niches first, then core popular — keep sport mix via 15a
+                niches = list(c.get("rows") or [])
+                niche_names = {
+                    "asian handicap", "draw no bet", "double chance", "corners", "cards",
+                    "point spread", "totals (o/u)",
+                }
+                true_n = [r for r in niches if str(r.get("market") or "").lower() in niche_names
+                          or str(r.get("raw") or "").lower() in {
+                              "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
+                              "spread", "totals",
+                          }]
+                popular = [r for r in niches if r not in true_n]
+                containers[i] = {
+                    **c,
+                    "title": "15 · Market replay (all sports)",
+                    "desc": (
+                        "Graded replay across soccer niches (AH, DNB, DC, corners, cards) plus "
+                        "basketball ML/totals/spread and cricket match-winner / format splits."
+                    ),
+                    "rows": (true_n + popular)[:16] or niches[:16],
+                }
+            if c.get("id") == "22_epoch_curves":
+                containers[i] = {
+                    **c,
+                    "desc": (
+                        "Block desk ROI and hit rate from graded epochs only. "
+                        "Dashed line = best so far (learning), solid = block mean."
+                    ),
+                    "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else c.get("status"),
+                    "n": len(_finite_nums((out.get("curves") or {}).get("craft_roi"))),
+                }
+        out["containers"] = containers
     return out
 
 
@@ -1425,25 +1595,30 @@ def _build_containers(
         },
         {
             "id": "15_niche_replay",
-            "title": "15 · Niche + popular markets",
-            "desc": "Real niches stay: Asian handicap · DNB · double chance · corners · cards. plus core 1X2/BTTS/O-U/ML. Graded on club CSVs + board history.",
+            "title": "15 · Market replay (all sports)",
+            "desc": "Soccer niches (AH, DNB, DC, corners, cards) plus basketball ML/totals/spread and cricket match-winner / format splits — not soccer-only popular markets.",
             "kind": "market_list",
             "rows": (niches_ready[:14] or niches_building or [
                 {"market": m, **_ready(0, MIN_N["niche"])}
                 for m in (
                     "Asian handicap", "Draw no bet", "Double chance", "Corners", "Cards",
                     "Match result (1X2)", "Both teams to score", "Totals (O/U)", "Moneyline",
+                    "Cricket T20 / leagues", "Basketball totals (alt lines)",
                 )
             ]),
         },
         {
             "id": "15a_sport_markets",
             "title": "15a · Markets by sport",
-            "desc": "Basketball and cricket get equal desk space. ESPN boards (WNBA/NCAA/FIBA/NBL + cricket) plus history, not soccer-only.",
+            "desc": "Equal desk: soccer niches, basketball ML/totals/spread, cricket format winners. Top markets per sport.",
             "kind": "market_list",
             "rows": (sport_markets or [])[:18] or [
                 {"market": m, **_ready(0, MIN_N["niche"])}
-                for m in ("basketball · Moneyline", "basketball · Totals", "cricket · Moneyline", "soccer · Asian handicap")
+                for m in (
+                    "soccer · Asian handicap", "soccer · Double chance",
+                    "basketball · Moneyline", "basketball · Point spread", "basketball · Totals (O/U)",
+                    "cricket · Moneyline", "cricket · Cricket T20 / leagues",
+                )
             ],
         },
         {

@@ -39,6 +39,36 @@ TEAM_ALIASES = {
     "china pr": "china",
     "cabo verde": "cape verde",
     "republic of ireland": "ireland",
+    # Club aliases — ESPN / Stake / OddsAPI spell the same side differently.
+    # Without these, "Manchester United" and "Man United" get separate Elo
+    # rows and a mid-table side can beat a top club on a split identity.
+    "manchester united": "man united",
+    "manchester utd": "man united",
+    "man utd": "man united",
+    "man u": "man united",
+    "mufc": "man united",
+    "manchester city": "man city",
+    "manchester cty": "man city",
+    "man city": "man city",
+    "mcfc": "man city",
+    "hull city": "hull",
+    "tottenham hotspur": "tottenham",
+    "spurs": "tottenham",
+    "wolverhampton wanderers": "wolves",
+    "wolverhampton": "wolves",
+    "nottingham forest": "nottm forest",
+    "notts forest": "nottm forest",
+    "brighton and hove albion": "brighton",
+    "brighton hove albion": "brighton",
+    "west ham united": "west ham",
+    "newcastle united": "newcastle",
+    "leicester city": "leicester",
+    "norwich city": "norwich",
+    "cardiff city": "cardiff",
+    "swansea city": "swansea",
+    "leeds united": "leeds",
+    "sheffield united": "sheffield utd",
+    "sheffield wednesday": "sheffield wed",
 }
 
 

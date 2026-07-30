@@ -239,7 +239,18 @@ export default function Layout() {
                           const mkt = humanizeMarket(leg.marketName, leg.market)
                           return mkt ? <div className="slip-mkt">{mkt}</div> : null
                         })()}
-                        <strong className="slip-ticket-pick">{String(leg.label || '').replace(/[—–]/g, ' - ')}</strong>
+                        <strong className="slip-ticket-pick">
+                          {(() => {
+                            const raw = String(leg.label || '').replace(/[—–]/g, ' - ').trim()
+                            const sel = String(leg.selection || '').toLowerCase()
+                            if (/^(home|away|draw|x|match_winner)$/i.test(raw) || !raw) {
+                              if (sel === 'home' || raw.toLowerCase() === 'home') return leg.home ? `${leg.home} to win` : 'Home to win'
+                              if (sel === 'away' || raw.toLowerCase() === 'away') return leg.away ? `${leg.away} to win` : 'Away to win'
+                              if (sel === 'draw' || sel === 'x' || /^draw$/i.test(raw)) return 'Draw'
+                            }
+                            return raw || 'Pick'
+                          })()}
+                        </strong>
                         <div className="muted slip-ticket-match">
                           {leg.home}{leg.away ? ` vs ${leg.away}` : ''}
                         </div>

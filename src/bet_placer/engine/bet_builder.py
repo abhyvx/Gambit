@@ -1109,13 +1109,43 @@ def _match_thesis(flat, home, away, model_probs: dict | None = None) -> dict:
         result_dir = "home" if mh >= ma else "away"
     else:
         result_dir = None
+
+    # Quality / reputation guardrail: don't crown a much-weaker club as favourite
+    # when team strength (Elo + priors) clearly disagrees. Context > raw board stats.
+    try:
+        from bet_placer.data.team_ratings import get_team_rating
+        hr = float(get_team_rating(home) or 50)
+        ar = float(get_team_rating(away) or 50)
+        gap = hr - ar
+        if result_dir == "home" and gap <= -12 and ar - hr >= 12:
+            result_dir = "away"
+            fav = "away"
+            fav_pct = ma
+            draw_scenario = False
+        elif result_dir == "away" and gap >= 12 and hr - ar >= 12:
+            result_dir = "home"
+            fav = "home"
+            fav_pct = mh
+            draw_scenario = False
+        # Big clubs are rarely true draw favourites on paper in lopsided matchups
+        if draw_scenario and abs(gap) >= 18:
+            result_dir = "home" if gap > 0 else "away"
+            fav = result_dir
+            fav_pct = mh if result_dir == "home" else ma
+            draw_scenario = False
+    except Exception:
+        pass
+
     goals_dir = ("over" if (over25 is not None and over25 >= 0.58)
                  else "under" if (over25 is not None and over25 <= 0.42) else None)
     btts_dir = ("yes" if (btts_yes is not None and btts_yes >= 0.58)
                 else "no" if (btts_yes is not None and btts_yes <= 0.42) else None)
 
     fav_name = home if result_dir == "home" else away if result_dir == "away" else None
-    fav_pct_display = top_side if fav_name else fav_pct
+    # Always show the chosen side's model %, never the opposite side's inflated number
+    fav_pct_display = (
+        mh if result_dir == "home" else ma if result_dir == "away" else fav_pct
+    )
     if draw_scenario:
         lead = (
             f"Draw is live (~{round(draw_pct * 100)}%) — forcing a winner is how we "
@@ -1124,7 +1154,21 @@ def _match_thesis(flat, home, away, model_probs: dict | None = None) -> dict:
     elif result_dir and fav_pct_display and fav_pct_display >= 0.62:
         lead = f"We make {fav_name} clear favourites (~{round(fav_pct_display*100)}%)."
     elif result_dir:
-        lead = f"Slight lean to {fav_name} (~{round(fav_pct_display*100)}%), but it's close."
+        # Quality override can pick the stronger club even when thin board probs disagree
+        try:
+            from bet_placer.data.team_ratings import get_team_rating
+            hr = float(get_team_rating(home) or 50)
+            ar = float(get_team_rating(away) or 50)
+            quality_gap = abs(hr - ar)
+        except Exception:
+            quality_gap = 0
+        if quality_gap >= 12 and fav_pct_display < 0.55:
+            lead = (
+                f"Lean {fav_name} on team quality/context "
+                f"(strength gap ~{round(quality_gap)} pts) — board probs alone are thin."
+            )
+        else:
+            lead = f"Slight lean to {fav_name} (~{round(fav_pct_display*100)}%), but it's close."
     else:
         lead = "Too close to call — no side has a real edge."
     goal_txt = ("Leaning a higher-scoring game." if goals_dir == "over"

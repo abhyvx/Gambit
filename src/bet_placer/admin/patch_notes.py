@@ -11,6 +11,25 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v23",
+        "cycle": "hull-manutd-recs",
+        "at": "2026-07-30",
+        "title": "Club Elo aliases; match-discretion Recs; human labels; honest model %",
+        "fixed": [
+            "Hull City could beat Manchester United on a split Elo identity (manchester united vs man united)",
+            "Recs defaulted to Target cashout paths instead of match-by-match picks",
+            "Tickets showed match_winner / home instead of team names",
+            "Plan hit % (any-leg / to-target) looked like the team's win chance",
+            "SGM Add dropped the match-winner leg when only totals/BTTS were priced",
+        ],
+        "changes": [
+            "Club name aliases + Elo merge-on-alias; quality guardrail vs reputation gap",
+            "Curated primary prefers singles / loss-min / SGM; Target stays on Target tab",
+            "Frontend always humanizes match_winner home/away; shows model win % on tickets",
+            "SGM expand keeps winner legs with odds lookup / geometric fallback",
+        ],
+    },
+    {
         "version": "v22",
         "cycle": "paper-craft-gone",
         "at": "2026-07-30",

@@ -43,10 +43,26 @@ class EloModel:
             from bet_placer.data.team_names import canon_team
             from bet_placer.ml.params import load_params
             p = load_params()
-            elo = p.get("elo") or {}
-            self.ratings = {canon_team(k): float(v) for k, v in elo.items() if v}
+
+            def _merge(raw: dict | None) -> dict[str, float]:
+                # Alias collisions must keep the stronger learned rating
+                # (e.g. man united 1962 beats orphan manchester united 1514).
+                out: dict[str, float] = {}
+                for k, v in (raw or {}).items():
+                    if v is None:
+                        continue
+                    try:
+                        fv = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    key = canon_team(k)
+                    if key not in out or fv > out[key]:
+                        out[key] = fv
+                return out
+
+            self.ratings = _merge(p.get("elo") or {})
             self._by_sport = {
-                s: {canon_team(k): float(v) for k, v in (tbl or {}).items() if v}
+                s: _merge(tbl)
                 for s, tbl in (p.get("elo_by_sport") or {}).items()
             }
         except Exception:

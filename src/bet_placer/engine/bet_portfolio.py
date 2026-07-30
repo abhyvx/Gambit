@@ -737,7 +737,7 @@ def _portfolio_result(recommended, bet_slips, profile, stake_only, live_h2h_odds
         if effective_skip else None
     )
     return {
-        "recommended_strategy": effective_rec_id if effective_rec_id in ("match_card", "min_loss", "safe", "singles_focus", "value", "smart_parlay", "skip") else "match_card",
+        "recommended_strategy": effective_rec_id if effective_rec_id in ("match_card", "min_loss", "safe", "singles_focus", "value", "smart_parlay", "skip") else "singles_focus",
         "recommended_slip_id": rec.get("option_id") or rec.get("id"),
         "skip_recommended": effective_skip,
         "skip_reason": None if using_model_only else skip_reason,
@@ -1223,7 +1223,7 @@ def _pick_thesis_anchor(
 
 
 def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: dict | None = None) -> dict:
-    """Primary = best target-aligned plan when typical outcome is tolerable, else safer edge."""
+    """Primary = match-discretion pick (singles / loss-min / SGM). Target cards stay on Target tab."""
     from bet_placer.engine.card_coherence import plan_aligns_match_thesis, plan_fights_match_thesis
 
     ctx = ctx or {}
@@ -1244,86 +1244,45 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
         return out
 
     primary: dict | None = None
-    mc_all = _candidates("match_card")
-    target_val = float(
-        (mc_all[0].get("target_cashout_inr") or mc_all[0].get("target_return_inr") or 0)
-        if mc_all else 0
-    )
-
-    full_target = [
-        p for p in mc_all
-        if _path_hits_profit_target(p, target_val or p.get("target_cashout_inr"))
+    # Default Recs: figure the approach per match — NOT cashout Target paths.
+    # Target / match_card is only a last-resort fallback (user owns Target tab).
+    pick_order = [
+        ("singles_focus", lambda p: p.get("_unified_aligned") and _best_win_prob(p) >= CONFIDENT_WIN),
+        ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),
+        ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
+        ("singles_focus", lambda p: _comfortable_typical(p) and _best_win_prob(p) >= COMFORTABLE_WIN),
+        ("smart_parlay", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN * 0.85),
+        ("value", lambda p: _best_win_prob(p) >= COMFORTABLE_WIN),
+        ("min_loss", lambda p: _qualifies_loss_min(p) and _likely_profit(p) >= 0),
+        ("singles_focus", None),
+        ("smart_parlay", None),
+        ("value", None),
+        # Cashout-sized spreads only if nothing else cleared the bar
+        ("match_card", lambda p: _stern_primary_eligible(p)),
+        ("match_card", lambda p: _target_rec_eligible(p)),
     ]
-    if full_target:
-        full_target.sort(
-            key=lambda p: (
-                _core_market_score(p),
-                _profit_route_quality(p),
-                _best_win_prob(p),
-                -len(p.get("legs") or []),
-                _stern_rec_rank(p),
-            ),
-            reverse=True,
-        )
-        primary = full_target[0]
-
-    target_plans = sorted(
-        [p for p in mc_all if _target_rec_eligible(p)],
-        key=_stern_rec_rank,
-        reverse=True,
-    )
-    stern = [p for p in target_plans if _stern_primary_eligible(p)]
-    if not primary and stern:
-        # Prefer a balanced 2–4 ticket path over a 6-leg swing card for top rec
-        stern.sort(
-            key=lambda p: (
-                1 if _path_hits_profit_target(p, p.get("target_cashout_inr")) else 0,
-                _profit_route_quality(p),
-                _best_win_prob(p),
-                _stern_rec_rank(p),
-            ),
-            reverse=True,
-        )
-        primary = stern[0]
-    elif not primary and target_plans:
-        target_plans.sort(
-            key=lambda p: (_stern_rec_rank(p), len(p.get("legs") or [])),
-            reverse=True,
-        )
-        primary = target_plans[0]
+    for tab, pred in pick_order:
+        cands = _candidates(tab, pred)
+        if not cands:
+            continue
+        if tab == "singles_focus":
+            cands.sort(
+                key=lambda s: (_likely_profit(s), _best_win_prob(s), _weighted_slip_score(s)),
+                reverse=True,
+            )
+        elif tab == "min_loss":
+            cands.sort(key=lambda s: (_likely_profit(s), *_loss_preservation_score(s)), reverse=True)
+        elif tab == "match_card":
+            cands.sort(key=_stern_rec_rank, reverse=True)
+        else:
+            cands.sort(key=lambda s: (_likely_profit(s), _weighted_slip_score(s), _best_win_prob(s)), reverse=True)
+        primary = cands[0]
+        break
 
     if not primary:
-        pick_order = [
-            ("min_loss", lambda p: _qualifies_loss_min(p) and _comfortable_typical(p)),
-            ("singles_focus", lambda p: p.get("_unified_aligned") and _best_win_prob(p) >= CONFIDENT_WIN),
-            ("singles_focus", lambda p: _best_win_prob(p) >= STRONG_WIN),
-            ("match_card", lambda p: _stern_primary_eligible(p)),
-            ("min_loss", lambda p: _qualifies_loss_min(p) and _likely_profit(p) >= 0),
-            ("singles_focus", lambda p: _comfortable_typical(p)),
-            ("match_card", lambda p: _target_rec_eligible(p)),
-            ("smart_parlay", None),
-        ]
-        for tab, pred in pick_order:
-            cands = _candidates(tab, pred)
-            if cands:
-                if tab == "singles_focus":
-                    cands.sort(
-                        key=lambda s: (_likely_profit(s), _best_win_prob(s), _weighted_slip_score(s)),
-                        reverse=True,
-                    )
-                elif tab == "min_loss":
-                    cands.sort(key=lambda s: (_likely_profit(s), *_loss_preservation_score(s)), reverse=True)
-                elif tab == "match_card":
-                    cands.sort(key=_stern_rec_rank, reverse=True)
-                else:
-                    cands.sort(key=lambda s: (_likely_profit(s), _weighted_slip_score(s)), reverse=True)
-                primary = cands[0]
-                break
-
-    if not primary:
-        for tab in ("match_card", "singles_focus", "min_loss", "smart_parlay", "value"):
+        for tab in ("singles_focus", "min_loss", "smart_parlay", "value", "match_card"):
             for p in strategy_plans.get(tab) or []:
-                if p.get("legs"):
+                if p.get("legs") and not (thesis and plan_fights_match_thesis(p, thesis, home, away)):
                     primary = p
                     break
             if primary:
@@ -1331,34 +1290,37 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
 
     alternatives: list[dict] = []
     if primary:
-        primary_tab = primary.get("tab_id") or primary.get("id")
         primary_sig = _slip_signature(primary)
         primary_legs = _leg_set_signature(primary)
         alt_pool: list[dict] = []
-        alt_pool.extend(_candidates("match_card"))
-        alt_pool.extend(_candidates("smart_parlay"))
+        # Recs alts = other match-discretion angles first; a couple Target paths ok as alts
         alt_pool.extend(_candidates("singles_focus", lambda p: _best_win_prob(p) >= 0.52))
         alt_pool.extend(_candidates("min_loss", lambda p: _qualifies_loss_min(p)))
+        alt_pool.extend(_candidates("smart_parlay"))
+        alt_pool.extend(_candidates("value"))
+        alt_pool.extend(_candidates("match_card")[:2])
         alt_pool.sort(
             key=lambda p: (
+                0 if (p.get("tab_id") or p.get("id")) == "match_card" else 1,
                 p.get("worth_score", 0),
-                p.get("hit_probability", 0),
+                _best_win_prob(p),
                 _likely_profit(p),
             ),
             reverse=True,
         )
         seen_alts: set[tuple] = set()
         bucket_counts: dict[str, int] = {}
-        bucket_quota = {"sgm": 2, "single": 1, "compact": 3, "spread": 2, "full": 0}
+        bucket_quota = {"sgm": 2, "single": 2, "compact": 2, "spread": 1, "full": 0}
 
         def _alt_rank(p: dict) -> tuple:
             bucket = _plan_leg_bucket(p)
             n = len(p.get("legs") or [])
             return (
                 1 if bucket_counts.get(bucket, 0) < bucket_quota.get(bucket, 1) else 0,
+                0 if (p.get("tab_id") or p.get("id")) == "match_card" else 1,
                 p.get("worth_score", 0),
-                -abs(n - 3),
-                p.get("hit_probability", 0),
+                -abs(n - 2),
+                _best_win_prob(p),
             )
 
         for p in sorted(alt_pool, key=_alt_rank, reverse=True):
@@ -1383,7 +1345,20 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
     def _curated_label(slip: dict | None, default: str) -> str:
         if not slip:
             return default
-        if slip.get("tab_id") != "match_card":
+        tab = slip.get("tab_id") or slip.get("id") or ""
+        if tab == "singles_focus":
+            legs = slip.get("legs") or []
+            if legs:
+                return (legs[0].get("label") or default).split(" @ ")[0]
+            return default
+        if tab == "min_loss":
+            return slip.get("path_label") or "Loss-min spread"
+        if tab == "smart_parlay" or slip.get("path_thesis") == "sgm" or slip.get("plan_type") == "stake_combo":
+            pl = (slip.get("path_label") or "").strip()
+            return pl or "Stake SGM"
+        if tab == "value":
+            return "Value play"
+        if tab != "match_card":
             return default
         pl = (slip.get("path_label") or "").strip()
         if slip.get("path_thesis") == "sgm" or slip.get("plan_type") == "stake_combo":

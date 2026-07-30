@@ -278,31 +278,37 @@ function buildSlipTickets(strategy, activeLegs, isStakeSgm, home = '', away = ''
     const leg = activeLegs[0]
     const stake = strategy?.stake_inr || strategy?.total_stake_inr || leg?.stake_inr || 0
     const odds = strategy?.combined_odds || leg?.odds
+    const expanded = expandLegsForSlip(activeLegs, home, away)
+    const sub = expanded.length > 1
+      ? expanded.map((l) => formatTicketLabel(l, home, away))
+      : comboSubPicks(leg, home, away)
     return [{
       key: 'sgm-main',
       type: 'stake_sgm',
-      label: leg?.label || strategy?.description,
+      label: formatTicketLabel(leg, home, away) || strategy?.description,
       stake, odds,
       returnInr: leg?.return_inr || Math.round(stake * (odds || 1)),
       payoutText: leg?.payout_text,
       verified: true,
-      subPicks: comboSubPicks(leg, home, away),
+      subPicks: sub,
       hitsTarget: leg?.hits_target,
       breaksEven: leg?.breaks_even,
       soloOutcome: (leg?.hits_target || leg?.breaks_even) ? leg?.solo_outcome_label : '',
       reason: leg?.reason,
+      modelPct: leg?.our_probability_pct
+        ?? (leg?.our_probability != null ? Math.round(Number(leg.our_probability) * 1000) / 10 : null),
     }]
   }
   return activeLegs.map((leg, i) => {
     const stake = Number(leg.stake_inr) || Number(strategy?.total_stake_inr) || 0
-    const odds = leg.odds || strategy?.combined_odds
+    const odds = Number(leg.odds) > 1 ? Number(leg.odds) : null
     return {
       key: `leg-${i}`,
       type: isSgmLeg(leg) ? 'stake_sgm' : 'single',
       label: formatTicketLabel(leg, home, away),
       stake,
       odds,
-      returnInr: leg.return_inr || Math.round(stake * (odds || 1)),
+      returnInr: leg.return_inr || (odds ? Math.round(stake * odds) : 0),
       payoutText: leg.payout_text,
       verified: leg.odds_source === 'stake' || leg.live_odds || strategy?.verified_stake,
       role: leg.role,
@@ -311,17 +317,34 @@ function buildSlipTickets(strategy, activeLegs, isStakeSgm, home = '', away = ''
       soloOutcome: (leg.hits_target || leg.breaks_even) ? leg.solo_outcome_label : '',
       subPicks: isSgmLeg(leg) ? comboSubPicks(leg, home, away) : [],
       reason: leg.reason,
+      modelPct: leg.our_probability_pct
+        ?? (leg.our_probability != null ? Math.round(Number(leg.our_probability) * 1000) / 10 : null),
     }
   })
 }
 
 function formatTicketLabel(leg, home, away) {
   const raw = cleanTicketText(leg?.label || '')
-  if (raw && !/^handicap\b/i.test(raw) && !/^\s*handicap\b/i.test(raw)) {
+  const m = String(leg?.market || '').toLowerCase()
+  const sel = String(leg?.selection || '').toLowerCase().trim()
+
+  // Never show raw enums like match_winner / home
+  if (m === 'match_winner' || sel === 'home' || sel === 'away' || sel === 'draw' || sel === 'x') {
+    if (sel === 'home' || (home && raw.toLowerCase() === home.toLowerCase())) return `${home} to win`
+    if (sel === 'away' || (away && raw.toLowerCase() === away.toLowerCase())) return `${away} to win`
+    if (sel === 'draw' || sel === 'x' || /^draw\b/i.test(raw)) return 'Draw'
+    if (raw && !/^(home|away|draw|x|match_winner)$/i.test(raw) && !/_/.test(raw)) {
+      if (/ to win$/i.test(raw)) return raw
+      if (home && raw.toLowerCase() === home.toLowerCase()) return `${home} to win`
+      if (away && raw.toLowerCase() === away.toLowerCase()) return `${away} to win`
+      return raw
+    }
+    if (sel === 'home') return home ? `${home} to win` : 'Home to win'
+    if (sel === 'away') return away ? `${away} to win` : 'Away to win'
+  }
+  if (raw && !/^handicap\b/i.test(raw) && !/^(home|away|draw|x)$/i.test(raw) && !/_/.test(raw)) {
     return raw
   }
-  const m = leg?.market || ''
-  const sel = (leg?.selection || '').toLowerCase()
   if (m === 'btts' || /both teams to score/i.test(m)) {
     return `Both teams to score - ${sel === 'no' ? 'No' : 'Yes'}`
   }
@@ -339,7 +362,8 @@ function formatTicketLabel(leg, home, away) {
       return leg?.odds ? `${base} @ ${leg.odds}x` : base
     }
   }
-  return raw || 'Bet'
+  if (raw && !/_/.test(raw)) return raw
+  return humanMarketName(m, leg?.line) || 'Bet'
 }
 
 function StakeTicketCard({ ticket, index, total, pathMode, home, away }) {
@@ -385,7 +409,10 @@ function StakeTicketCard({ ticket, index, total, pathMode, home, away }) {
       {/* ponytail: no AI narrative under tickets - stats only */}
       <div className="stake-ticket-stats">
         <div className="stake-ticket-stat"><span>Stake</span><strong>{formatINR(ticket.stake || 0)}</strong></div>
-        <div className="stake-ticket-stat"><span>Odds</span><strong>{ticket.odds}x</strong></div>
+        <div className="stake-ticket-stat"><span>Odds</span><strong>{ticket.odds ? `${ticket.odds}x` : '—'}</strong></div>
+        {ticket.modelPct != null && (
+          <div className="stake-ticket-stat"><span>Model</span><strong>{ticket.modelPct}%</strong></div>
+        )}
         {ticket.returnInr > 0 && (
           <div className="stake-ticket-stat"><span>Returns</span><strong className="green">{formatINR(ticket.returnInr)}</strong></div>
         )}
@@ -516,41 +543,58 @@ function pathBucket(plan) {
 
 function resolveCuratedPicks(slip, home = '', away = '') {
   const curated = slip?.curated_picks
-  const targetPlans = normalizePlans(slip, 'match_card')
   let picks = []
+
+  const pickTypeFor = (p, fallback = 'Bet plan') => {
+    const tab = p?.tab_id || p?.id || ''
+    if (p?.pick_type && !/target path/i.test(p.pick_type)) return p.pick_type
+    if (tab === 'singles_focus') return 'Single bet'
+    if (tab === 'min_loss') return 'Loss-min'
+    if (tab === 'smart_parlay' || p?.path_thesis === 'sgm') return 'Stake combo'
+    if (tab === 'value') return 'Value play'
+    if (tab === 'match_card') return 'Target path'
+    return fallback
+  }
 
   if (curated?.primary) {
     picks = [
-      annotatePlan({ ...curated.primary, is_recommended_option: true }, 'Our pick', curated.primary.pick_type || 'Target path'),
+      annotatePlan(
+        { ...curated.primary, is_recommended_option: true },
+        'Our pick',
+        pickTypeFor(curated.primary, 'Our pick'),
+      ),
       ...(curated.alternatives || []).map((p, i) =>
-        annotatePlan(p, p.pick_label || `Alt ${i + 1}`, p.pick_type || 'Also consider'),
+        annotatePlan(p, p.pick_label || `Alt ${i + 1}`, pickTypeFor(p, 'Also consider')),
       ),
     ].filter(Boolean)
   } else {
     const recKey = slip?.recommended_strategy
     const recId = slip?.recommended_slip_id
-    const plans = slip?.strategy_plans?.[recKey] || []
-    const match = plans.find((p) => p.option_id === recId) || plans[0]
-    if (match?.legs?.length) {
-      picks = [annotatePlan(match, 'Our pick', match.slip_type_label || recKey)]
-    } else if (slip?.active_strategy?.legs?.length) {
+    // Prefer match-discretion tabs before Target/match_card
+    const order = [recKey, 'singles_focus', 'min_loss', 'smart_parlay', 'value', 'match_card'].filter(Boolean)
+    const seenKeys = new Set()
+    for (const key of order) {
+      if (seenKeys.has(key)) continue
+      seenKeys.add(key)
+      const plans = slip?.strategy_plans?.[key] || []
+      const match = plans.find((p) => p.option_id === recId) || plans[0]
+      if (match?.legs?.length) {
+        picks = [annotatePlan(match, 'Our pick', pickTypeFor(match, key))]
+        break
+      }
+    }
+    if (!picks.length && slip?.active_strategy?.legs?.length) {
       picks = [annotatePlan(slip.active_strategy, 'Our pick', 'Bet plan')]
     }
   }
 
   const seen = new Set(picks.map((p) => legSetKey(p) || p.option_id))
-  for (const mc of targetPlans) {
-    const key = legSetKey(mc) || mc.option_id
-    if (seen.has(key)) continue
-    picks.push(annotatePlan(mc, pathPickerLabel(mc), 'Target path'))
-    seen.add(key)
-  }
-
+  // Recs: other match-discretion angles — do NOT dump every Target path here
   for (const key of ['singles_focus', 'min_loss', 'value', 'smart_parlay']) {
     for (const s of normalizePlans(slip, key).slice(0, key === 'singles_focus' ? 2 : 1)) {
       const k = legSetKey(s) || s.option_id
       if (seen.has(k)) continue
-      picks.push(annotatePlan(s, pathPickerLabel(s), key === 'singles_focus' ? 'Single bet' : key))
+      picks.push(annotatePlan(s, pathPickerLabel(s), pickTypeFor(s, key)))
       seen.add(k)
     }
   }
@@ -559,7 +603,7 @@ function resolveCuratedPicks(slip, home = '', away = '') {
   if (!picks.length) {
     for (const bs of (slip?.bet_slips || []).slice(0, 4)) {
       if (!bs?.legs?.length) continue
-      picks.push(annotatePlan(bs, bs.pick_label || bs.name || 'Plan', bs.pick_type || 'Bet plan'))
+      picks.push(annotatePlan(bs, bs.pick_label || bs.name || 'Plan', pickTypeFor(bs, 'Bet plan')))
     }
   }
   if (!picks.length) {
@@ -755,7 +799,15 @@ function PathOptionContent({ opt, index, compact = false }) {
   const legs = pathLegLabels(opt)
   const title = pathOptionTitle(opt, index)
   const n = pathTicketCount(opt)
-  const hp = opt.win_probability_pct ?? opt.hit_probability_pct
+  // Prefer the main leg's model win chance — not plan "any hit" / target-reach %
+  const mainLeg = (opt?.legs || []).find((l) => Number(l?.our_probability || l?.our_probability_pct) > 0)
+    || (opt?.legs || [])[0]
+  const legPct = mainLeg?.our_probability_pct
+    ?? (mainLeg?.our_probability != null ? Math.round(Number(mainLeg.our_probability) * 1000) / 10 : null)
+  const isTarget = (opt?.tab_id || opt?.id) === 'match_card'
+    || /target/i.test(opt?.pick_type || '')
+    || /to reach target/i.test(opt?.worth_label || '')
+  const planPct = opt.win_probability_pct ?? opt.hit_probability_pct
   const wl = (opt.worth_label || '').split(' · ')[0]
   return (
     <>
@@ -780,7 +832,12 @@ function PathOptionContent({ opt, index, compact = false }) {
       )}
       <div className="path-option-foot">
         {n > 0 && <span className="path-option-stat">{n} ticket{n !== 1 ? 's' : ''}</span>}
-        {hp != null && <span className="path-option-stat muted">{hp}% any hit</span>}
+        {legPct != null && (
+          <span className="path-option-stat muted">{legPct}% model win</span>
+        )}
+        {isTarget && planPct != null && legPct == null && (
+          <span className="path-option-stat muted">{planPct}% to target</span>
+        )}
       </div>
     </>
   )
@@ -1064,19 +1121,45 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
   const addPlanToSlip = (plan, legs) => {
     const eventId = activeSlip?.match_id || `${home}-${away}`
     const source = expandLegsForSlip(legs?.length ? legs : (plan?.legs || []), home, away)
+    // Map priced odds from original plan legs by market+selection+line
+    const priced = new Map()
+    for (const leg of (plan?.legs || [])) {
+      const k = `${leg.market}|${String(leg.selection || '').toLowerCase()}|${leg.line ?? ''}`
+      const o = Number(leg.odds ?? leg.decimal_odds ?? leg.best_odds) || 0
+      if (o > 1) priced.set(k, o)
+      // Also index by market alone for match_winner when selection is home/away
+      if (leg.market === 'match_winner' && o > 1) {
+        priced.set(`match_winner|${String(leg.selection || '').toLowerCase()}|`, o)
+      }
+    }
     const payload = []
     for (const leg of source) {
-      const odds = Number(leg.odds ?? leg.decimal_odds ?? leg.best_odds) || 0
+      let odds = Number(leg.odds ?? leg.decimal_odds ?? leg.best_odds) || 0
+      if (!(odds > 1)) {
+        const k = `${leg.market}|${String(leg.selection || '').toLowerCase()}|${leg.line ?? ''}`
+        odds = priced.get(k) || priced.get(`${leg.market}|${String(leg.selection || '').toLowerCase()}|`) || 0
+      }
+      // Last resort for expanded SGM parts: geometric share of combo odds
+      if (!(odds > 1) && plan?.combined_odds > 1 && source.length > 1) {
+        odds = Math.max(1.01, Math.round((Number(plan.combined_odds) ** (1 / source.length)) * 100) / 100)
+      }
       if (!(odds > 1)) continue
-      const label = cleanTicketText(leg.label || leg.selection || 'Pick')
       const market = leg.market || 'match_winner'
-      let selection = leg.selection || label
+      let selection = leg.selection || ''
       let line = leg.line ?? null
       const ou = String(selection).toLowerCase().match(/^(over|under)\s+([\d.]+)$/)
       if (ou) {
         selection = ou[1]
         line = line != null ? line : Number(ou[2])
       }
+      // Normalize team-name selections to home/away for slip identity
+      if (market === 'match_winner') {
+        const selLow = String(selection || '').toLowerCase()
+        if (home && (selLow === home.toLowerCase() || selLow === `${home.toLowerCase()} to win`)) selection = 'home'
+        else if (away && (selLow === away.toLowerCase() || selLow === `${away.toLowerCase()} to win`)) selection = 'away'
+        else if (/^draw\b/.test(selLow) || selLow === 'x') selection = 'draw'
+      }
+      const label = formatTicketLabel({ ...leg, market, selection, line, label: leg.label }, home, away)
       const id = `rec-${eventId}-${market}-${selection}-${line ?? ''}-${odds}`
       const marketName = cleanTicketText(
         leg.market_label || leg.market_name || humanMarketName(market, line),
@@ -1089,7 +1172,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
         label,
         market,
         marketName: /_/.test(marketName) ? humanMarketName(market, line) : marketName,
-        selection,
+        selection: selection || label,
         line,
         odds,
         stake: Number(leg.stake_inr) >= 10 ? Number(leg.stake_inr) : undefined,
@@ -1210,7 +1293,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
                 plans={picks}
                 index={pickIdx}
                 onSelect={(i) => { setPickIndex(i); setShowWhy(false) }}
-                heading="Target paths"
+                heading="Pick options"
                 id="recs-path-select"
               />
               <PlanSlipView

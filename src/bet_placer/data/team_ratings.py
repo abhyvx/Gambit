@@ -90,7 +90,23 @@ def get_team_rating(team: str) -> float:
     try:
         from bet_placer.data.team_names import canon_team
         from bet_placer.ml.params import load_params
-        elo = (load_params().get("elo") or {}).get(canon_team(team))
+        key = canon_team(team)
+        raw = load_params().get("elo") or {}
+        # Prefer exact canon key; also scan aliases that map to the same club
+        # so orphan spellings (manchester united vs man united) don't lose Elo.
+        elo = raw.get(key)
+        if elo is None:
+            best = None
+            for k, v in raw.items():
+                if canon_team(k) != key or v is None:
+                    continue
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if best is None or fv > best:
+                    best = fv
+            elo = best
         be = blended_elo(team, float(elo) if elo is not None else None)
         if be is not None:
             return round(_elo_to_rating(be), 1)

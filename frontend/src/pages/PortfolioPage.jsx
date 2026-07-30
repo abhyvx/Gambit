@@ -140,7 +140,10 @@ export default function PortfolioPage() {
 
   const curve = portfolio.cumulative_profit || []
   const marketRows = portfolio.ranked_markets || []
+  const sportRows = portfolio.by_sport || []
+  const monthlyForm = portfolio.monthly_form || []
   const audit = portfolio.model_audit || {}
+  const learning = portfolio.learning_feedback || {}
   const overview = portfolio.overview || {}
   const resultSummary = [
     { label: 'Wins', value: portfolio.wins ?? 0, cls: 'good' },
@@ -389,6 +392,36 @@ export default function PortfolioPage() {
           <div className="portfolio-insight">{overview.curve_text || 'The curve explanation will appear here.'}</div>
           <div className="portfolio-insight">{overview.market_text || 'Market-family explanation will appear here.'}</div>
         </div>
+        {!!sportRows.length && (
+          <div className="portfolio-note">
+            <h3>By sport</h3>
+            <div className="portfolio-grid compact">
+              {sportRows.map((row) => (
+                <div key={row.sport} className="portfolio-stat">
+                  <span>{row.sport}</span>
+                  <strong className={row.profit_value >= 0 ? 'green' : 'red'}>{money(row.profit_value)}</strong>
+                  <small className="muted">{row.count} bets · {row.hit_rate_pct}% hit · {row.roi_pct}% ROI</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {!!monthlyForm.length && (
+          <div className="portfolio-note">
+            <h3>Recent form</h3>
+            <div className="portfolio-market-list">
+              {monthlyForm.map((row) => (
+                <div key={row.month} className="portfolio-market-row">
+                  <div className="portfolio-market-copy">
+                    <strong>{row.month}</strong>
+                    <small>{row.count} bets graded</small>
+                  </div>
+                  <strong className={row.profit_value >= 0 ? 'green' : 'red'}>{money(row.profit_value)}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {overview.recommendations?.length > 0 && (
           <div className="portfolio-note">
             <h3>Next bet recommendations</h3>
@@ -518,6 +551,40 @@ export default function PortfolioPage() {
             </div>
           </div>
         )}
+        {learning.available && (
+          <div className="portfolio-note">
+            <h3>What your real results are teaching the model</h3>
+            <div className="portfolio-grid compact">
+              <div className="portfolio-stat">
+                <span>Model-backed bets</span>
+                <strong>{learning.follow_model_bets ?? 0}</strong>
+                <small className="muted">{learning.follow_model_hit_rate_pct ?? '—'}% hit · {learning.follow_model_roi_pct ?? '—'}% ROI</small>
+              </div>
+              <div className="portfolio-stat">
+                <span>Model-fade bets</span>
+                <strong>{learning.fade_model_bets ?? 0}</strong>
+                <small className="muted">{learning.fade_model_hit_rate_pct ?? '—'}% hit · {learning.fade_model_roi_pct ?? '—'}% ROI</small>
+              </div>
+              <div className="portfolio-stat">
+                <span>Audited settled bets</span>
+                <strong>{learning.audited_bets ?? 0}</strong>
+                <small className="muted">Only bets matched back to the model desk count here.</small>
+              </div>
+              <div className="portfolio-stat">
+                <span>Recent audited P/L</span>
+                <strong className={(learning.recent_profit_value ?? 0) >= 0 ? 'green' : 'red'}>{money(learning.recent_profit_value)}</strong>
+                <small className="muted">Last audited stretch</small>
+              </div>
+            </div>
+            {!!learning.recommendations?.length && (
+              <div className="portfolio-insights" style={{ marginTop: '0.9rem' }}>
+                {learning.recommendations.map((tip, idx) => (
+                  <div key={idx} className="portfolio-insight">{tip}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="portfolio-note">
           <h3>Why accuracy is not jumping fast</h3>
           <p className="muted">
@@ -567,6 +634,11 @@ export default function PortfolioPage() {
         {syncMessage && (
           <p className={`muted ${showStatusError ? 'sync-status-warn' : ''}`}>
             Sync status: <strong>{syncStatus}</strong> - {syncMessage}
+          </p>
+        )}
+        {!stakeLive && !loginUrl && (
+          <p className="muted">
+            Live browser login is remote-only now. To avoid laptop popups, configure Browserbase/CDP on the host or keep using the Stake API token import.
           </p>
         )}
       </section>

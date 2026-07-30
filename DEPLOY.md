@@ -10,30 +10,47 @@ If Blueprint fails: **New +** → **Web Service** → Docker → branch `main` �
 
 Auto-deploy: if Render Auto-Deploy is on for `main`, every push rebuilds. You do not need a dashboard "commit". Manual Deploy only when you want to force a rebuild without a new push.
 
-## 2. Stake odds on cloud
+## 2. Stake odds on cloud — Browserbase first, no laptop popups
 
-Render and GitHub Actions get Cloudflare-blocked by stake.com. They cannot scrape live Stake.
+Render and GitHub Actions get Cloudflare-blocked by stake.com. The preferred fix is now a
+**remote browser** so the web app can keep a persistent cloud Chrome session without opening
+Stake on your laptop.
 
-**The fix:** run Stake on your Mac once, then keep a background agent pushing lines to Render.
+Set these env vars on Render:
+
+- `BROWSERBASE_API_KEY=<your real key>`
+- `BROWSERBASE_PROJECT_ID=<your project id>` (optional on some plans, but recommended)
+
+Optional alternative:
+
+- `STAKE_CDP_URL=wss://...` if you already have another remote Chrome/CDP provider
+
+With Browserbase/CDP configured:
+
+- `/api/stake/connect` uses the remote browser path
+- portfolio connect opens a Browserbase live-view URL instead of a local popup
+- the background odds loop can keep Stake fresh server-side
+
+If Browserbase is **not** configured, the app now stays token-only / cache-only rather than
+falling back to a local laptop popup.
+
+Legacy fallback (only if you explicitly still want laptop relay):
 
 ```bash
-# 1) One-time: opens Chrome — finish "Just a moment…", wait until it prints priced fixtures
 cd "/path/to/Gambit"
 source .venv/bin/activate
 PYTHONPATH=src python3 scripts/connect_stake_and_push.py
-
-# 2) Keep it fresh every 10 minutes
 ./scripts/install_stake_relay_agent.sh
 ```
 
-That POSTs to `/api/stake/relay` and uploads `stake_overlay_cache.json` to GitHub `model-latest` so redeploys still boot with Stake.
-
-Odds still work from ESPN/model when Stake is cold.
+That POSTs to `/api/stake/relay` and uploads `stake_overlay_cache.json` to GitHub `model-latest`
+so redeploys still boot with Stake. Odds still work from ESPN/model when Stake is cold.
 
 | Service | Runs on | Role |
 |---------|---------|------|
 | Web app | Render | Always |
-| Stake relay | Your Mac (`connect_stake_and_push` / LaunchAgent) | Live Stake → cloud |
+| Stake remote browser | Browserbase / remote CDP | Preferred live Stake → cloud |
+| Stake relay | Your Mac (`connect_stake_and_push` / LaunchAgent) | Legacy fallback only |
 | Craft training | GitHub Actions | Daily model |
 
 GitHub Actions Stake workflow cannot pass Cloudflare — treat it as best-effort only.
@@ -48,8 +65,8 @@ GitHub Actions Stake workflow cannot pass Cloudflare — treat it as best-effort
 |---------|-----|
 | Could not connect | Free Render sleeps. Open the URL once to wake it (30-60s). |
 | Docker build failed | Pull latest `main`. Clear Render build cache and redeploy. |
-| Stake 403 on Render logs | Expected. Use the laptop relay. |
-| No Stake prices | App uses ESPN/model. Run `./scripts/start_stake_relay.sh` after clearing CF. |
+| Stake 403 on Render logs | Expected without Browserbase/CDP. Set remote browser env vars. |
+| No Stake prices | App uses ESPN/model or cached overlay. Configure Browserbase, or use the legacy relay. |
 | Empty Stake after scrape fail | Fixed: bad scrapes no longer wipe priced cache. |
 
 ## Local

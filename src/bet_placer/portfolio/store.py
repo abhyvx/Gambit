@@ -330,6 +330,10 @@ def _save_state(state: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     try:
+        _persist_portfolio_learning_signal(state)
+    except Exception:
+        pass
+    try:
         from bet_placer.auth.persist import schedule_users_persist
         schedule_users_persist()
     except Exception:
@@ -441,6 +445,34 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         fixture = b.get("fixture_name") or "Unknown"
         fixture_exposure[fixture] = fixture_exposure.get(fixture, 0.0) + float(b.get("stake_value") or 0)
     top_fixture = max(fixture_exposure.items(), key=lambda kv: kv[1], default=(None, 0.0))
+    sport_breakdown: dict[str, dict[str, Any]] = {}
+    monthly_breakdown: dict[str, dict[str, Any]] = {}
+    for b in bets:
+        sport = str(b.get("sport") or "other")
+        month = str(b.get("created_at") or "")[:7] or "unknown"
+        sb = sport_breakdown.setdefault(
+            sport,
+            {"sport": sport, "count": 0, "wins": 0, "losses": 0, "profit_value": 0.0, "staked": 0.0},
+        )
+        sb["count"] += 1
+        sb["profit_value"] = round(sb["profit_value"] + float(b.get("profit_value") or 0), 2)
+        sb["staked"] = round(sb["staked"] + float(b.get("stake_value") or 0), 2)
+        if b.get("result") == "won":
+            sb["wins"] += 1
+        elif b.get("result") == "lost":
+            sb["losses"] += 1
+        mb = monthly_breakdown.setdefault(month, {"month": month, "count": 0, "profit_value": 0.0})
+        mb["count"] += 1
+        mb["profit_value"] = round(mb["profit_value"] + float(b.get("profit_value") or 0), 2)
+    by_sport = []
+    for row in sport_breakdown.values():
+        staked = float(row.get("staked") or 0)
+        row["roi_pct"] = round((float(row.get("profit_value") or 0) / staked) * 100, 2) if staked else 0.0
+        row["hit_rate_pct"] = round((int(row.get("wins") or 0) / max(1, int(row.get("wins") or 0) + int(row.get("losses") or 0))) * 100, 1)
+        by_sport.append(row)
+    by_sport.sort(key=lambda row: row.get("profit_value", 0), reverse=True)
+    monthly_form = sorted(monthly_breakdown.values(), key=lambda row: row["month"])[-6:]
+    learning_feedback = _portfolio_learning_summary(bets)
 
     insights: list[str] = []
     if parlays >= max(3, singles):
@@ -469,6 +501,17 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         next_actions.append(
             f"You tend to concentrate on certain matches. Cap single-game exposure below {display_currency} {round(top_fixture[1]):,} unless you intentionally want a high-conviction spot."
         )
+    if learning_feedback.get("available") and learning_feedback.get("follow_model_roi_pct") is not None:
+        follow_roi = float(learning_feedback.get("follow_model_roi_pct") or 0)
+        fade_roi = float(learning_feedback.get("fade_model_roi_pct") or 0)
+        if follow_roi > fade_roi:
+            next_actions.append(
+                f"Your model-aligned bets are outperforming the fades ({follow_roi:.1f}% ROI vs {fade_roi:.1f}%). Let the model veto more of the loose action."
+            )
+        else:
+            next_actions.append(
+                f"Your model fades are not materially worse than aligned bets ({follow_roi:.1f}% vs {fade_roi:.1f}% ROI). Re-check stake sizing before trusting every edge blindly."
+            )
 
     profile = {
         "confidence": "high" if len(bets) >= 25 else "medium" if len(bets) >= 10 else "low",
@@ -540,14 +583,132 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_odds": avg_odds,
         "market_breakdown": market_breakdown,
         "ranked_markets": ranked_markets,
+        "by_sport": by_sport,
+        "monthly_form": monthly_form,
         "cumulative_profit": cumulative,
         "insights": insights,
         "overview": overview,
+        "learning_feedback": learning_feedback,
         "profile": profile,
         "bets": bets,
         "last_imported_at": _utc_now(),
         "cashouts": cashouts,
     }
+
+
+def _portfolio_learning_summary(bets: list[dict[str, Any]]) -> dict[str, Any]:
+    settled = [b for b in bets if b.get("result") in {"won", "lost"}]
+    audited = [b for b in settled if isinstance((b.get("model_view") or {}).get("overall"), str)]
+    if not audited:
+        return {
+            "available": False,
+            "audited_bets": 0,
+            "message": "Learning appears after settled bets can be matched back to the model board.",
+            "recommendations": [],
+        }
+
+    buckets: dict[str, dict[str, Any]] = {}
+    by_market: dict[str, dict[str, Any]] = {}
+    recent_delta = 0.0
+    for bet in audited:
+        tone = str((bet.get("model_view") or {}).get("overall") or "neutral")
+        bucket = buckets.setdefault(tone, {"bets": 0, "wins": 0, "profit_value": 0.0, "staked": 0.0})
+        bucket["bets"] += 1
+        bucket["profit_value"] = round(bucket["profit_value"] + float(bet.get("profit_value") or 0), 2)
+        bucket["staked"] = round(bucket["staked"] + float(bet.get("stake_value") or 0), 2)
+        if bet.get("result") == "won":
+            bucket["wins"] += 1
+        market = str(bet.get("market_family") or "other")
+        mk = by_market.setdefault(market, {"market": market, "bets": 0, "profit_value": 0.0})
+        mk["bets"] += 1
+        mk["profit_value"] = round(mk["profit_value"] + float(bet.get("profit_value") or 0), 2)
+    for idx, bet in enumerate(sorted(audited, key=lambda row: row.get("created_at") or "")[-8:]):
+        recent_delta += float(bet.get("profit_value") or 0)
+
+    def _row(name: str) -> dict[str, Any]:
+        row = buckets.get(name) or {}
+        staked = float(row.get("staked") or 0)
+        wins = int(row.get("wins") or 0)
+        bets_n = int(row.get("bets") or 0)
+        return {
+            "bets": bets_n,
+            "wins": wins,
+            "profit_value": round(float(row.get("profit_value") or 0), 2),
+            "roi_pct": round((float(row.get("profit_value") or 0) / staked) * 100, 2) if staked else None,
+            "hit_rate_pct": round((wins / bets_n) * 100, 1) if bets_n else None,
+        }
+
+    good = _row("good")
+    bad = _row("bad")
+    neutral = _row("neutral")
+    recs: list[str] = []
+    if good["bets"]:
+        recs.append(
+            f"Model-backed bets: {good['bets']} settled · {good['hit_rate_pct'] or 0:.1f}% hit · {good['roi_pct'] or 0:.1f}% ROI."
+        )
+    if bad["bets"]:
+        recs.append(
+            f"Model-disliked bets: {bad['bets']} settled · {bad['hit_rate_pct'] or 0:.1f}% hit · {bad['roi_pct'] or 0:.1f}% ROI."
+        )
+    if good["roi_pct"] is not None and bad["roi_pct"] is not None:
+        if good["roi_pct"] > bad["roi_pct"]:
+            recs.append("Your results improve when you stay closer to the model's approved prices.")
+        else:
+            recs.append("Your fades are not underperforming enough yet to trust raw model agreement on its own; sizing and market choice need more weight.")
+    if recent_delta < 0:
+        recs.append("Recent audited bets are negative. Tighten stake size until the model-aligned sample turns back up.")
+
+    return {
+        "available": True,
+        "audited_bets": len(audited),
+        "follow_model_bets": good["bets"],
+        "fade_model_bets": bad["bets"],
+        "neutral_bets": neutral["bets"],
+        "follow_model_roi_pct": good["roi_pct"],
+        "fade_model_roi_pct": bad["roi_pct"],
+        "follow_model_hit_rate_pct": good["hit_rate_pct"],
+        "fade_model_hit_rate_pct": bad["hit_rate_pct"],
+        "recent_profit_value": round(recent_delta, 2),
+        "by_market": sorted(by_market.values(), key=lambda row: row["profit_value"], reverse=True)[:8],
+        "recommendations": recs[:5],
+        "message": f"Learning signal built from {len(audited)} settled, model-mapped bets.",
+    }
+
+
+def _persist_portfolio_learning_signal(state: dict[str, Any]) -> None:
+    privacy = (state.get("privacy") or {})
+    if not privacy.get("learning_opt_in"):
+        return
+    portfolio = state.get("portfolio") or {}
+    feedback = portfolio.get("learning_feedback") or {}
+    if not feedback.get("available"):
+        return
+    from bet_placer.ml.activity_log import log_activity
+    from bet_placer.ml.params import load_params, save_params
+
+    params = load_params(force=True)
+    payload = {
+        **feedback,
+        "updated_at": _utc_now(),
+        "bet_count": int(portfolio.get("bet_count") or 0),
+        "settled_count": int(portfolio.get("settled_count") or 0),
+    }
+    params["portfolio_learning"] = payload
+    report = dict(params.get("report") or {})
+    report["portfolio_learning"] = payload
+    params["report"] = report
+    save_params(params)
+    try:
+        log_activity(
+            "portfolio_learning",
+            f"Portfolio learning updated from {payload['audited_bets']} settled model-mapped bets.",
+            detail={
+                "follow_roi": payload.get("follow_model_roi_pct"),
+                "fade_roi": payload.get("fade_model_roi_pct"),
+            },
+        )
+    except Exception:
+        pass
 
 
 def _parse_fixture_sides(fixture_name: str | None) -> tuple[str, str]:
@@ -770,7 +931,7 @@ def update_privacy_settings(*, portfolio_enabled: bool, risk_acknowledged: bool,
 
 
 def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
-    from bet_placer.config import stake_network_enabled, remote_stake_browser_enabled
+    from bet_placer.config import remote_stake_browser_enabled
 
     # Cloud Chrome path (Browserbase) — open live-view login for the user.
     if remote_stake_browser_enabled():
@@ -808,65 +969,21 @@ def connect_browser_session(timeout: int = 300) -> dict[str, Any]:
                 )
             return _merged_status(_save_state(state))
 
-    if not stake_network_enabled():
-        with _LOCK:
-            state = _load_state()
-            state["connection"].update(
-                {
-                    "status": "setup",
-                    "connected": False,
-                    "last_sync_status": "needs_token",
-                    "last_sync_message": (
-                        "Paste your Stake API token below (Stake → Settings → Security → API Tokens). "
-                        "No installs. Sync runs through the live odds link."
-                    ),
-                    "login_url": "https://stake.com/?tab=login&modal=auth",
-                }
-            )
-            return _merged_status(_save_state(state))
-
-    # Don't hold portfolio lock while Chrome / user login runs (can take minutes).
-    login = wait_until_logged_in(timeout=timeout)
-    browser = browser_status()
     with _LOCK:
         state = _load_state()
-        login_url = login.get("login_url") or browser.get("login_url")
-        if login.get("logged_in"):
-            user = login.get("user") or {}
-            who = user.get("name") or user.get("id") or "Stake"
-            state["connection"].update(
-                {
-                    "status": "authenticated",
-                    "connected": True,
-                    "last_connected_at": _utc_now(),
-                    "last_sync_status": "authenticated",
-                    "last_sync_message": f"Connected as {who}. Tap Sync to refresh your journal.",
-                    "stake_user": {"id": user.get("id"), "name": user.get("name")},
-                    "login_url": login_url,
-                }
-            )
-        elif login.get("ready") or browser.get("ready"):
-            state["connection"].update(
-                {
-                    "status": "awaiting_login",
-                    "connected": False,
-                    "last_sync_status": "auth_required",
-                    "last_sync_message": login.get("message")
-                    or "Sign into Stake in the window we opened, then tap Connect again.",
-                    "login_url": login_url,
-                }
-            )
-        else:
-            state["connection"].update(
-                {
-                    "status": "connecting",
-                    "connected": False,
-                    "last_sync_status": "needs_reconnect",
-                    "last_sync_message": login.get("message")
-                    or "Still starting the Stake window. Try Connect again in a moment.",
-                    "login_url": login_url,
-                }
-            )
+        state["connection"].update(
+            {
+                "status": "setup",
+                "connected": False,
+                "last_sync_status": "needs_token",
+                "last_sync_message": (
+                    "Remote Stake browser is not configured on this host yet. "
+                    "To avoid laptop popups, this app now stays token-only until Browserbase/CDP is set. "
+                    "Paste your Stake API token below or configure Browserbase on Render."
+                ),
+                "login_url": "https://stake.com/settings/security",
+            }
+        )
         return _merged_status(_save_state(state))
 
 

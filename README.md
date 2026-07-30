@@ -130,7 +130,7 @@ Past paper results do not guarantee live profit.
 
 - React + Vite for the SPA
 - No heavy chart library required for core boards; Model desk draws SVG series from API curve arrays
-- `localStorage` for auth token, age gate, bankroll/slip prefs, insights cache key `gambit_insights_v16`
+- `localStorage` for auth token, age gate, bankroll/slip prefs, insights cache key `gambit_insights_v19`
 
 ### Backend packages (high level)
 
@@ -312,7 +312,7 @@ FastAPI (Uvicorn)
 | `/` | Landing |
 | `/app` | Home boards |
 | `/app/sport/:id` | League board, match sheet, Recs / Build / Odds |
-| `/app/model` | Desk v15: glossary, gates, curves, containers |
+| `/app/model` | Desk: glossary, gates, curves, containers |
 | `/app/portfolio` | Private journal + Stake token |
 | `/app/guide` | Product guide |
 | `/app/legal/terms` | Terms (liability, indemnity, as-is) |
@@ -333,7 +333,7 @@ Odds tab fallback order when Stake is blocked: **Stake overlay → fixture cache
 
 **Soccer craft `n=0`** — Paired soccer closes use synthetic ~1.91 even-money sampling with a high `model_p` floor so the sport can place holdout tickets.
 
-**Client insights cache** — Cache key `gambit_insights_v16` rejects older `cache_version` payloads.
+**Client insights cache** — Cache key `gambit_insights_v19` rejects older `cache_version` payloads.
 
 **Honesty** — Below target means below target. Red craft holdout is not painted green without a note.
 

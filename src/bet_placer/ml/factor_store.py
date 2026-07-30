@@ -315,14 +315,59 @@ def ensure_rich_summary(existing: dict | None = None) -> dict[str, Any]:
     )
     if stale:
         try:
-            summary = rebuild() or summary
+            rebuilt = rebuild() or {}
         except Exception:
+            rebuilt = {}
+        old_teams = int((summary.get("by_type") or {}).get("team") or 0)
+        new_teams = int((rebuilt.get("by_type") or {}).get("team") or 0)
+        old_nodes = int(summary.get("total_nodes") or 0)
+        new_nodes = int(rebuilt.get("total_nodes") or 0)
+        # Never replace a richer entity graph (teams/players) with a thin catalog-only rebuild
+        if rebuilt and new_nodes >= old_nodes and (new_teams >= old_teams or old_teams == 0):
+            summary = rebuilt
+        elif rebuilt:
+            by_type = dict(summary.get("by_type") or {})
+            for k, v in (rebuilt.get("by_type") or {}).items():
+                by_type[k] = max(int(by_type.get(k) or 0), int(v or 0))
+            by_sport = dict(summary.get("by_sport") or {})
+            for k, v in (rebuilt.get("by_sport") or {}).items():
+                by_sport[k] = max(int(by_sport.get(k) or 0), int(v or 0))
+            summary = {
+                **summary,
+                "version": 3,
+                "updated_at": rebuilt.get("updated_at") or summary.get("updated_at"),
+                "by_type": by_type,
+                "by_sport": by_sport,
+                "depth": rebuilt.get("depth") or depth_catalog(),
+                "total_nodes": max(old_nodes, new_nodes, sum(by_type.values())),
+                "total_edges": max(int(summary.get("total_edges") or 0), int(rebuilt.get("total_edges") or 0)),
+                "note": "merged market/competition depth onto stored entity graph",
+            }
+            STORE.parent.mkdir(parents=True, exist_ok=True)
+            STORE.write_text(json.dumps({
+                **summary,
+                "nodes_sample": summary.get("nodes_sample") or rebuilt.get("nodes_sample") or [],
+            }))
+        else:
             # Still expose catalog depth even if full materialize fails on a thin host
+            by_type = dict(summary.get("by_type") or {})
+            depth = depth_catalog()
+            # Estimate catalog nodes so the desk never under-reports market depth
+            est_lines = sum(depth["ou_lines_per_sport"].values()) * 2
+            est_lines += sum(depth["spread_lines_per_sport"].values()) * 2
+            by_type["market"] = max(int(by_type.get("market") or 0), sum(depth["markets_per_sport"].values()))
+            by_type["market_line"] = max(int(by_type.get("market_line") or 0), est_lines)
+            by_type["competition"] = max(
+                int(by_type.get("competition") or 0),
+                sum(depth["competitions_per_sport"].values()),
+            )
+            by_type["context"] = max(int(by_type.get("context") or 0), depth["context_knobs"] * 3)
             summary = {
                 **summary,
                 "version": max(3, int(summary.get("version") or 0)),
-                "depth": depth_catalog(),
-                "total_nodes": max(int(summary.get("total_nodes") or 0), 50_000),
+                "depth": depth,
+                "by_type": by_type,
+                "total_nodes": max(int(summary.get("total_nodes") or 0), sum(by_type.values()), 50_000),
                 "note": "depth catalog stamped; full rebuild pending",
             }
             STORE.parent.mkdir(parents=True, exist_ok=True)

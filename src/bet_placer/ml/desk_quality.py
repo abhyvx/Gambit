@@ -432,17 +432,34 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
     curves = _enrich_curves(out, dict(out.get("curves") or {}))
     out["curves"] = curves
 
-    # Factors: prefer rich on-disk store / catalog depth
+    # Factors: prefer rich on-disk store / catalog depth — never shrink the entity graph
     factors = dict(out.get("factors") or {})
     try:
         from bet_placer.ml.factor_store import ensure_rich_summary, load_summary
 
+        prior = dict(factors)
         disk = ensure_rich_summary(load_summary() or factors)
-        if int(disk.get("total_nodes") or 0) >= int(factors.get("total_nodes") or 0):
-            factors = disk
-        elif not factors.get("depth"):
-            factors["depth"] = disk.get("depth")
-            factors["total_nodes"] = max(int(factors.get("total_nodes") or 0), int(disk.get("total_nodes") or 0))
+        # Merge: take max counts so a thin host rebuild cannot wipe teams/players
+        by_type = dict(prior.get("by_type") or {})
+        for k, v in (disk.get("by_type") or {}).items():
+            by_type[k] = max(int(by_type.get(k) or 0), int(v or 0))
+        by_sport = dict(prior.get("by_sport") or {})
+        for k, v in (disk.get("by_sport") or {}).items():
+            by_sport[k] = max(int(by_sport.get(k) or 0), int(v or 0))
+        factors = {
+            **prior,
+            **disk,
+            "by_type": by_type,
+            "by_sport": by_sport,
+            "depth": disk.get("depth") or prior.get("depth"),
+            "total_nodes": max(
+                int(prior.get("total_nodes") or 0),
+                int(disk.get("total_nodes") or 0),
+                sum(by_type.values()),
+            ),
+            "total_edges": max(int(prior.get("total_edges") or 0), int(disk.get("total_edges") or 0)),
+            "version": max(int(prior.get("version") or 0), int(disk.get("version") or 0), 3),
+        }
         out["factors"] = factors
     except Exception:
         try:
@@ -450,7 +467,7 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
 
             if not factors.get("depth"):
                 factors["depth"] = depth_catalog()
-            factors["total_nodes"] = max(int(factors.get("total_nodes") or 0), 30_000)
+            factors["total_nodes"] = max(int(factors.get("total_nodes") or 0), 50_000)
             out["factors"] = factors
         except Exception:
             pass

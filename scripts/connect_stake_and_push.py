@@ -87,7 +87,8 @@ def main() -> int:
     )
     rc = push_main()
     if rc == 0:
-        print("Done. Install the background agent with: ./scripts/install_stake_relay_agent.sh")
+        print("Done. For on-demand sync: ./scripts/start_stake_relay.sh then Admin → Sync Stake odds now")
+        print("If Chrome was auto-opening: ./scripts/uninstall_stake_relay_agent.sh")
     return rc
 
 

@@ -30,12 +30,23 @@ With Browserbase/CDP configured:
 - portfolio connect opens a Browserbase live-view URL instead of a local popup
 - the background odds loop can keep Stake fresh server-side
 
-Production persistence:
+Production persistence (required for accounts that survive redeploys):
 
 - `DATABASE_URL=<your production database url>`
 - `TURSO_AUTH_TOKEN=<your Turso auth token>` (for Turso/libSQL URLs)
 
-Today the app still stores auth/session/portfolio state in files unless `DATABASE_URL` is wired into the runtime persistence layer.
+When `DATABASE_URL` is set, users, sessions, and portfolios are stored in the database instead of ephemeral disk files.
+
+Production security (required before public launch):
+
+- `GAMBIT_SECRETS_KEY=<long random string>` — encrypts per-user Stake API tokens at rest
+- `GAMBIT_ADMIN_EMAILS=you@example.com` — comma-separated admin roster
+- `CORS_ORIGINS=https://your-service.onrender.com` — only needed if the SPA is served from a different origin than the API
+
+Optional but recommended:
+
+- `ODDS_API_KEY` — live multi-league book odds
+- `STAKE_RELAY_SECRET` — legacy laptop relay only (not needed when Browserbase is configured)
 
 If Browserbase is **not** configured, the app now stays token-only / cache-only rather than
 falling back to a local laptop popup.

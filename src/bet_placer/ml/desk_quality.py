@@ -263,7 +263,12 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from bet_placer.ml.factor_store import load_summary, rebuild as rebuild_factors
         factors = load_summary() or {}
-        if int(factors.get("total_nodes") or 0) < 10_000:
+        needs_depth = (
+            int(factors.get("total_nodes") or 0) < 30_000
+            or not (factors.get("depth") or {})
+            or int(factors.get("version") or 0) < 2
+        )
+        if needs_depth:
             factors = rebuild_factors() or factors
         if factors:
             out["factors"] = factors

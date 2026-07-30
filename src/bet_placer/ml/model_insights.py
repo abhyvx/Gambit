@@ -908,7 +908,11 @@ def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
             try:
                 from bet_placer.ml.factor_store import load_summary, rebuild as rebuild_factors
                 fac = load_summary() or {}
-                if int(fac.get("total_nodes") or 0) < 10_000:
+                if (
+                    int(fac.get("total_nodes") or 0) < 30_000
+                    or not (fac.get("depth") or {})
+                    or int(fac.get("version") or 0) < 2
+                ):
                     fac = rebuild_factors() or fac
                 if fac:
                     containers[i] = {

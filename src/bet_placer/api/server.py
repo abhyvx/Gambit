@@ -1337,7 +1337,6 @@ def model_insights(force: bool = Query(default=False)):
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
     import time as _time
     from bet_placer.ml.model_insights import (
-        build_model_insights,
         craft_fallback_desk,
         ensure_insights_cache_on_disk,
         load_insights_cache,
@@ -1352,18 +1351,30 @@ def model_insights(force: bool = Query(default=False)):
     if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
         return _INSIGHTS_CACHE[1]
 
-    # Disk / release cache — instant paint on Render (never block on full rebuild)
-    disk = ensure_insights_cache_on_disk() or load_insights_cache(max_age_s=30 * 86400)
+    disk = None
+    try:
+        disk = ensure_insights_cache_on_disk() or load_insights_cache(max_age_s=30 * 86400)
+    except Exception:
+        logger.warning("insights disk load failed", exc_info=True)
+        disk = load_insights_cache(max_age_s=30 * 86400)
+
     if disk and (disk.get("containers") or disk.get("curves")):
-        disk = publish_clean_desk(disk)
-        _INSIGHTS_CACHE = (now, disk)
-        return disk
+        try:
+            cleaned = publish_clean_desk(disk)
+        except Exception:
+            logger.warning("publish_clean_desk failed — serving raw cache", exc_info=True)
+            cleaned = disk
+        _INSIGHTS_CACHE = (now, cleaned)
+        return cleaned
 
     # Fast craft+evolution desk so graphs never stay blank
     try:
         fallback = craft_fallback_desk()
         if fallback.get("containers") and int(fallback.get("total_corpus") or 0) > 100:
-            fallback = publish_clean_desk(fallback)
+            try:
+                fallback = publish_clean_desk(fallback)
+            except Exception:
+                pass
             _INSIGHTS_CACHE = (now, fallback)
             try:
                 save_insights_cache(fallback)
@@ -1373,14 +1384,13 @@ def model_insights(force: bool = Query(default=False)):
     except Exception as exc:
         logger.warning("craft fallback desk failed: %s", exc)
 
+    # Never run full build_model_insights on the request path (OOM on free tier)
     try:
-        payload = publish_clean_desk(build_model_insights())
-        _INSIGHTS_CACHE = (now, payload)
-        return payload
-    except Exception as exc:
-        logger.warning("model insights failed: %s", exc)
-        return publish_clean_desk(craft_fallback_desk("Model desk warming — craft charts only."))
-
+        warm = publish_clean_desk(craft_fallback_desk("Model desk warming — craft charts only."))
+    except Exception:
+        warm = craft_fallback_desk("Model desk warming — craft charts only.")
+    _INSIGHTS_CACHE = (now, warm)
+    return warm
 
 _INSIGHTS_REFRESHING = False
 

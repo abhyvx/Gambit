@@ -356,8 +356,7 @@ def settle_open(book: dict | None = None) -> dict[str, Any]:
 
 
 def apply_paper_learning(params: dict | None = None, book: dict | None = None) -> dict:
-    """Blend paper craft weights into model params from board results."""
-    from bet_placer.ml.activity_log import log_activity
+    """Blend board paper-book weights into model params (silent — not Admin-facing)."""
     from bet_placer.ml.params import load_params, save_params
 
     params = params or load_params(force=True)
@@ -404,24 +403,8 @@ def apply_paper_learning(params: dict | None = None, book: dict | None = None) -
         params["rec_learning"] = rec
 
     save_params(params)
-    # Don't spam admin activity with empty live-board bookkeeping
-    if int(summary.get("settled") or 0) <= 0 and not weights and not sw:
-        return params
-    log_activity(
-        "paper_craft",
-        (
-            f"Paper book (live boards): {summary.get('settled', 0)} settled · "
-            f"acc {summary.get('accuracy')} · PnL ₹{summary.get('pnl')}"
-        ),
-        detail={
-            "accuracy": summary.get("accuracy"),
-            "pnl": summary.get("pnl"),
-            "roi": summary.get("roi"),
-            "craft_weights": weights,
-            "strategy_weights": sw,
-            "by_sport": summary.get("by_sport"),
-        },
-    )
+    # Silent: paper-board learning stays internal. Do not spam Admin activity
+    # with "paper_craft · 0 settled · PnL ₹0" (or even non-zero bookkeeping).
     return params
 
 

@@ -11,6 +11,22 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v22",
+        "cycle": "paper-craft-gone",
+        "at": "2026-07-30",
+        "title": "Remove paper_craft Admin spam; fix desk craft zeros",
+        "fixed": [
+            "Admin activity flooded with paper_craft · 0 settled · PnL ₹0",
+            "Nobody knew what paper craft was — it is not the Model desk",
+            "Admin craft ROI/accuracy stayed 0 even when desk insights had real numbers",
+        ],
+        "changes": [
+            "paper_craft no longer logs to Admin; stale rows are purged on read",
+            "Board paper-book learning stays silent (internal gem weights only)",
+            "Admin craft panel always lifts desk ROI/accuracy/epochs from insights when empty",
+        ],
+    },
+    {
         "version": "v21",
         "cycle": "recs-sgm-slip-copy",
         "at": "2026-07-30",

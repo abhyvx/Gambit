@@ -23,6 +23,22 @@ function fmtAt(v) {
   }
 }
 
+function fmtPct(v) {
+  if (v == null || v === '' || Number.isNaN(Number(v))) return '—'
+  const n = Number(v)
+  // Desk ROI/accuracy are fractions (0.25 = 25%)
+  const pct = Math.abs(n) <= 1.5 ? n * 100 : n
+  return `${pct >= 0 ? '' : ''}${pct.toFixed(1)}%`
+}
+
+function activityLabel(kind) {
+  const k = String(kind || 'event')
+  if (k === 'train_complete') return 'Retrain'
+  if (k === 'rec_grade') return 'Graded recs'
+  if (k === 'desk_train') return 'Desk train'
+  return k.replace(/_/g, ' ')
+}
+
 export default function AdminPage() {
   useEntryReady()
   const { user, ready, openAuth } = useAuth()
@@ -331,6 +347,9 @@ export default function AdminPage() {
 
       <section className="panel">
         <h2 className="panel-title">Model / craft debug</h2>
+        <p className="muted" style={{ marginBottom: '0.75rem' }}>
+          Desk craft = frozen holdout training (same numbers as the Model page). Internal board paper-book runs are hidden.
+        </p>
         <div className="admin-debug-grid">
           <article className="admin-debug-card">
             <h3>Model state</h3>
@@ -346,38 +365,42 @@ export default function AdminPage() {
             </div>
           </article>
           <article className="admin-debug-card">
-            <h3>Craft status</h3>
+            <h3>Desk craft</h3>
             <ul className="admin-debug-list">
               <li><span>State</span><strong>{craft.train_status?.state || 'n/a'}</strong></li>
-              <li><span>Epoch</span><strong>{craft.train_status?.epoch ?? craft.latest?.epoch ?? '—'}</strong></li>
+              <li><span>Epoch</span><strong>{craft.train_status?.epoch ?? craft.latest?.epoch ?? craft.epochs ?? '—'}</strong></li>
               <li>
                 <span>Desk ROI</span>
-                <strong>{craft.display_roi ?? craft.latest?.roi ?? craft.best?.roi ?? '—'}</strong>
+                <strong>{fmtPct(craft.display_roi ?? craft.latest?.roi ?? craft.best?.roi)}</strong>
               </li>
               <li>
                 <span>Desk accuracy</span>
-                <strong>{craft.display_accuracy ?? craft.latest?.accuracy ?? craft.best?.accuracy ?? '—'}</strong>
+                <strong>{fmtPct(craft.display_accuracy ?? craft.latest?.accuracy ?? craft.best?.accuracy)}</strong>
               </li>
               <li><span>Total epochs</span><strong>{Array.isArray(craft.epochs) ? craft.epochs.length : (craft.epochs ?? 0)}</strong></li>
               <li><span>Craft blocks</span><strong>{Array.isArray(craft.blocks) ? craft.blocks.length : (craft.blocks ?? 0)}</strong></li>
               {craft.best?.roi != null && (
-                <li><span>Best ROI</span><strong>{craft.best.roi}</strong></li>
+                <li><span>Best ROI</span><strong>{fmtPct(craft.best.roi)}</strong></li>
               )}
               {craft.error ? <li><span>Craft debug</span><strong>{craft.error}</strong></li> : null}
             </ul>
           </article>
         </div>
         <div className="admin-log-list" style={{ marginTop: '0.9rem' }}>
-          {(model.activity_log || []).map((row, idx) => (
+          {(model.activity_log || [])
+            .filter((row) => !['paper_craft', 'paper_book', 'gem_craft'].includes(String(row.kind || '')))
+            .map((row, idx) => (
             <div className="admin-log-row" key={`${row.at || idx}-${row.kind || idx}`}>
               <div>
-                <strong>{row.kind || 'event'}</strong>
+                <strong>{activityLabel(row.kind)}</strong>
                 <small className="muted">{fmtAt(row.at)}</small>
               </div>
               <p>{row.message || 'n/a'}</p>
             </div>
           ))}
-          {!model.activity_log?.length && <p className="muted">No recent model activity.</p>}
+          {!model.activity_log?.filter((row) => !['paper_craft', 'paper_book', 'gem_craft'].includes(String(row.kind || ''))).length && (
+            <p className="muted">No recent model activity.</p>
+          )}
         </div>
       </section>
 

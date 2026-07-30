@@ -828,11 +828,13 @@ def admin_accounts(request: Request):
         or {}
     )
     updated_at = params.get("updated_at") or report.get("updated_at")
-    if trained_history <= 0:
-        try:
-            from bet_placer.ml.model_insights import load_insights_cache
+    # Always lift desk craft numbers from insights when Admin craft looks empty/zero.
+    # (Previously gated on trained_history<=0, so craft stayed at 0 when corpus was fine.)
+    try:
+        from bet_placer.ml.model_insights import load_insights_cache
 
-            desk = load_insights_cache() or {}
+        desk = load_insights_cache() or {}
+        if trained_history <= 0:
             trained_history = int(desk.get("total_corpus") or 0)
             if not sport_history:
                 sports = desk.get("sports") or {}
@@ -842,20 +844,36 @@ def admin_accounts(request: Request):
                     if isinstance(sports.get(sp), dict)
                 }
             updated_at = updated_at or desk.get("updated_at") or (desk.get("craft") or {}).get("updated_at")
-            # Lift craft ROI from desk when snapshot latest is empty
-            if craft.get("display_roi") in (None, 0, 0.0):
-                dc = desk.get("craft") or {}
-                for k in ("best_roi", "champion_roi", "holdout_roi"):
-                    try:
-                        v = float(dc[k]) if dc.get(k) is not None else None
-                    except (TypeError, ValueError, KeyError):
-                        v = None
-                    if v is not None and v != 0:
-                        craft["display_roi"] = v
-                        craft.setdefault("latest", {})["roi"] = v
-                        break
-        except Exception:
-            pass
+        dc = desk.get("craft") or {}
+        if craft.get("display_roi") in (None, 0, 0.0) and not craft.get("error"):
+            for k in ("best_roi", "champion_roi", "holdout_roi"):
+                try:
+                    v = float(dc[k]) if dc.get(k) is not None else None
+                except (TypeError, ValueError, KeyError):
+                    v = None
+                if v is not None and abs(v) > 1e-9:
+                    craft["display_roi"] = v
+                    craft.setdefault("latest", {})["roi"] = v
+                    break
+        if craft.get("display_accuracy") in (None, 0, 0.0) and not craft.get("error"):
+            for k in ("best_accuracy", "champion_accuracy", "holdout_accuracy"):
+                try:
+                    v = float(dc[k]) if dc.get(k) is not None else None
+                except (TypeError, ValueError, KeyError):
+                    v = None
+                if v is not None and v > 0:
+                    craft["display_accuracy"] = v
+                    craft.setdefault("latest", {})["accuracy"] = v
+                    break
+        epochs_now = int(craft.get("epochs") or 0)
+        desk_epochs = int(dc.get("n_epochs") or (dc.get("train_status") or {}).get("epoch") or 0)
+        if epochs_now <= 0 and desk_epochs > 0:
+            craft["epochs"] = desk_epochs
+            craft.setdefault("train_status", {})["epoch"] = desk_epochs
+        if not craft.get("blocks") and isinstance(dc.get("blocks"), list):
+            craft["blocks"] = len(dc["blocks"])
+    except Exception:
+        pass
     bundle_file = bundle_path()
     port_n = 0
     try:

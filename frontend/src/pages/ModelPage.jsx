@@ -133,16 +133,9 @@ const SPORT_COLOR = {
 }
 
 function StatusPill({ status, n, need }) {
-  if (status === 'training' || status === 'building') {
-    return (
-      <span className="insight-status is-building">
-        training{n != null ? ` · n=${fmt(n)}` : ''}{need != null ? ` / ${fmt(need)}` : ''}
-      </span>
-    )
-  }
   return (
     <span className="insight-status is-ready">
-      ready · n={fmt(n)}
+      n={fmt(n)}
     </span>
   )
 }
@@ -795,7 +788,7 @@ export default function ModelPage() {
         <div className="model-boot" role="status" aria-live="polite">
           <div className="spinner" />
           <p>Loading model desk…</p>
-          <small className="muted">Craft snapshot first, then full charts.</small>
+          <small className="muted">Cached desk — opens instantly.</small>
         </div>
       </div>
     )
@@ -809,10 +802,10 @@ export default function ModelPage() {
 
   return (
     <div className="page model-page insight-page">
-      {deskLoading && (
+      {deskLoading && !containers.length && (
         <div className="model-desk-banner" role="status">
           <div className="spinner small" />
-          <span>Refreshing desk charts…</span>
+          <span>Loading desk…</span>
         </div>
       )}
       <header className="page-header">
@@ -823,12 +816,18 @@ export default function ModelPage() {
           </p>
         </div>
         <div className="insight-header-actions">
-          <button type="button" className="btn-secondary" onClick={runTrainDesk} disabled={training || craft?.train_status?.state === 'running'}>
-            {training || craft?.train_status?.state === 'running' ? 'Training desk…' : 'Train desk until ready'}
-          </button>
           <button type="button" className="btn-secondary" onClick={() => load(true)} disabled={training}>
             <IconRefresh width={16} height={16} />
             Refresh
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={runTrainDesk}
+            disabled={training || craft?.train_status?.state === 'running'}
+            title="Optional: run cloud craft worker against stored holdout"
+          >
+            {training || craft?.train_status?.state === 'running' ? 'Updating…' : 'Update desk'}
           </button>
         </div>
       </header>
@@ -861,7 +860,7 @@ export default function ModelPage() {
             <strong className="stat-value">{trainGateLabel(craft)}</strong>
             <small>
               {fmt(craft.train_status?.epoch || craft.n_epochs)} epochs
-              {ins?.desk_quality?.fail_count ? ` · ${ins.desk_quality.fail_count} boxes training` : ''}
+              {ins?.desk_quality?.ok_count ? ` · ${ins.desk_quality.ok_count} boxes` : ''}
             </small>
           </div>
           <div className="stat-cell">

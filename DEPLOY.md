@@ -33,6 +33,7 @@ With Browserbase/CDP configured:
 Production persistence:
 
 - `DATABASE_URL=<your production database url>`
+- `TURSO_AUTH_TOKEN=<your Turso auth token>` (for Turso/libSQL URLs)
 
 Today the app still stores auth/session/portfolio state in files unless `DATABASE_URL` is wired into the runtime persistence layer.
 

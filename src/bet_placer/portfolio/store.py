@@ -13,6 +13,13 @@ from typing import Any
 from bet_placer.config import data_path, get_settings
 from bet_placer.data.stake_browser import browser_status, wait_until_logged_in
 from bet_placer.data.stake_scraper import StakeScraper
+from bet_placer.persistence.db import (
+    db_enabled,
+    load_blob,
+    load_portfolio_state,
+    save_blob,
+    save_portfolio_state,
+)
 from bet_placer.security.secrets import reveal as _reveal_token
 from bet_placer.security.secrets import seal as _seal_token
 
@@ -29,21 +36,30 @@ def set_portfolio_user(user_id: str | None) -> None:
 
 def touch_relay_heartbeat() -> None:
     """Odds-link machine pings this when draining jobs / pushing odds."""
+    payload = {"at": _utc_now()}
+    if db_enabled():
+        try:
+            save_blob("relay_heartbeat", payload)
+            return
+        except Exception:
+            pass
     try:
         _RELAY_HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
-        _RELAY_HEARTBEAT.write_text(
-            json.dumps({"at": _utc_now()}, indent=2),
-            encoding="utf-8",
-        )
+        _RELAY_HEARTBEAT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
         pass
 
 
 def relay_heartbeat() -> dict[str, Any]:
-    if not _RELAY_HEARTBEAT.is_file():
-        return {"seen": False, "at": None, "age_s": None}
     try:
-        raw = json.loads(_RELAY_HEARTBEAT.read_text(encoding="utf-8"))
+        if db_enabled():
+            raw = load_blob("relay_heartbeat", None)
+            if not isinstance(raw, dict):
+                return {"seen": False, "at": None, "age_s": None}
+        else:
+            if not _RELAY_HEARTBEAT.is_file():
+                return {"seen": False, "at": None, "age_s": None}
+            raw = json.loads(_RELAY_HEARTBEAT.read_text(encoding="utf-8"))
         at = raw.get("at")
         age = None
         if at:
@@ -300,13 +316,16 @@ def _migrate_legacy_bet(bet: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_state() -> dict[str, Any]:
-    path = _store_path()
-    if not path.exists():
-        return _default_state()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return _default_state()
+    if db_enabled():
+        data = load_portfolio_state(_CURRENT_USER_ID.get()) or {}
+    else:
+        path = _store_path()
+        if not path.exists():
+            return _default_state()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return _default_state()
     state = _default_state()
     for key in ("privacy", "connection", "portfolio"):
         if isinstance(data.get(key), dict):
@@ -326,9 +345,12 @@ def _load_state() -> dict[str, Any]:
 
 
 def _save_state(state: dict[str, Any]) -> dict[str, Any]:
-    path = _store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    if db_enabled():
+        save_portfolio_state(_CURRENT_USER_ID.get(), state)
+    else:
+        path = _store_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     try:
         _persist_portfolio_learning_signal(state)
     except Exception:
@@ -1070,6 +1092,27 @@ def _connect_with_stake_token_locked(token: str, *, user_id: str) -> dict[str, A
         return out
 
 
+def _load_sync_jobs() -> list[dict[str, Any]]:
+    if db_enabled():
+        raw = load_blob("stake_sync_jobs", [])
+        return raw if isinstance(raw, list) else []
+    if _SYNC_JOBS.is_file():
+        try:
+            raw = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _save_sync_jobs(jobs: list[dict[str, Any]]) -> None:
+    if db_enabled():
+        save_blob("stake_sync_jobs", jobs)
+        return
+    _SYNC_JOBS.parent.mkdir(parents=True, exist_ok=True)
+    _SYNC_JOBS.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
+
+
 def retry_stake_token_sync(*, user_id: str | None = None) -> dict[str, Any]:
     """Re-queue import from the sealed token already on this account."""
     uid = (user_id or _CURRENT_USER_ID.get() or "").strip() or None
@@ -1089,20 +1132,12 @@ def retry_stake_token_sync(*, user_id: str | None = None) -> dict[str, Any]:
 
 
 def _enqueue_sync_job(job: dict[str, Any]) -> None:
-    jobs = []
-    if _SYNC_JOBS.is_file():
-        try:
-            jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
-        except Exception:
-            jobs = []
-    if not isinstance(jobs, list):
-        jobs = []
+    jobs = _load_sync_jobs()
     # Replace pending job for same user
     uid = job.get("user_id")
     jobs = [j for j in jobs if not (j.get("status") == "pending" and j.get("user_id") == uid)]
     jobs.append(job)
-    _SYNC_JOBS.parent.mkdir(parents=True, exist_ok=True)
-    _SYNC_JOBS.write_text(json.dumps(jobs[-40:], indent=2), encoding="utf-8")
+    _save_sync_jobs(jobs[-40:])
 
 
 def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
@@ -1110,12 +1145,7 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
     if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
         raise ValueError("Invalid relay secret")
     touch_relay_heartbeat()
-    if not _SYNC_JOBS.is_file():
-        return []
-    try:
-        jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    jobs = _load_sync_jobs()
     return [
         {
             **j,
@@ -1128,12 +1158,7 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
 
 def sync_jobs_snapshot(limit: int = 12) -> dict[str, Any]:
     """Admin-safe queue summary: never reveals stored Stake tokens."""
-    if not _SYNC_JOBS.is_file():
-        return {"pending": 0, "recent": []}
-    try:
-        jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
-    except Exception:
-        return {"pending": 0, "recent": []}
+    jobs = _load_sync_jobs()
     if not isinstance(jobs, list):
         return {"pending": 0, "recent": []}
     recent = []
@@ -1168,12 +1193,7 @@ def complete_sync_job(
     if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
         raise ValueError("Invalid relay secret")
 
-    jobs = []
-    if _SYNC_JOBS.is_file():
-        try:
-            jobs = json.loads(_SYNC_JOBS.read_text(encoding="utf-8"))
-        except Exception:
-            jobs = []
+    jobs = _load_sync_jobs()
     job = next((j for j in jobs if j.get("id") == job_id), None)
     if not job:
         raise ValueError("Job not found")
@@ -1218,7 +1238,7 @@ def complete_sync_job(
             for j in jobs:
                 if j.get("id") == job_id:
                     j.update(job)
-            _SYNC_JOBS.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
+            _save_sync_jobs(jobs)
             try:
                 from bet_placer.auth.persist import write_users_bundle
                 write_users_bundle()

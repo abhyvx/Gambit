@@ -11,6 +11,19 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v27",
+        "cycle": "top-bets-summaries",
+        "at": "2026-07-30",
+        "title": "Top bets: fetch board summaries only (no Match build)",
+        "fixed": [
+            "Top bets hung or failed after events unwedge — market_top still built Match objects for soccer_all + basketball_all + cricket_all",
+        ],
+        "changes": [
+            "market_top and stake board odds lookup use with_matches=False",
+            "Analyze / bet-builder still request full Match objects when needed",
+        ],
+    },
+    {
         "version": "v26",
         "cycle": "events-board-unwedge",
         "at": "2026-07-30",

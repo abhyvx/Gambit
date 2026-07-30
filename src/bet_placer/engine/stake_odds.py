@@ -509,7 +509,7 @@ def _odds_from_board_events(home: str, away: str) -> tuple[dict[str, float], str
     ]
     for key in keys:
         try:
-            fetch = provider.fetch_events(key)
+            fetch = provider.fetch_events(key, with_matches=False)
         except Exception:
             continue
         for e in getattr(fetch, "events", None) or []:

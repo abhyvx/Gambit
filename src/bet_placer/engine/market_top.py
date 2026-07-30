@@ -422,11 +422,12 @@ def market_top_bets(limit: int = 8) -> dict:
         return _CACHE["payload"]
 
     provider = UnifiedOddsProvider()
-    # Always pull all three desks — never soccer-only
+    # Always pull all three desks — never soccer-only.
+    # Summaries only: building Match+Elo for soccer_all/bb/cricket_all wedged top bets.
     events = []
     for key in ("soccer_all", "basketball_all", "cricket_all"):
         try:
-            events.extend(list(provider.fetch_events(key).events))
+            events.extend(list(provider.fetch_events(key, with_matches=False).events))
         except Exception:
             continue
     by_pair = {

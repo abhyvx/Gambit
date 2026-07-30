@@ -809,7 +809,7 @@ def _resolve_league_match(home: str, away: str, sport: str | None = None):
             continue
         seen.add(key)
         try:
-            fetch = provider.fetch_events(key)
+            fetch = provider.fetch_events(key, with_matches=True)
         except Exception:
             continue
         for m in fetch.matches or []:

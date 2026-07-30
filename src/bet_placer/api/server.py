@@ -48,7 +48,7 @@ def _warmup_stake_browser() -> None:
     """Optionally pre-launch Playwright Chromium (off by default).
 
     Non-blocking and failure-tolerant: a warmup failure must never stop the
-    server — requests fall back to DraftKings pricing until Stake is opened.
+    server. Odds fall back to board / model prices until Stake is reachable.
     """
     settings = get_settings()
     from bet_placer.config import remote_stake_browser_enabled, stake_network_enabled
@@ -56,8 +56,14 @@ def _warmup_stake_browser() -> None:
     if not stake_network_enabled():
         logger.info("Stake browser warmup skipped (no local/cloud browser path)")
         return
-    # Cloud browser: warm by default so odds loop has a session. Local: only if asked.
-    should_warm = bool(settings.stake_browser_warmup_on_startup or remote_stake_browser_enabled())
+    # Cloud browser: warm only when explicitly asked (keeps API boot light).
+    should_warm = bool(settings.stake_browser_warmup_on_startup)
+    if not should_warm and remote_stake_browser_enabled():
+        logger.info(
+            "Stake browser warmup deferred on cloud "
+            "(set STAKE_BROWSER_WARMUP_ON_STARTUP=1 to pre-launch)"
+        )
+        return
     if not should_warm:
         logger.info(
             "Stake browser warmup deferred (set STAKE_BROWSER_WARMUP_ON_STARTUP=1 to pre-launch)"
@@ -121,69 +127,52 @@ def _stake_odds_keepalive_loop() -> None:
 
 
 def _prefetch_stake_overlay() -> None:
-    """Load persisted Stake overlay from disk; skip live GraphQL on cloud (403)."""
+    """Load persisted Stake overlay from disk only on boot (no live GraphQL).
+
+    Live Stake scrapes are slow and often 403 from datacenters. Warm disk cache
+    so Odds tab fallbacks are instant; refresh on demand / keepalive when configured.
+    """
     def _go() -> None:
-        from bet_placer.config import stake_network_enabled
         try:
             from bet_placer.engine.stake_odds import warm_stake_cache_from_disk
             n = warm_stake_cache_from_disk()
             if n:
                 logger.info("Stake disk cache warmed: %d fixtures", n)
+            else:
+                logger.info("Stake disk cache empty (Odds tab will use board/model fallback)")
         except Exception:
             logger.warning("Stake disk cache warmup failed", exc_info=True)
-        if not stake_network_enabled():
-            logger.info("Stake live fetch skipped (browser off — use ESPN/model prices on cloud)")
-            return
-        try:
-            from bet_placer.data.stake_scraper import StakeScraper
-            from bet_placer.engine.stake_odds import fetch_fast_stake_overlay
-            m = fetch_fast_stake_overlay(StakeScraper(timeout=45, allow_browser_launch=False))
-            logger.info("Stake trending overlay preloaded: %d fixtures", len(m or {}))
-        except Exception:
-            logger.warning("Stake trending preload failed", exc_info=True)
 
     threading.Thread(target=_go, daemon=True, name="stake-cache-warm").start()
 
 
 def _warmup_data() -> None:
-    """Pre-fetch ESPN boards so sport/league switches hit cache. No Odds API credits."""
+    """Pre-fetch core ESPN boards so sport switches hit cache. No Odds API credits.
+
+    Keep this lean: one key per sport. World Cup / niche leagues load on demand.
+    """
     def _go() -> None:
         try:
             from bet_placer.data.espn_leagues import fetch_espn_events
-            from bet_placer.data.worldcup2026 import get_all_group_matches
-            for key in ("soccer_epl", "soccer_all", "basketball_all", "cricket_all", "basketball_nba"):
+
+            for key in ("soccer_all", "basketball_all", "cricket_all"):
                 try:
                     n = len(fetch_espn_events(key))
                     logger.info("Board warmup %s: %d events (ESPN only)", key, n)
                 except Exception:
                     logger.warning("Board warmup failed for %s", key, exc_info=True)
-            get_all_group_matches(force_refresh=True)
-            logger.info("World Cup data warmup complete")
         except Exception:
-            logger.warning("World Cup data warmup failed", exc_info=True)
+            logger.warning("Board warmup failed", exc_info=True)
 
     threading.Thread(target=_go, daemon=True, name="data-warmup").start()
 
 
 def _warmup_model() -> None:
-    """ponytail: do NOT auto-retrain on boot — full train takes minutes and can
-    overwrite in-flight params. Boards still warm via _warmup_data; user hits
-    Retrain on the Model page when they want a fresh scorecard.
-    """
-    def _go() -> None:
-        try:
-            from bet_placer.ml.params import load_params
-            p = load_params(force=True)
-            n_elo = len(p.get("elo") or {})
-            n_sport = sum(int(v or 0) for v in (p.get("trained_on_sport_history") or {}).values())
-            logger.info(
-                "Model warmup skipped (elo=%d sport_history=%d). Use Model → Retrain to refresh.",
-                n_elo, n_sport,
-            )
-        except Exception:
-            logger.debug("Model warmup status check failed", exc_info=True)
+    """No-op on boot: loading params here competed with request latency for no gain.
 
-    threading.Thread(target=_go, daemon=True, name="model-warmup").start()
+    Boards warm via _warmup_data. Retrain / Update desk refreshes scorecards explicitly.
+    """
+    logger.info("Model warmup skipped on boot (use Model → Update desk to refresh)")
 
 
 _craft_boot_lock = threading.Lock()
@@ -272,7 +261,7 @@ async def lifespan(_app: FastAPI):
         _prefetch_stake_overlay()
         _warmup_stake_browser()
         _stake_odds_keepalive_loop()
-        _warmup_model()
+        # Intentionally no model param preload / World Cup force refresh on boot.
         _ensure_craft_training()
         _warmup_insights()
 

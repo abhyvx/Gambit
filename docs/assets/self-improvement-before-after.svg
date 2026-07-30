@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">
+<rect width="100%" height="100%" fill="#0f1419"/>
+<text x="56" y="28" fill="#e8eef7" font-family="Georgia, serif" font-size="18">Self-improvement best-so-far: stuck ~2.2% → rising to ~6.3%</text>
+<text x="14" y="158.0" fill="#8b9bb0" font-family="ui-monospace,monospace" font-size="11" transform="rotate(-90 14,158.0)">Best-so-far ROI</text>
+<line x1="56" y1="256.8" x2="696" y2="256.8" stroke="#3d4a5c" stroke-dasharray="4 4"/>
+<text x="692" y="252.8" fill="#8b9bb0" font-size="10" text-anchor="end">0%</text>
+<line x1="56" y1="272.0" x2="696" y2="272.0" stroke="#1c2530"/>
+<text x="48" y="276.0" fill="#6b7c90" font-size="10" text-anchor="end">-0.5%</text>
+<line x1="56" y1="215.0" x2="696" y2="215.0" stroke="#1c2530"/>
+<text x="48" y="219.0" fill="#6b7c90" font-size="10" text-anchor="end">1.4%</text>
+<line x1="56" y1="158.0" x2="696" y2="158.0" stroke="#1c2530"/>
+<text x="48" y="162.0" fill="#6b7c90" font-size="10" text-anchor="end">3.3%</text>
+<line x1="56" y1="101.0" x2="696" y2="101.0" stroke="#1c2530"/>
+<text x="48" y="105.0" fill="#6b7c90" font-size="10" text-anchor="end">5.2%</text>
+<line x1="56" y1="44.0" x2="696" y2="44.0" stroke="#1c2530"/>
+<text x="48" y="48.0" fill="#6b7c90" font-size="10" text-anchor="end">7.1%</text>
+<polyline fill="none" stroke="#c45c5c" stroke-width="2.5" points="56.0,190.5 147.4,190.5 238.9,190.5 330.3,190.5 421.7,190.5 513.1,190.5 604.6,190.5 696.0,190.5"/>
+<circle cx="696.0" cy="190.46508688783572" r="3.5" fill="#c45c5c"/>
+<polyline fill="none" stroke="#3d9b6c" stroke-width="2.5" points="56.0,127.1 147.4,127.1 238.9,91.7 330.3,91.7 421.7,91.7 513.1,91.7 604.6,91.7 696.0,66.8"/>
+<circle cx="696.0" cy="66.80000000000001" r="3.5" fill="#3d9b6c"/>
+<rect x="56" y="292" width="12" height="12" fill="#c45c5c"/>
+<text x="74" y="302" fill="#c5d0dc" font-size="12" font-family="system-ui,sans-serif">Live desk before (plateau)</text>
+<rect x="280" y="292" width="12" height="12" fill="#3d9b6c"/>
+<text x="298" y="302" fill="#c5d0dc" font-size="12" font-family="system-ui,sans-serif">After 3-sport learning</text>
+</svg>

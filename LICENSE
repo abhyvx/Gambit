@@ -1,24 +1,28 @@
 PROPRIETARY SOFTWARE LICENSE
+
 Copyright (c) 2026 Abhyuday Khanna (abhyudayk16@gmail.com). All Rights Reserved.
 
-GAMBIT / "Bet Placer" and all of its source code, design, models, data
-pipelines, documentation, and associated materials (the "Software") are the
-exclusive, proprietary property of the copyright holder named above (the
-"Owner").
+GAMBIT (also referred to historically as "Bet Placer") and all of its source
+code, design, models, trained weights, data pipelines, documentation, diagrams,
+and associated materials (the "Software") are the exclusive proprietary property
+of the copyright holder named above (the "Owner").
 
-NO LICENSE IS GRANTED. This Software is published in a private repository for
-the Owner's personal reference only. Except as expressly authorized in writing
-by the Owner, no person or entity may:
+NO LICENSE IS GRANTED TO THE PUBLIC. Publication of this repository (private or
+public) does not waive ownership and does not grant you rights to use the
+Software except as the Owner expressly allows in writing.
 
-  1. copy, reproduce, or republish the Software or any part of it;
-  2. use, run, host, or deploy the Software for any purpose;
+Except as expressly authorized in writing by the Owner, no person or entity may:
+
+  1. copy, reproduce, or republish the Software or any substantial part of it;
+  2. use, run, host, deploy, or offer the Software as a service;
   3. modify, adapt, translate, or create derivative works of the Software;
   4. distribute, sublicense, sell, rent, lease, or otherwise transfer the
      Software or access to it;
   5. reverse engineer, decompile, or disassemble the Software except to the
      limited extent such restriction is prohibited by applicable law;
   6. remove, obscure, or alter any copyright, trademark, or other proprietary
-     notice contained in the Software.
+     notice contained in the Software;
+  7. use the Software to operate an unlicensed bookmaking or gambling business.
 
 The name "GAMBIT", any associated logos, and the product's look and feel are
 trademarks and trade dress of the Owner and may not be used without written
@@ -31,11 +35,18 @@ AND WILL BE PROSECUTED TO THE MAXIMUM EXTENT POSSIBLE UNDER LAW.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT
-OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, LOSS OF PROFITS, BETTING LOSSES, OR
+OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR
+ITS USE, WHETHER IN CONTRACT, TORT, OR OTHERWISE, TO THE MAXIMUM EXTENT
+PERMITTED BY LAW.
 
-This Software is provided for educational and analytical purposes only. It is
-not gambling advice. Sports betting involves financial risk; never bet more
-than you can afford to lose, and comply with all laws in your jurisdiction.
+This Software is for educational and analytical purposes only. It is not a
+bookmaker, not a payment processor, and not gambling or financial advice.
+Sports betting involves financial risk. Never bet more than you can afford to
+lose. You must be of legal age and comply with all laws in your jurisdiction.
+You alone are responsible for any bets you place with third parties.
+
+In-app Terms and Privacy notices may add operational rules for a specific
+hosted deployment; they do not transfer ownership of the Software.
 
 To request a license, contact: abhyudayk16@gmail.com

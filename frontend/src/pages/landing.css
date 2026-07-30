@@ -58,6 +58,18 @@
   animation: land-in 0.7s var(--ease-out) 0.08s both;
 }
 
+.landing-legal {
+  margin-top: 22px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.landing-legal a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .landing-cta {
   margin-top: 32px;
   padding: 14px 36px;

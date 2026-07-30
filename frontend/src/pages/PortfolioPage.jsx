@@ -221,10 +221,10 @@ export default function PortfolioPage() {
               Gambit
             </h1>
             <p className="portfolio-support">
-              {hasJournal ? 'Your betting journal — synced from Stake and confirmed slips.' : 'Track every bet in one place.'}
+              {hasJournal ? 'Your betting journal, synced from Stake and confirmed slips.' : 'Track every bet in one place.'}
             </p>
             <p className="portfolio-lede">
-              Connect Stake, confirm slips, or log past bets — finished matches settle automatically.
+              Connect Stake, confirm slips, or log past bets. Finished matches settle automatically.
             </p>
             {portfolio.profile?.summary && (
               <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
@@ -426,7 +426,7 @@ export default function PortfolioPage() {
             <p className="muted" style={{ marginTop: '0.75rem' }}>
               Import queued
               {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link'}
-              . Stay signed in — status updates automatically.
+              . Stay signed in. Status updates automatically.
               {' '}
               <button
                 type="button"
@@ -453,7 +453,7 @@ export default function PortfolioPage() {
         <section className="portfolio-connect-strip fade-up">
           <div className="portfolio-connect-strip-copy">
             <strong>Stake connected</strong>
-            <span className="muted">Token saved — use Sync Stake to refresh history.</span>
+            <span className="muted">Token saved. Use Sync Stake to refresh history.</span>
           </div>
           <details className="portfolio-reconnect">
             <summary className="muted">Replace API token</summary>
@@ -661,12 +661,12 @@ export default function PortfolioPage() {
               <div className="portfolio-stat">
                 <span>Model-backed bets</span>
                 <strong>{learning.follow_model_bets ?? 0}</strong>
-                <small className="muted">{learning.follow_model_hit_rate_pct ?? '—'}% hit · {learning.follow_model_roi_pct ?? '—'}% ROI</small>
+                <small className="muted">{learning.follow_model_hit_rate_pct ?? 'n/a'}% hit · {learning.follow_model_roi_pct ?? 'n/a'}% ROI</small>
               </div>
               <div className="portfolio-stat">
                 <span>Model-fade bets</span>
                 <strong>{learning.fade_model_bets ?? 0}</strong>
-                <small className="muted">{learning.fade_model_hit_rate_pct ?? '—'}% hit · {learning.fade_model_roi_pct ?? '—'}% ROI</small>
+                <small className="muted">{learning.fade_model_hit_rate_pct ?? 'n/a'}% hit · {learning.fade_model_roi_pct ?? 'n/a'}% ROI</small>
               </div>
               <div className="portfolio-stat">
                 <span>Audited settled bets</span>
@@ -751,7 +751,7 @@ export default function PortfolioPage() {
           <div>
             <h2>Add a past bet</h2>
             <p className="muted">
-              Log a finished bet from any book. For upcoming picks, use Confirm I placed this on the slip — results auto-fill when the match ends.
+              Log a finished bet from any book. For upcoming picks, use Confirm I placed this on the slip. Results auto-fill when the match ends.
             </p>
           </div>
         </div>

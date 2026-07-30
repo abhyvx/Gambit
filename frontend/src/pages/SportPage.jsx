@@ -123,7 +123,7 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
       </div>
       {picks.length === 0 ? (
         <div className="analysis-brief-empty">
-          <p className="muted">Model picks pending — use 1 / X / 2 above to add a result, or wait for Recs below.</p>
+          <p className="muted">Model picks pending. Use 1 / X / 2 above to add a result, or wait for Recs below.</p>
           {ev?.odds?.home && (
             <div className="analysis-quick-add">
               <button type="button" className="btn-secondary tight" onClick={() => onAdd(ev, {

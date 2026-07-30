@@ -25,16 +25,19 @@ export default function AgeGate() {
         <h2>Age check</h2>
         <p>
           GAMBIT is analytics software, not a bookmaker. Outputs are informational,
-          not financial advice or a guarantee.
+          not financial advice or a guarantee of profit.
         </p>
         <ul className="agegate-points">
           <li>You are <strong>18 or older</strong> (or the legal age where you live).</li>
-          <li>Betting carries real risk. Only ever stake what you can afford to lose.</li>
-          <li>Gambling is restricted or illegal in some places; you're responsible for your local laws.</li>
+          <li>Betting carries real risk. Only stake what you can afford to lose.</li>
+          <li>Gambling is restricted or illegal in some places. You are responsible for your local laws.</li>
+          <li>You place any bets yourself. Gambit never submits wagers for you.</li>
         </ul>
-        <button className="agegate-accept" onClick={accept}>I'm 18+ and I understand</button>
+        <button className="agegate-accept" onClick={accept}>I am 18+ and I understand</button>
         <p className="agegate-help">
-          Need support? Many regions offer free, confidential help (e.g. BeGambleAware, 1‑800‑GAMBLER).
+          By continuing you agree to the{' '}
+          <a href="/app/legal/terms">Terms</a> and <a href="/app/legal/privacy">Privacy</a> notices.
+          Need support? BeGambleAware, 1-800-GAMBLER, or local services.
         </p>
       </div>
     </div>

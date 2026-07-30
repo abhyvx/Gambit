@@ -1134,8 +1134,8 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
             <div className="stake-fallback">
               <h5>Stake live lines offline</h5>
               <p>
-                {stake.reason || "Cloudflare blocks Stake from this host."}
-                {' '}Recs and Build still use ESPN/model prices — open Stake.com to place.
+                {stake.reason || 'Cloudflare or geo rules blocked Stake from this host.'}
+                {' '}Recs and Build still use ESPN or model prices. Open Stake.com to place.
               </p>
               <button type="button" className="stake-open-btn" onClick={connectStake} disabled={stakeConnecting}>
                 {stakeConnecting ? 'Opening...' : 'Reconnect Stake'}
@@ -1145,8 +1145,14 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
           )}
           {!stakeLoading && stake?.available && (
             <div className="stake-live">
-              <span className={`live-pill stake-live-pill${stake.source === 'espn_book' || stake.source === 'stake_cache' ? ' is-book' : ''}`}>
-                {stake.source === 'espn_book' ? 'Book estimate' : stake.from_cache ? 'Cached Stake' : 'Live from Stake'}
+              <span className={`live-pill stake-live-pill${['espn_book', 'stake_cache', 'board_espn', 'board_demo', 'demo_books', 'model_fair'].includes(stake.source) || String(stake.source || '').startsWith('board_') ? ' is-book' : ''}`}>
+                {stake.source === 'espn_book' || String(stake.source || '').startsWith('board_')
+                  ? 'Board estimate'
+                  : stake.source === 'demo_books'
+                    ? 'Demo books'
+                    : stake.source === 'model_fair'
+                      ? 'Model estimate'
+                      : stake.from_cache ? 'Cached Stake' : 'Live from Stake'}
               </span>
               {stake.note && <p className="muted">{stake.note}</p>}
               <p className="muted">Payouts at {formatINR(perMatchBudget)} stake:</p>

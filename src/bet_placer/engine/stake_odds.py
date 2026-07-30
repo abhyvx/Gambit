@@ -263,8 +263,8 @@ def _stake_unavailable_reason(exc: Exception) -> str:
     low = msg.lower()
     if "cloudflare" in low or "human check" in low:
         return (
-            "Stake needs a one-time browser check. A Chrome window should open — "
-            "complete the Cloudflare / login prompt on stake.com, then refresh this match."
+            "Stake needs a one-time browser check. "
+            "Complete the Cloudflare / login prompt on stake.com, then refresh this match."
         )
     if "already in use" in low or "profile is already open" in low:
         return (
@@ -272,20 +272,25 @@ def _stake_unavailable_reason(exc: Exception) -> str:
             "Close it (or restart the API) and try again."
         )
     if "playwright not installed" in low:
-        return "Playwright is not installed on the server — run: playwright install chromium"
+        return "Playwright is not installed on the server. Run: playwright install chromium"
     if "asyncio loop" in low:
         return (
             "Stake browser hit an internal startup glitch. "
             "Restart the API server, complete the Stake browser check if prompted, then retry."
         )
+    if "403" in low or "forbidden" in low or "cloudflare" in low:
+        return (
+            "Stake blocked this host (Cloudflare / geo). "
+            "Showing board or model prices instead. Open Stake.com to confirm exact payouts."
+        )
     if "geo" in low or "blocked" in low:
         return (
-            "Couldn't reach Stake from this network (geo-blocked). "
-            "The plan below uses DraftKings prices — open Stake directly for exact payouts."
+            "Could not reach Stake from this network. "
+            "Showing board or model prices instead. Open Stake.com to confirm exact payouts."
         )
     return (
-        "Couldn't reach Stake right now. "
-        "The plan below uses live DraftKings prices — open Stake to confirm exact payouts."
+        "Could not reach Stake right now. "
+        "Showing board or model prices instead. Open Stake.com to confirm exact payouts."
     )
 
 
@@ -386,98 +391,305 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
     return _stake_match_response(fixture, categories, source="stake_live")
 
 
-def _book_payout_fallback(home: str, away: str, budget_inr: float) -> dict:
-    """ESPN/book 1X2 as a priced Odds tab when Stake scrape/relay is dark."""
-    try:
-        from bet_placer.engine.bet_builder import _resolve_league_match
-        resolved = _resolve_league_match(home, away)
-        if not resolved:
-            return {
-                "available": False,
-                "reason": f"No book prices for {home} vs {away} yet.",
-                "categories": [],
-                "source": "none",
-            }
-        match, _meta = resolved
-        odds = getattr(match, "market_odds", None) or []
-        mw = next((o for o in odds if getattr(o, "market", None) and str(getattr(o.market, "value", o.market)) == "match_winner"), None)
-        # market_odds is list of OddsRow keyed by market+selection — collect 1x2
-        by_sel = {}
-        for row in odds:
-            m = getattr(row, "market", None)
-            mv = getattr(m, "value", str(m or ""))
-            if mv != "match_winner":
-                continue
-            price = float(getattr(row, "best_odds", 0) or 0)
-            if price > 1.01:
-                by_sel[str(getattr(row, "selection", "") or "")] = price
-        # Also try match.home_odds style if present on analysis match
-        if not by_sel:
-            for sel, attr in (("home", "home_odds"), ("draw", "draw_odds"), ("away", "away_odds")):
-                v = getattr(match, attr, None)
-                if v and float(v) > 1.01:
-                    by_sel[sel] = float(v)
-        # ESPN Event-style: dig bookmakers
-        if not by_sel and getattr(match, "extra", None):
-            pass
-        home_n = match.home_team
-        away_n = match.away_team
-        outcomes = []
-        labels = {"home": f"{home_n} win", "draw": "Draw", "away": f"{away_n} win"}
-        for sel in ("home", "draw", "away"):
-            price = by_sel.get(sel)
-            if not price:
-                continue
-            stake = float(budget_inr)
-            outcomes.append({
-                "label": labels[sel],
-                "selection": sel,
-                "odds": round(price, 2),
-                "payout_inr": round(stake * price, 0),
-                "profit_inr": round(stake * (price - 1), 0),
-                "active": True,
-            })
-        if not outcomes:
-            return {
-                "available": False,
-                "reason": (
-                    f"Stake is offline on this host and no ESPN 1X2 for {home} vs {away}. "
-                    "Recs still use model prices — open Stake.com to place."
-                ),
-                "categories": [],
-                "source": "none",
-            }
-        return {
-            "available": True,
-            "fixture_id": getattr(match, "id", None),
-            "matched_name": f"{home_n} vs {away_n}",
-            "name": f"{home_n} vs {away_n}",
-            "home": home_n,
-            "away": away_n,
-            "tournament": getattr(match, "league", None),
-            "categories": [{
-                "category": "Match Result",
-                "markets": [{
-                    "market_label": "Match Winner (book estimate)",
-                    "outcomes": outcomes,
-                }],
-            }],
-            "source": "espn_book",
-            "from_cache": False,
-            "note": (
-                "Stake live scrape is off on cloud (Cloudflare). "
-                "These are ESPN/book estimates — verify on Stake before placing."
-            ),
-            "stake_url": "https://stake.com/sports",
-        }
-    except Exception as exc:
-        logger.debug("Book payout fallback failed: %s", exc)
+def _priced_1x2_response(
+    *,
+    home: str,
+    away: str,
+    by_sel: dict[str, float],
+    budget_inr: float,
+    source: str,
+    note: str,
+    fixture_id: str | None = None,
+    tournament: str | None = None,
+    market_label: str = "Match Winner",
+) -> dict:
+    """Build a Stake-tab shaped response from home/draw/away decimal prices."""
+    outcomes = []
+    labels = {"home": f"{home} win", "draw": "Draw", "away": f"{away} win"}
+    stake = float(budget_inr)
+    for sel in ("home", "draw", "away"):
+        price = by_sel.get(sel)
+        if not price or float(price) <= 1.01:
+            continue
+        price = float(price)
+        outcomes.append({
+            "label": labels[sel],
+            "selection": sel,
+            "odds": round(price, 2),
+            "payout_inr": round(stake * price, 0),
+            "profit_inr": round(stake * (price - 1), 0),
+            "active": True,
+        })
+    if len(outcomes) < 2:
         return {
             "available": False,
-            "reason": "Couldn't load book prices while Stake is offline.",
+            "reason": f"No usable 1X2 prices for {home} vs {away} yet.",
             "categories": [],
             "source": "none",
         }
+    return {
+        "available": True,
+        "fixture_id": fixture_id,
+        "matched_name": f"{home} vs {away}",
+        "name": f"{home} vs {away}",
+        "home": home,
+        "away": away,
+        "tournament": tournament,
+        "categories": [{
+            "category": "Match Result",
+            "markets": [{
+                "market_label": market_label,
+                "outcomes": outcomes,
+            }],
+        }],
+        "source": source,
+        "from_cache": False,
+        "note": note,
+        "stake_url": "https://stake.com/sports",
+    }
+
+
+def _odds_from_match_rows(match) -> dict[str, float]:
+    by_sel: dict[str, float] = {}
+    for row in getattr(match, "market_odds", None) or []:
+        m = getattr(row, "market", None)
+        mv = getattr(m, "value", str(m or ""))
+        if mv != "match_winner":
+            continue
+        price = float(getattr(row, "best_odds", 0) or 0)
+        if price > 1.01:
+            by_sel[str(getattr(row, "selection", "") or "")] = price
+    if not by_sel:
+        for sel, attr in (("home", "home_odds"), ("draw", "draw_odds"), ("away", "away_odds")):
+            v = getattr(match, attr, None)
+            if v and float(v) > 1.01:
+                by_sel[sel] = float(v)
+    return by_sel
+
+
+def _odds_from_board_events(home: str, away: str) -> tuple[dict[str, float], str, str | None, str | None]:
+    """Scan provider EventSummary boards (incl. demo) for home/draw/away decimals."""
+    try:
+        from bet_placer.data.providers import UnifiedOddsProvider
+        provider = UnifiedOddsProvider()
+    except Exception:
+        return {}, "none", None, None
+    keys = [
+        "soccer_epl", "soccer_all", "soccer_uefa_champs_league",
+        "basketball_all", "cricket_all",
+    ]
+    for key in keys:
+        try:
+            fetch = provider.fetch_events(key)
+        except Exception:
+            continue
+        for e in getattr(fetch, "events", None) or []:
+            same = _team_match(home, e.home_team) and _team_match(away, e.away_team)
+            flip = _team_match(home, e.away_team) and _team_match(away, e.home_team)
+            if not (same or flip):
+                continue
+            if same:
+                by_sel = {
+                    k: float(v) for k, v in (
+                        ("home", e.home_odds), ("draw", e.draw_odds), ("away", e.away_odds),
+                    ) if v and float(v) > 1.01
+                }
+                home_n, away_n = e.home_team, e.away_team
+            else:
+                by_sel = {
+                    k: float(v) for k, v in (
+                        ("home", e.away_odds), ("draw", e.draw_odds), ("away", e.home_odds),
+                    ) if v and float(v) > 1.01
+                }
+                home_n, away_n = e.away_team, e.home_team
+            if len(by_sel) >= 2:
+                src = getattr(e, "source", None) or getattr(fetch, "source", None) or "board"
+                return by_sel, str(src), getattr(e, "id", None), getattr(e, "league", None)
+            # keep names even if odds thin; model path will fill
+            _ = (home_n, away_n)
+    return {}, "none", None, None
+
+
+def _odds_from_demo_books(home: str, away: str) -> tuple[dict[str, float], str | None]:
+    """Pull h2h from bundled demo bookmaker blobs when boards are cold."""
+    try:
+        from bet_placer.data.demo_events import get_demo_events
+    except Exception:
+        return {}, None
+    for key in ("soccer_epl", "soccer_fifa_world_cup", "basketball_nba"):
+        try:
+            raw = get_demo_events(key)
+        except Exception:
+            continue
+        for ev in raw or []:
+            same = _team_match(home, ev.get("home_team")) and _team_match(away, ev.get("away_team"))
+            flip = _team_match(home, ev.get("away_team")) and _team_match(away, ev.get("home_team"))
+            if not (same or flip):
+                continue
+            prices: dict[str, float] = {}
+            for book in ev.get("bookmakers") or []:
+                for market in book.get("markets") or []:
+                    if market.get("key") != "h2h":
+                        continue
+                    for out in market.get("outcomes") or []:
+                        name = str(out.get("name") or "")
+                        price = float(out.get("price") or 0)
+                        if price <= 1.01:
+                            continue
+                        if name.lower() == "draw":
+                            prices["draw"] = price
+                        elif _team_match(name, ev.get("home_team")):
+                            prices["home" if same else "away"] = price
+                        elif _team_match(name, ev.get("away_team")):
+                            prices["away" if same else "home"] = price
+                if len(prices) >= 2:
+                    return prices, ev.get("id")
+    return {}, None
+
+
+def _model_fair_1x2(home: str, away: str) -> dict[str, float]:
+    """Elo / prior fair decimals so the Odds tab is never blank."""
+    ph = pd = pa = None
+    sport = "soccer"
+    try:
+        from bet_placer.ml.elo import EloModel, _sport_from_match
+        fake = type("M", (), {
+            "home_team": home,
+            "away_team": away,
+            "league": "",
+            "id": f"fallback-{home}-{away}",
+            "sport_key": "soccer_all",
+        })()
+        sport = _sport_from_match(fake)
+        raw = EloModel().predict(fake)
+        ph, pd, pa = float(raw["home"]), float(raw["draw"]), float(raw["away"])
+    except Exception:
+        ph = pd = pa = None
+    if ph is None or pa is None:
+        if sport == "basketball":
+            ph, pd, pa = 0.55, 0.0, 0.45
+        elif sport == "cricket":
+            ph, pd, pa = 0.52, 0.0, 0.48
+        else:
+            ph, pd, pa = 0.40, 0.28, 0.32
+    margin = 1.04
+    by_sel: dict[str, float] = {}
+    if sport in ("basketball", "cricket"):
+        s = max(ph + pa, 1e-9)
+        ph, pa = ph / s, pa / s
+        by_sel["home"] = round(margin / max(ph, 0.05), 2)
+        by_sel["away"] = round(margin / max(pa, 0.05), 2)
+    else:
+        s = max(ph + pd + pa, 1e-9)
+        ph, pd, pa = ph / s, pd / s, pa / s
+        by_sel["home"] = round(margin / max(ph, 0.05), 2)
+        by_sel["draw"] = round(margin / max(pd, 0.08), 2)
+        by_sel["away"] = round(margin / max(pa, 0.05), 2)
+    return by_sel
+
+
+def _book_payout_fallback(home: str, away: str, budget_inr: float) -> dict:
+    """Priced Odds tab when Stake scrape/relay is dark.
+
+    Order: ESPN/book match rows → board EventSummary → demo books → Elo model fair.
+    Always prefers an available labeled board over an empty Stake tab.
+    """
+    try:
+        from bet_placer.engine.bet_builder import _resolve_league_match
+
+        resolved = _resolve_league_match(home, away)
+        if resolved:
+            match, meta = resolved
+            by_sel = _odds_from_match_rows(match)
+            if len(by_sel) >= 2:
+                return _priced_1x2_response(
+                    home=getattr(match, "home_team", home),
+                    away=getattr(match, "away_team", away),
+                    by_sel=by_sel,
+                    budget_inr=budget_inr,
+                    source="espn_book",
+                    market_label="Match Winner (book estimate)",
+                    note=(
+                        "Stake live lines are offline on this host. "
+                        "These are ESPN/book estimates. Verify on Stake before placing."
+                    ),
+                    fixture_id=getattr(match, "id", None),
+                    tournament=getattr(match, "league", None) or (meta or {}).get("league"),
+                )
+
+        by_sel, src, fid, league = _odds_from_board_events(home, away)
+        if len(by_sel) >= 2:
+            label = "Match Winner (board)" if src != "demo" else "Match Winner (demo board)"
+            return _priced_1x2_response(
+                home=home,
+                away=away,
+                by_sel=by_sel,
+                budget_inr=budget_inr,
+                source=f"board_{src}",
+                market_label=label,
+                note=(
+                    "Stake live lines are offline. "
+                    f"Prices come from the {src} board cache. Verify on Stake before placing."
+                ),
+                fixture_id=fid,
+                tournament=league,
+            )
+
+        demo_sel, demo_id = _odds_from_demo_books(home, away)
+        if len(demo_sel) >= 2:
+            return _priced_1x2_response(
+                home=home,
+                away=away,
+                by_sel=demo_sel,
+                budget_inr=budget_inr,
+                source="demo_books",
+                market_label="Match Winner (demo books)",
+                note=(
+                    "Stake live lines are offline and live boards are thin. "
+                    "Showing bundled demo book prices so the Odds tab still works. "
+                    "Verify on Stake before placing."
+                ),
+                fixture_id=demo_id,
+            )
+
+        model_sel = _model_fair_1x2(home, away)
+        return _priced_1x2_response(
+            home=home,
+            away=away,
+            by_sel=model_sel,
+            budget_inr=budget_inr,
+            source="model_fair",
+            market_label="Match Winner (model estimate)",
+            note=(
+                "Stake live lines are offline. "
+                "These are Gambit model fair prices, not live book lines. "
+                "Open Stake.com to place."
+            ),
+        )
+    except Exception as exc:
+        logger.debug("Book payout fallback failed: %s", exc)
+        try:
+            model_sel = _model_fair_1x2(home, away)
+            return _priced_1x2_response(
+                home=home,
+                away=away,
+                by_sel=model_sel,
+                budget_inr=budget_inr,
+                source="model_fair",
+                market_label="Match Winner (model estimate)",
+                note=(
+                    "Stake live lines are offline. "
+                    "These are Gambit model fair prices, not live book lines. "
+                    "Open Stake.com to place."
+                ),
+            )
+        except Exception:
+            return {
+                "available": False,
+                "reason": "Could not load book or model prices while Stake is offline.",
+                "categories": [],
+                "source": "none",
+            }
 
 
 def _stake_match_response(fixture: StakeFixture, categories: list, *, source: str) -> dict:

@@ -109,7 +109,7 @@ export default function SettingsPage() {
         <div>
           <h1>Account</h1>
           <p className="subtitle">
-            Profile, Stake token, and privacy. Recs come from the model desk — not from style presets.
+            Profile, Stake token, and privacy. Recs come from the model desk, not from style presets.
           </p>
         </div>
       </header>

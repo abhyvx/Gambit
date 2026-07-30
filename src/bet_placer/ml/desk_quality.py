@@ -261,15 +261,8 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
 
     # Inject live factor depth when cache is stale/shallow
     try:
-        from bet_placer.ml.factor_store import load_summary, rebuild as rebuild_factors
-        factors = load_summary() or {}
-        needs_depth = (
-            int(factors.get("total_nodes") or 0) < 30_000
-            or not (factors.get("depth") or {})
-            or int(factors.get("version") or 0) < 2
-        )
-        if needs_depth:
-            factors = rebuild_factors() or factors
+        from bet_placer.ml.factor_store import ensure_rich_summary
+        factors = ensure_rich_summary(out.get("factors") if isinstance(out.get("factors"), dict) else None)
         if factors:
             out["factors"] = factors
     except Exception:

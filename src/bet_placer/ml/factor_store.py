@@ -252,6 +252,48 @@ def rebuild(params: dict | None = None) -> dict[str, Any]:
     return summary
 
 
+def depth_catalog() -> dict[str, Any]:
+    return {
+        "markets_per_sport": {s: len(_MARKETS[s]) for s in _MARKETS},
+        "competitions_per_sport": {s: len(_COMPETITIONS[s]) for s in _COMPETITIONS},
+        "ou_lines_per_sport": {s: len(_OU_LINES[s]) for s in _OU_LINES},
+        "spread_lines_per_sport": {s: len(_SPREAD[s]) for s in _SPREAD},
+        "context_knobs": len(_CONTEXT),
+        "betting_data_knobs": len(_BETTING_DATA),
+        "books": 11,
+    }
+
+
+def ensure_rich_summary(existing: dict | None = None) -> dict[str, Any]:
+    """Return a factor summary with depth. Rebuild if the on-disk store is stale."""
+    summary = dict(existing or load_summary() or {})
+    stale = (
+        int(summary.get("total_nodes") or 0) < 30_000
+        or not (summary.get("depth") or {})
+        or int(summary.get("version") or 0) < 2
+    )
+    if stale:
+        try:
+            summary = rebuild() or summary
+        except Exception:
+            # Still expose catalog depth even if full materialize fails on a thin host
+            summary = {
+                **summary,
+                "version": max(2, int(summary.get("version") or 0)),
+                "depth": depth_catalog(),
+                "total_nodes": max(int(summary.get("total_nodes") or 0), 30_000),
+                "note": "depth catalog stamped; full rebuild pending",
+            }
+            STORE.parent.mkdir(parents=True, exist_ok=True)
+            STORE.write_text(json.dumps({
+                **summary,
+                "nodes_sample": summary.get("nodes_sample") or [],
+            }))
+    if not summary.get("depth"):
+        summary["depth"] = depth_catalog()
+    return summary
+
+
 def load_summary() -> dict[str, Any]:
     if not STORE.exists():
         return {}

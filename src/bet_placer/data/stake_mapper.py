@@ -39,7 +39,7 @@ def stake_fixture_to_match(fixture: StakeFixture) -> Match:
     kickoff = fixture.kickoff or datetime.now(timezone.utc)
     market_odds = parse_stake_markets(fixture)
 
-    match = Match(
+    return Match(
         id=f"stake-{fixture.id}",
         home_team=fixture.home_team,
         away_team=fixture.away_team,
@@ -55,13 +55,6 @@ def stake_fixture_to_match(fixture: StakeFixture) -> Match:
         sentiment_score_away=0.0,
         sport_key=getattr(fixture, "sport_key", None) or "soccer",
     )
-    try:
-        from bet_placer.ml.team_elo import apply_strength_stats
-
-        apply_strength_stats(match)
-    except Exception:
-        pass
-    return match
 
 
 def parse_stake_markets(fixture: StakeFixture) -> list[MarketOdds]:

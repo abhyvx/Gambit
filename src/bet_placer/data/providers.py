@@ -331,7 +331,13 @@ class UnifiedOddsProvider:
     def list_sports(self, category: str | None = None, featured: bool = False) -> list[SportInfo]:
         return list_sports(category=category, featured_only=featured)
 
-    def fetch_events(self, sport_key: str, match_filter: str | None = None) -> FetchResult:
+    def fetch_events(
+        self,
+        sport_key: str,
+        match_filter: str | None = None,
+        *,
+        with_matches: bool = True,
+    ) -> FetchResult:
         if sport_key in ("soccer", "soccer_trending"):
             stake_result = self._try_stake(sport_key, match_filter)
             if stake_result:
@@ -339,7 +345,7 @@ class UnifiedOddsProvider:
 
         # Cricket: ESPN first (keyless)
         if sport_key.startswith("cricket"):
-            return self._fetch_cricket(sport_key, match_filter)
+            return self._fetch_cricket(sport_key, match_filter, with_matches=with_matches)
 
         # 1. ESPN live scoreboards (no credit cost) — primary board path
         if espn_supports(sport_key):
@@ -403,9 +409,11 @@ class UnifiedOddsProvider:
                         ).start()
                     except Exception:
                         pass
-                    matches = [event_to_match(e, sport_key) for e in raw]
                     summaries = _summaries_from_raw(raw, sport_key, "espn")
                     _merge_stake_h2h(summaries)
+                    matches = (
+                        [event_to_match(e, sport_key) for e in raw] if with_matches else []
+                    )
                     return FetchResult(
                         summaries,
                         matches, "espn", True,
@@ -421,10 +429,12 @@ class UnifiedOddsProvider:
                 raw = self.odds_api.fetch_odds(sport_key, force=False)
                 raw = self._filter_raw(raw, match_filter)
                 if raw:
-                    matches = [event_to_match(e, sport_key) for e in raw]
                     summaries = _summaries_from_raw(raw, sport_key, "odds_api")
                     _merge_espn_logos(summaries, sport_key)
                     _merge_stake_h2h(summaries)
+                    matches = (
+                        [event_to_match(e, sport_key) for e in raw] if with_matches else []
+                    )
                     return FetchResult(
                         summaries,
                         matches, "odds_api", True,
@@ -437,7 +447,7 @@ class UnifiedOddsProvider:
         # 3. Demo
         raw = get_demo_events(sport_key)
         raw = self._filter_raw(raw, match_filter)
-        matches = [event_to_match(e, sport_key) for e in raw]
+        matches = [event_to_match(e, sport_key) for e in raw] if with_matches else []
         return FetchResult(
             _summaries_from_raw(raw, sport_key, "demo"),
             matches, "demo", False,
@@ -445,7 +455,13 @@ class UnifiedOddsProvider:
             raw_events=raw,
         )
 
-    def _fetch_cricket(self, sport_key: str, match_filter: str | None) -> FetchResult:
+    def _fetch_cricket(
+        self,
+        sport_key: str,
+        match_filter: str | None,
+        *,
+        with_matches: bool = True,
+    ) -> FetchResult:
         """ESPN fixtures/logos first; overlay Odds API h2h + Stake when available."""
         from bet_placer.data.espn_leagues import _filter_cricket_board, _tag_cricket_event
 
@@ -492,7 +508,7 @@ class UnifiedOddsProvider:
             demo = self._filter_raw(demo, match_filter)
             return FetchResult(
                 _summaries_from_raw(demo, sport_key, "demo"),
-                [event_to_match(e, sport_key) for e in demo],
+                [event_to_match(e, sport_key) for e in demo] if with_matches else [],
                 "demo", False,
                 "No live cricket boards — demo fixtures",
                 raw_events=demo,
@@ -514,7 +530,10 @@ class UnifiedOddsProvider:
             pass
 
         source = "+".join(sources) if sources else "espn"
-        matches = [event_to_match(e, e.get("sport_key") or sport_key) for e in raw]
+        matches = (
+            [event_to_match(e, e.get("sport_key") or sport_key) for e in raw]
+            if with_matches else []
+        )
         summaries = _summaries_from_raw(raw, sport_key, source)
         _merge_stake_h2h(summaries)
         priced = sum(1 for s in summaries if s.home_odds and s.away_odds)

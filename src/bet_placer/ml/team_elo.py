@@ -65,7 +65,10 @@ def _lookup_in_table(table: dict[str, Any] | None, team: str) -> float | None:
         hit = _as_float(table.get(key))
         if hit is not None and (best is None or hit > best):
             best = hit
-    # Orphan spellings that canonicalize to the same club
+    # Fast path: canon/exact hit is enough for board-scale lookups
+    if best is not None:
+        return best
+    # Orphan spellings that canonicalize to the same club (rare after merge-on-load)
     for k, v in table.items():
         if canon_team(str(k)) != c:
             continue

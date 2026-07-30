@@ -151,12 +151,13 @@ def test_event_to_match_applies_strength() -> None:
         "bookmakers": [],
     }
     m = event_to_match(ev, "soccer_efl_championship")
-    # Must not leave flat priors when Elo exists for these clubs
+    # Board path keeps priors; analyze applies strength
+    apply_strength_stats(m)
     hu = resolve_team_elo("Hull City", sport="soccer")
     mu = resolve_team_elo("Manchester United", sport="soccer")
     if hu is not None and mu is not None and mu > hu + 100:
         assert m.away_stats.xg > m.home_stats.xg, (m.home_stats.xg, m.away_stats.xg)
-        _ok(f"event_to_match strength xG {m.home_stats.xg}/{m.away_stats.xg}")
+        _ok(f"analyze strength xG {m.home_stats.xg}/{m.away_stats.xg}")
     else:
         _ok("event_to_match built (Elo thin in this env — skip gap assert)")
 

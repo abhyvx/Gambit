@@ -11,6 +11,20 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v26",
+        "cycle": "events-board-unwedge",
+        "at": "2026-07-30",
+        "title": "Stop Elo strength work on /api/events so fixtures load again",
+        "fixed": [
+            "Matches/fixtures boards hung after bundled Elo deploy (single Render worker wedged)",
+            "event_to_match ran apply_strength_stats on every board row (hundreds/thousands per paint)",
+        ],
+        "changes": [
+            "Board /events uses with_matches=False; Elo strength only on analyze/predict",
+            "Faster Elo table lookup (skip full orphan scan after canon hit)",
+        ],
+    },
+    {
         "version": "v25",
         "cycle": "bundled-elo-cold-start",
         "at": "2026-07-30",

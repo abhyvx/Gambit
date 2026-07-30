@@ -184,7 +184,7 @@ def event_to_match(event: dict, sport_key: str) -> Match:
     market_odds = _parse_bookmaker_odds(event, home, away, sport_cat)
     league_name = event.get("sport_title") or sport_key.replace("_", " ").title()
 
-    match = Match(
+    return Match(
         id=str(event.get("id") or f"{home}-{away}"),
         home_team=home,
         away_team=away,
@@ -200,14 +200,6 @@ def event_to_match(event: dict, sport_key: str) -> Match:
         sentiment_score_away=0.0,
         sport_key=sport_key,
     )
-    # Flat league priors (1.45/1.20) must not survive into analyze / stats strip.
-    try:
-        from bet_placer.ml.team_elo import apply_strength_stats
-
-        apply_strength_stats(match)
-    except Exception:
-        logger.debug("apply_strength_stats skipped for %s", match.id, exc_info=True)
-    return match
 
 
 def _parse_bookmaker_odds(event: dict, home: str, away: str, sport_cat: str) -> list[MarketOdds]:

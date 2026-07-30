@@ -528,7 +528,7 @@ def events(sport: str = Query(default="soccer_epl"), match: str | None = None):
         return hit[1]
 
     def _build() -> dict:
-        result = _provider.fetch_events(sport, match_filter=match)
+        result = _provider.fetch_events(sport, match_filter=match, with_matches=False)
         info = get_sport(sport)
         # *_all boards mix in finished games — drop them so Render/FE stay under memory
         open_only = sport.endswith("_all")

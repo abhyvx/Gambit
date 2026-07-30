@@ -198,14 +198,6 @@ def _audit_bets_against_model(bets: list[dict[str, Any]]) -> dict[str, Any]:
         ),
     }
 
-
-def _store_path() -> Path:
-    settings = get_settings()
-    if settings.portfolio_store_path:
-        return Path(settings.portfolio_store_path).expanduser()
-    return data_path("portfolio_state.json")
-
-
 def _default_state() -> dict[str, Any]:
     return {
         "privacy": {

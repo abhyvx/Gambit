@@ -26,6 +26,7 @@ _LOCK = Lock()
 _USERS = data_path("users.json")
 _SESSIONS = data_path("sessions.json")
 _PBKDF_ITERS = 120_000
+_SESSION_MAX_AGE_S = 90 * 86400
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -76,8 +77,8 @@ def signup(*, email: str, password: str, name: str | None = None) -> dict[str, A
     password = password or ""
     if "@" not in email or len(email) < 5:
         raise ValueError("Enter a valid email.")
-    if len(password) < 6:
-        raise ValueError("Password must be at least 6 characters.")
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters.")
     with _LOCK:
         users = _load(_USERS)
         if email in users:
@@ -118,7 +119,7 @@ def _issue_session(uid: str, email: str) -> str:
     token = secrets.token_urlsafe(32)
     sessions[token] = {"user_id": uid, "email": email, "created_at": time.time()}
     # ponytail: drop sessions older than 90d — fine for student app scale
-    cutoff = time.time() - 90 * 86400
+    cutoff = time.time() - _SESSION_MAX_AGE_S
     sessions = {k: v for k, v in sessions.items() if float(v.get("created_at") or 0) >= cutoff}
     sessions[token] = {"user_id": uid, "email": email, "created_at": time.time()}
     _save(_SESSIONS, sessions)
@@ -141,6 +142,11 @@ def user_from_token(token: str | None) -> dict[str, Any] | None:
         sessions = _load(_SESSIONS)
         sess = sessions.get(token)
         if not sess:
+            return None
+        created_at = float(sess.get("created_at") or 0)
+        if created_at <= 0 or (time.time() - created_at) > _SESSION_MAX_AGE_S:
+            sessions.pop(token, None)
+            _save(_SESSIONS, sessions)
             return None
         email = sess.get("email")
         users = _load(_USERS)

@@ -6,6 +6,8 @@ LABEL="com.gambit.stake-relay"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 PYTHON="$ROOT/.venv/bin/python3"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+[ -n "${STAKE_RELAY_SECRET:-}" ] || { echo "Set STAKE_RELAY_SECRET before installing the relay agent." >&2; exit 1; }
+[ -n "${GAMBIT_CLOUD_URL:-}" ] || { echo "Set GAMBIT_CLOUD_URL before installing the relay agent." >&2; exit 1; }
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 
@@ -25,8 +27,8 @@ cat > "$PLIST" <<EOF
   <dict>
     <key>PYTHONPATH</key><string>$ROOT/src</string>
     <key>STAKE_USE_BROWSER</key><string>true</string>
-    <key>STAKE_RELAY_SECRET</key><string>gambit-relay-v1-abhyvx</string>
-    <key>GAMBIT_CLOUD_URL</key><string>https://gambit-yqng.onrender.com</string>
+    <key>STAKE_RELAY_SECRET</key><string>${STAKE_RELAY_SECRET}</string>
+    <key>GAMBIT_CLOUD_URL</key><string>${GAMBIT_CLOUD_URL}</string>
     <key>STAKE_UPLOAD_RELEASE</key><string>1</string>
     <key>STAKE_BROWSER_HEADLESS</key><string>false</string>
     <key>STAKE_SKIP_ESPN</key><string>1</string>

@@ -45,7 +45,7 @@ export default function PortfolioPage() {
   const [manualBusy, setManualBusy] = useState(false)
   const [stakeToken, setStakeToken] = useState('')
   const [tokenBusy, setTokenBusy] = useState(false)
-  const { user, openAuth } = useAuth()
+  const { user, ready, openAuth } = useAuth()
   useEntryReady(!loading)
 
   const load = async ({ autoRefresh = false } = {}) => {
@@ -212,23 +212,37 @@ export default function PortfolioPage() {
         <div className="portfolio-hero-actions">
           <button
             className="refresh-btn"
-            onClick={() => runAction('connect', connectPortfolioSession)}
+            onClick={() => {
+              if (!user) {
+                openAuth('login')
+                return
+              }
+              runAction('connect', connectPortfolioSession)
+            }}
             disabled={busy === 'connect'}
             title="Connect your Stake account"
           >
-            {busy === 'connect' ? 'Connecting…' : 'Connect Stake'}
+            {busy === 'connect' ? 'Connecting…' : (user ? 'Connect Stake' : 'Sign in to connect Stake')}
           </button>
           <button
             className="refresh-btn"
-            onClick={() => runAction('snapshot', refreshPortfolioSnapshot)}
-            disabled={!canSync || busy === 'snapshot'}
+            onClick={() => {
+              if (!user) {
+                openAuth('login')
+                return
+              }
+              runAction('snapshot', refreshPortfolioSnapshot)
+            }}
+            disabled={!user || !canSync || busy === 'snapshot'}
             title={
-              !portfolioReady
+              !user
+                ? 'Sign in first'
+                : !portfolioReady
                 ? 'Enable portfolio sync below first'
                 : 'Refresh Stake bet history'
             }
           >
-            {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
+            {busy === 'snapshot' ? 'Refreshing…' : (user ? 'Sync Stake' : 'Sign in to sync')}
           </button>
         </div>
       </header>
@@ -362,7 +376,7 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
+      {!ready ? null : connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
         <div className="portfolio-alert">
           Stake is connected. Tap Sync Stake to import your history.
         </div>
@@ -638,7 +652,7 @@ export default function PortfolioPage() {
         )}
         {!stakeLive && !loginUrl && (
           <p className="muted">
-            Live browser login is remote-only now. To avoid laptop popups, configure Browserbase/CDP on the host or keep using the Stake API token import.
+            Live browser login is only available when a supported remote browser path is configured. Until then, keep using the Stake API token import.
           </p>
         )}
       </section>
@@ -727,7 +741,7 @@ export default function PortfolioPage() {
 
         {!portfolio.bets?.length ? (
           <p className="muted">
-            No bets yet. Confirm a slip with amounts (auto-settles when the match finishes), add a past bet above, or import Stake via scripts/stake_login.py on your Mac.
+            No bets yet. Confirm a slip with amounts, add a past bet above, or import your Stake history with an API token.
           </p>
         ) : (
           <div className="portfolio-bets">

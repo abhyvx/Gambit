@@ -30,7 +30,7 @@ function fetchErrorMessage(err, fallback) {
     return 'Request timed out. Wait, then click Reload.'
   }
   if (String(err).includes('Failed to fetch')) {
-    return 'Could not reach the API. Start ./scripts/run.sh locally, or open your Render URL to wake the free service.'
+    return 'Could not reach the service right now. Refresh and try again in a moment.'
   }
   return err?.message || fallback
 }

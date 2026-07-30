@@ -4,9 +4,6 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Built-in relay token (Render + laptop share this; no manual secret setup)
-DEFAULT_STAKE_RELAY_SECRET = "gambit-relay-v1-abhyvx"
-
 
 def bet_placer_home() -> Path:
     """Durable data dir. Render sets BET_PLACER_HOME=/var/lib/bet_placer; local uses ~/.bet_placer."""
@@ -41,7 +38,7 @@ class Settings(BaseSettings):
     # Open Chromium on API startup. Default off — browser launches on first
     # explicit Stake odds / bet-builder request instead (avoids popup spam).
     stake_browser_warmup_on_startup: bool = False
-    stake_relay_secret: str = DEFAULT_STAKE_RELAY_SECRET
+    stake_relay_secret: str = ""
     # Cloud Chrome (Browserbase) — 24/7 odds + portfolio login without a laptop.
     browserbase_api_key: str = ""
     # Raw CDP websocket (any remote Chrome). Overrides Browserbase when set.
@@ -82,12 +79,13 @@ class Settings(BaseSettings):
     default_bankroll: float = 2000.0
 
     # Optional admin (comma-separated emails). Used for /api/admin/*.
-    gambit_admin_emails: str = "abhyudayk16@gmail.com"
+    gambit_admin_emails: str = ""
     # Optional shared admin secret header (X-Gambit-Admin).
     gambit_admin_secret: str = ""
 
     # Optional local JSON store for private Stake portfolio consent/cache.
     portfolio_store_path: str = ""
+    cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 
 
 @lru_cache
@@ -135,3 +133,8 @@ def database_status() -> dict:
             )
         ),
     }
+
+
+def cors_origin_list() -> list[str]:
+    raw = get_settings().cors_origins or ""
+    return [item.strip() for item in raw.split(",") if item.strip()]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage, fetchMarketTop, peekEventsCache, peekMarketTop,
@@ -229,6 +229,7 @@ export default function SportPage() {
   const [expanded, setExpanded] = useState(focusId)
   const [analysis, setAnalysis] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const analysisReq = useRef(0)
   const [topPicks, setTopPicks] = useState([])
   const [picksLoading, setPicksLoading] = useState(false)
   useEntryReady(!loading)
@@ -464,6 +465,7 @@ export default function SportPage() {
     }
     setAnalyzing(true)
     setAnalysis(null)
+    const req = ++analysisReq.current
     fetchAnalysis({
       sport: apiSport,
       eventId: ev.id,
@@ -474,10 +476,14 @@ export default function SportPage() {
       targetCashoutInr: targetCashout,
     })
       .then((r) => {
+        if (analysisReq.current !== req) return
         setAnalysis(r.matches?.[0] || null)
         setAnalyzing(false)
       })
-      .catch(() => setAnalyzing(false))
+      .catch(() => {
+        if (analysisReq.current !== req) return
+        setAnalyzing(false)
+      })
   }, [focusId, loading, rows, board, visible, apiSport, perMatchBudget, targetCashout, bettorStyle, params])
 
   // If focus points at another league, switch tab so the fixture exists in `rows`
@@ -616,6 +622,7 @@ export default function SportPage() {
       status: row.status,
       web_consensus: null,
     } : null)
+    const req = ++analysisReq.current
     fetchAnalysis({
       sport: apiSport,
       eventId: row.id,
@@ -626,10 +633,12 @@ export default function SportPage() {
       targetCashoutInr: targetCashout,
     })
       .then((r) => {
+        if (analysisReq.current !== req) return
         setAnalysis(r.matches?.[0] || null)
         setAnalyzing(false)
       })
       .catch((e) => {
+        if (analysisReq.current !== req) return
         if (group.id !== 'soccer') setErr(fetchErrorMessage(e, 'Analysis failed'))
         setAnalyzing(false)
       })

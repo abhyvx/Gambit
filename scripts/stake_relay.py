@@ -25,7 +25,9 @@ import requests
 
 def main() -> None:
     cloud = (os.getenv("GAMBIT_CLOUD_URL") or "").strip().rstrip("/")
-    secret = (os.getenv("STAKE_RELAY_SECRET") or "gambit-relay-v1-abhyvx").strip()
+    secret = (os.getenv("STAKE_RELAY_SECRET") or "").strip()
+    if not secret:
+        raise SystemExit("Set STAKE_RELAY_SECRET before running the Stake relay.")
     interval = int(os.getenv("STAKE_RELAY_INTERVAL", "300"))
     if not cloud:
         print("Set GAMBIT_CLOUD_URL in .env (your Render app URL)", file=sys.stderr)

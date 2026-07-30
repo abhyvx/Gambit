@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from bet_placer.api.serializers import serialize_match_result, serialize_pipeline_results, serialize_value_bet
-from bet_placer.config import get_settings, stake_network_enabled
+from bet_placer.config import cors_origin_list, get_settings, stake_network_enabled
 from bet_placer.consensus.bettors import analyze_bettor_consensus
 from bet_placer.consensus.web import WebConsensusFetcher
 from bet_placer.data.catalog import CATEGORIES, list_sports
@@ -290,8 +290,8 @@ app = FastAPI(title="Bet Placer API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origin_list(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -874,19 +874,23 @@ def relay_users_bundle_put(body: dict):
 
 
 @app.post("/api/slip/record")
-def slip_record(payload: dict):
+def slip_record(request: Request, payload: dict):
     """Park bet-slip legs into the paper book so craft can learn when they settle."""
     from bet_placer.ml.slip_learn import record_slip_tickets
 
+    if not _bearer_user(request):
+        raise HTTPException(status_code=401, detail="Sign in first.")
     legs = payload.get("legs") if isinstance(payload, dict) else None
     return record_slip_tickets(legs or [])
 
 
 @app.post("/api/slip/settle")
-def slip_settle(payload: dict):
+def slip_settle(request: Request, payload: dict):
     """Mark a slip ticket won/lost and blend into craft / strategy weights."""
     from bet_placer.ml.slip_learn import settle_slip_ticket
 
+    if not _bearer_user(request):
+        raise HTTPException(status_code=401, detail="Sign in first.")
     tid = (payload or {}).get("id") or (payload or {}).get("ticket_id")
     won = bool((payload or {}).get("won"))
     sport = (payload or {}).get("sport")

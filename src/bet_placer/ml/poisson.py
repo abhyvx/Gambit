@@ -12,14 +12,9 @@ from bet_placer.models.types import Match
 def expected_goals(match: Match, apply_learned: bool = True) -> tuple[float, float]:
     """Estimate lambda (expected goals) for home and away.
 
-    For World Cup sides we drive the split off the power ratings so a real
-    quality gap (Colombia 74 vs Uzbekistan 45) actually shows up as a clear
-    favourite instead of a coin-flip. Falls back to the xG/xGA stats model for
-    teams we don't rate.
-
-    `apply_learned` folds in the corrections the tracker has learned from real
-    results (overall scoring level + home edge). The backtest calls it with
-    apply_learned=False so it always fits against the raw model.
+    Club / nation strength comes from learned Elo (with aliases) first. Flat
+    league-prior xG (1.45 home / 1.20 away) is a last resort only — never the
+    reason an underdog host looks stronger than a top club.
     """
     league_avg = match.league_profile.avg_goals_per_match if match.league_profile else 2.55
     ha = match.league_profile.home_advantage_factor if match.league_profile else 0.08
@@ -27,49 +22,58 @@ def expected_goals(match: Match, apply_learned: bool = True) -> tuple[float, flo
     goals_scale, home_edge_adj = 1.0, 0.0
     if apply_learned:
         try:
+            from bet_placer.data.team_ratings import blended_elo
+            from bet_placer.ml.historical import lambdas_from_ad, lambdas_from_elo
             from bet_placer.ml.params import load_params
+            from bet_placer.ml.team_elo import resolve_team_elo, sport_from_match
+
             lp = load_params()
             goals_scale = float(lp.get("goals_scale", 1.0))
             home_edge_adj = float(lp.get("home_edge_adj", 0.0))
-            # Best path: real Elo + goal model learned from 49k historical games.
-            elo = lp.get("elo") or {}
             gm = lp.get("goal_model") or {}
-            if elo and gm:
-                from bet_placer.data.team_names import canon_team
-                from bet_placer.data.team_ratings import blended_elo
-                from bet_placer.ml.historical import lambdas_from_elo
-                he = elo.get(canon_team(match.home_team))
-                ae = elo.get(canon_team(match.away_team))
-                if he is not None and ae is not None:
-                    # Shrink raw Elo toward the reputation prior so inflated
-                    # confederation-farmers don't distort the favourite.
-                    he = blended_elo(match.home_team, he)
-                    ae = blended_elo(match.away_team, ae)
-                    # World Cup is played at neutral venues → minimal home edge.
-                    ehl, ela = lambdas_from_elo(he, ae, gm, neutral=True)
-                    # Ensemble with the attack/defence model: Elo owns the result
-                    # axis, attack/defence owns the goals axis. Proven to beat
-                    # either alone out-of-sample (lower log-loss on 5.7k games).
-                    ad = lp.get("ad_model") or {}
-                    if ad.get("att"):
-                        from bet_placer.ml.historical import lambdas_from_ad
-                        ahl, ala = lambdas_from_ad(match.home_team, match.away_team,
-                                                   ad, neutral=True)
-                        if ahl is not None:
-                            w = float(ad.get("w_elo", 1.0))
-                            return (w * ehl + (1 - w) * ahl, w * ela + (1 - w) * ala)
-                    return ehl, ela
+            sport = sport_from_match(match)
+            he_raw = resolve_team_elo(match.home_team, sport=sport, params=lp)
+            ae_raw = resolve_team_elo(match.away_team, sport=sport, params=lp)
+            if gm and he_raw is not None and ae_raw is not None:
+                he = blended_elo(match.home_team, he_raw)
+                ae = blended_elo(match.away_team, ae_raw)
+                # World Cup / neutrals → tiny HA; club leagues keep home edge
+                blob = f"{getattr(match, 'sport_key', '')} {getattr(match, 'league', '')} {getattr(match, 'id', '')}".lower()
+                neutral = any(t in blob for t in ("world_cup", "world cup", "fifa", "neutral", "nations league"))
+                ehl, ela = lambdas_from_elo(he, ae, gm, neutral=neutral)
+                ad = lp.get("ad_model") or {}
+                if ad.get("att"):
+                    ahl, ala = lambdas_from_ad(
+                        match.home_team, match.away_team, ad, neutral=neutral,
+                    )
+                    if ahl is not None:
+                        w = float(ad.get("w_elo", 1.0))
+                        return (w * ehl + (1 - w) * ahl, w * ela + (1 - w) * ala)
+                return ehl, ela
         except Exception:
             pass
+
+    # Prefer 0–100 strength ratings over flat board priors
+    try:
+        hr = get_team_rating(match.home_team)
+        ar = get_team_rating(match.away_team)
+        if abs(hr - ar) >= 3 or min(hr, ar) < 48 or max(hr, ar) > 52:
+            diff = (hr - ar) / 100.0
+            sup = diff * 3.4 + ha * 3.0 + home_edge_adj
+            total = (league_avg - min(0.45, abs(diff) * 0.6)) * goals_scale
+            hs = 1.0 / (1.0 + math.exp(-sup))
+            return max(0.2, total * hs), max(0.2, total * (1.0 - hs))
+    except Exception:
+        pass
 
     rated = match.home_team in TEAM_RATINGS and match.away_team in TEAM_RATINGS
     if rated:
         hr = get_team_rating(match.home_team)
         ar = get_team_rating(match.away_team)
-        diff = (hr - ar) / 100.0            # quality gap, ~ -0.5..0.5 at the WC
-        sup = diff * 3.4 + ha * 3.0 + home_edge_adj  # goal supremacy incl. home edge
+        diff = (hr - ar) / 100.0
+        sup = diff * 3.4 + ha * 3.0 + home_edge_adj
         total = (league_avg - min(0.45, abs(diff) * 0.6)) * goals_scale
-        hs = 1.0 / (1.0 + math.exp(-sup))    # home's share of the goals
+        hs = 1.0 / (1.0 + math.exp(-sup))
         hl, al = max(0.2, total * hs), max(0.2, total * (1.0 - hs))
     else:
         h, a = match.home_stats, match.away_stats
@@ -81,7 +85,6 @@ def expected_goals(match: Match, apply_learned: bool = True) -> tuple[float, flo
         al = (away_attack + home_defense) / 2 * 0.45 * (league_avg / 2.6)
         hl, al = max(0.3, hl), max(0.3, al)
 
-    # Morale / motivation from live tournament context
     chem = match.chemistry
     if chem:
         mh = getattr(chem, "morale_home", None) or 5.0

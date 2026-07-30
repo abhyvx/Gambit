@@ -11,6 +11,24 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v24",
+        "cycle": "strength-all-sports",
+        "at": "2026-07-30",
+        "title": "Systemic strength + labels across soccer / basketball / cricket",
+        "fixed": [
+            "Flat board priors (1.45/1.20 xG) still crowned weak home sides after alias fix",
+            "Verdict headlines still showed match_winner: home and em dashes",
+            "Stats strip xG stayed on league priors even when Elo knew the gap",
+            "Elo updates could re-create orphan name keys and split identity again",
+        ],
+        "changes": [
+            "team_elo.resolve_team_elo + apply_strength_stats wired into event_to_match, Stake map, and analyze",
+            "Verdict + analyze copy always humanize picks; strip em dashes before UI",
+            "scripts/check_strength_all_sports.py covers Hull/Man Utd, BB, cricket, labels",
+            "README documents match-discretion Recs and the strength/prior rule",
+        ],
+    },
+    {
         "version": "v23",
         "cycle": "hull-manutd-recs",
         "at": "2026-07-30",

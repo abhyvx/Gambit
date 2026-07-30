@@ -328,19 +328,24 @@ function formatTicketLabel(leg, home, away) {
   const m = String(leg?.market || '').toLowerCase()
   const sel = String(leg?.selection || '').toLowerCase().trim()
 
+  // Bare or compound enums: match_winner: home, home, etc.
+  const rawEnum = /^(match_winner\s*:\s*)?(home|away|draw|x)$/i.test(raw.trim())
+    || /match_winner\s*:\s*(home|away|draw)/i.test(raw)
+
   // Never show raw enums like match_winner / home
-  if (m === 'match_winner' || sel === 'home' || sel === 'away' || sel === 'draw' || sel === 'x') {
-    if (sel === 'home' || (home && raw.toLowerCase() === home.toLowerCase())) return `${home} to win`
-    if (sel === 'away' || (away && raw.toLowerCase() === away.toLowerCase())) return `${away} to win`
-    if (sel === 'draw' || sel === 'x' || /^draw\b/i.test(raw)) return 'Draw'
-    if (raw && !/^(home|away|draw|x|match_winner)$/i.test(raw) && !/_/.test(raw)) {
+  if (m === 'match_winner' || sel === 'home' || sel === 'away' || sel === 'draw' || sel === 'x' || rawEnum) {
+    const side = (raw.match(/match_winner\s*:\s*(home|away|draw)/i) || [])[1]?.toLowerCase() || sel
+    if (side === 'home' || (home && raw.toLowerCase() === home.toLowerCase())) return `${home} to win`
+    if (side === 'away' || (away && raw.toLowerCase() === away.toLowerCase())) return `${away} to win`
+    if (side === 'draw' || side === 'x' || /^draw\b/i.test(raw)) return 'Draw'
+    if (raw && !/^(home|away|draw|x|match_winner)$/i.test(raw) && !/_/.test(raw) && !rawEnum) {
       if (/ to win$/i.test(raw)) return raw
       if (home && raw.toLowerCase() === home.toLowerCase()) return `${home} to win`
       if (away && raw.toLowerCase() === away.toLowerCase()) return `${away} to win`
       return raw
     }
-    if (sel === 'home') return home ? `${home} to win` : 'Home to win'
-    if (sel === 'away') return away ? `${away} to win` : 'Away to win'
+    if (side === 'home' || sel === 'home') return home ? `${home} to win` : 'Home to win'
+    if (side === 'away' || sel === 'away') return away ? `${away} to win` : 'Away to win'
   }
   if (raw && !/^handicap\b/i.test(raw) && !/^(home|away|draw|x)$/i.test(raw) && !/_/.test(raw)) {
     return raw

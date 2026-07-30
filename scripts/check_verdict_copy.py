@@ -17,6 +17,8 @@ vb = ValueBet(
 m = SimpleNamespace(home_team="A", away_team="B", market_odds=[], id="1", league="EPL")
 v = MatchVerdictEngine().evaluate(AnalysisResult(match=m, probabilities=[], value_bets=[vb], top_bets=[vb]))
 assert "1.90" in v.headline and "model" in v.reasoning[0].lower()
+assert "match_winner" not in v.headline.lower()
+assert "\u2014" not in v.headline and "\u2013" not in v.headline
 p = _annotate_pick({"decimal_odds": 2.0, "true_probability": 0.55})
 assert p["model_pct"] == 55 and p["book_pct"] == 50
 print("check_verdict_copy_ok")

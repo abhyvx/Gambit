@@ -115,6 +115,63 @@ def get_team_rating(team: str) -> float:
     return TEAM_RATINGS.get(team, 50.0)
 
 
+def lookup_rating(team: str, sport: str = "soccer") -> float | None:
+    """Elo-scale strength for a side, or None when we have no signal.
+
+    Used by ``team_elo.resolve_team_elo`` as a last resort after learned tables.
+    Prefers sport-bucket Elo, then global Elo, then curated reputation → Elo.
+    Does **not** invent a mid-table 1500 for unknown clubs.
+    """
+    name = str(team or "").strip()
+    if not name:
+        return None
+    sport_key = str(sport or "soccer").strip().lower() or "soccer"
+    try:
+        from bet_placer.data.team_names import canon_team
+        from bet_placer.ml.params import load_params
+
+        key = canon_team(name)
+        p = load_params() or {}
+        by_sport = p.get("elo_by_sport") or {}
+        tables: list[dict] = []
+        if isinstance(by_sport, dict):
+            for sk in (sport_key, "soccer", "basketball", "cricket"):
+                tbl = by_sport.get(sk)
+                if isinstance(tbl, dict):
+                    tables.append(tbl)
+        elo = p.get("elo")
+        if isinstance(elo, dict):
+            tables.append(elo)
+        best: float | None = None
+        for table in tables:
+            hit = table.get(key)
+            if hit is None:
+                for k, v in table.items():
+                    if canon_team(str(k)) != key or v is None:
+                        continue
+                    try:
+                        fv = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if best is None or fv > best:
+                        best = fv
+                continue
+            try:
+                fv = float(hit)
+            except (TypeError, ValueError):
+                continue
+            if best is None or fv > best:
+                best = fv
+        if best is not None:
+            return best
+    except Exception:
+        pass
+    rep = reputation_rating(name)
+    if rep is not None:
+        return _rating_to_elo(rep)
+    return None
+
+
 def rating_to_xg(rating: float) -> float:
     """Convert 0-100 rating to expected goals per match."""
     return 0.6 + (rating / 100) * 2.2

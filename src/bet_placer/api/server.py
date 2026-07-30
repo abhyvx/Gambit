@@ -1722,17 +1722,17 @@ def _market_leans(match, analysis, bankroll: float, limit: int = 2) -> list[dict
         edge_pts = model_pct - book_pct
         if edge_pts >= 1:
             lean_copy = (
-                f"Lean @ odds {odds.best_odds:.2f} — model {model_pct}% vs book ~{book_pct}% "
+                f"Lean @ odds {odds.best_odds:.2f} - model {model_pct}% vs book ~{book_pct}% "
                 f"(+{edge_pts} pts). Still size small."
             )
         elif edge_pts <= -3:
             lean_copy = (
                 f"Model likes this side ({model_pct}%) but the book price is tighter (~{book_pct}% at "
-                f"odds {odds.best_odds:.2f}). Not a clear edge — lean only."
+                f"odds {odds.best_odds:.2f}). Not a clear edge - lean only."
             )
         else:
             lean_copy = (
-                f"Soft lean @ odds {odds.best_odds:.2f} — model {model_pct}% ≈ book ~{book_pct}%. "
+                f"Soft lean @ odds {odds.best_odds:.2f} - model {model_pct}% ≈ book ~{book_pct}%. "
                 "No clear edge."
             )
         leans.append(_annotate_pick({
@@ -1756,7 +1756,7 @@ def _market_leans(match, analysis, bankroll: float, limit: int = 2) -> list[dict
                 "recommended_stake": rec.recommended_stake,
                 "recommended_pct": rec.recommended_pct,
                 "risk_level": "lean",
-                "plain_english": "Lean only — size small.",
+                "plain_english": "Lean only - size small.",
                 "expected_profit": rec.expected_profit,
                 "break_even_probability": rec.break_even_probability,
             },
@@ -1803,6 +1803,14 @@ def analyze(
     info = get_sport(sport)
     results = []
     for m in matches:
+        # Always refresh attack/defence rates from Elo — board paths may still
+        # carry flat 1.45/1.20 priors from cache / alternate builders.
+        try:
+            from bet_placer.ml.team_elo import apply_strength_stats
+
+            apply_strength_stats(m)
+        except Exception:
+            pass
         analysis = _engine.analyze_match(m)
         bettor = None
         from bet_placer.models.stake_types import WebConsensus
@@ -1851,7 +1859,7 @@ def analyze(
                 top_lean = leans[0]
                 if verdict.verdict.value == "skip":
                     verdict.verdict = Verdict.CAUTION
-                    verdict.headline = f"CAUTION — {top_lean.get('label') or 'soft lean'}"
+                    verdict.headline = f"CAUTION - {top_lean.get('label') or 'soft lean'}"
                 verdict.reasoning = [
                     top_lean.get("explanation") or "Best available lean from the model.",
                     *list(verdict.reasoning or [])[:2],
@@ -1869,7 +1877,7 @@ def analyze(
             if suggested and verdict.verdict.value == "skip":
                 from bet_placer.models.stake_types import Verdict
                 verdict.verdict = Verdict.CAUTION
-                verdict.headline = f"CAUTION — {suggested[0].get('label') or 'model lean'}"
+                verdict.headline = f"CAUTION - {suggested[0].get('label') or 'model lean'}"
 
         bet_slip = None
         if event_id:
@@ -1944,11 +1952,24 @@ def analyze(
         style_note = (
             f"{style.summary()} · {n} pick{'s' if n != 1 else ''} from your ₹{bankroll:.0f} match budget"
             + (f" (≈₹{spent:.0f} total)." if n else ".")
-            + (" Soft lean — prices look fair." if leans and not curated else "")
+            + (" Soft lean - prices look fair." if leans and not curated else "")
         )
 
         v_payload = _serialize_verdict(verdict)
         v_payload["reasoning"] = _user_reasons(v_payload.get("reasoning"))
+        # Belt-and-braces: never ship em dashes or raw market:selection to the UI
+        for key in ("headline", "best_bet"):
+            if v_payload.get(key):
+                v_payload[key] = (
+                    str(v_payload[key])
+                    .replace("\u2014", " - ")
+                    .replace("\u2013", " - ")
+                )
+        if isinstance(v_payload.get("reasoning"), list):
+            v_payload["reasoning"] = [
+                str(r).replace("\u2014", " - ").replace("\u2013", " - ")
+                for r in v_payload["reasoning"]
+            ]
 
         item = {
             "fixture_id": m.id,

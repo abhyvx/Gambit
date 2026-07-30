@@ -1157,13 +1157,18 @@ def _annotate_curated(slip: dict | None, label: str, *, recommended: bool = Fals
         "value": "Value play",
         "smart_parlay": "Stake combo",
     }
-    return {
+    out = {
         **slip,
         "pick_label": label,
         "pick_type": type_labels.get(tab, "Bet plan"),
         "pick_reason": _pick_reason_text(slip),
         "is_recommended_option": recommended,
     }
+    # Prefer the match-shape note when we chose this approach deliberately
+    if recommended and slip.get("rec_shape_note"):
+        out["pick_reason"] = slip["rec_shape_note"]
+        out["worth_label"] = slip.get("worth_label") or slip["rec_shape_note"]
+    return out
 
 
 def _plans_contradict(primary: dict, alt: dict, home: str, away: str) -> bool:

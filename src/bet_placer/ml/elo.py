@@ -100,14 +100,18 @@ class EloModel:
         }
 
     def update(self, home: str, away: str, result: str) -> None:
-        """result: 'H', 'D', or 'A'"""
+        """result: 'H', 'D', or 'A' — always write under canon keys."""
+        from bet_placer.data.team_names import canon_team
+
+        home_key = canon_team(home)
+        away_key = canon_team(away)
         home_r = self.get_rating(home)
         away_r = self.get_rating(away)
         home_exp = 1 / (1 + 10 ** (-(home_r + self.HOME_ADVANTAGE - away_r) / 400))
         scores = {"H": 1.0, "D": 0.5, "A": 0.0}
         actual = scores[result]
-        self.ratings[home] = home_r + self.K * (actual - home_exp)
-        self.ratings[away] = away_r + self.K * ((1 - actual) - (1 - home_exp))
+        self.ratings[home_key] = home_r + self.K * (actual - home_exp)
+        self.ratings[away_key] = away_r + self.K * ((1 - actual) - (1 - home_exp))
 
 
 def np_exp(x: float) -> float:

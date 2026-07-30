@@ -94,8 +94,27 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
     <div className="analysis-brief">
       <div className="analysis-brief-head">
         <div>
-          {v.headline ? <strong>{v.headline.replace(/^(BET|CAUTION|SKIP)\s*[-\u2013\u2014]\s*/i, '')}</strong> : null}
-          {a.style_note ? <p className="muted">{a.style_note}</p> : null}
+          {v.headline ? (
+            <strong>
+              {(() => {
+                let h = String(v.headline)
+                  .replace(/^(BET|CAUTION|SKIP)\s*[-\u2013\u2014]\s*/i, '')
+                  .replace(/\u2014|\u2013/g, ' - ')
+                h = h
+                  .replace(/\bmatch_winner\s*:\s*home\b/gi, `${ev?.home_team || 'Home'} to win`)
+                  .replace(/\bmatch_winner\s*:\s*away\b/gi, `${ev?.away_team || 'Away'} to win`)
+                  .replace(/\bmatch_winner\s*:\s*draw\b/gi, 'Draw')
+                if (/^(home|away|draw|x)$/i.test(h.trim())) {
+                  const k = h.trim().toLowerCase()
+                  if (k === 'home') return `${ev?.home_team || 'Home'} to win`
+                  if (k === 'away') return `${ev?.away_team || 'Away'} to win`
+                  return 'Draw'
+                }
+                return h
+              })()}
+            </strong>
+          ) : null}
+          {a.style_note ? <p className="muted">{String(a.style_note).replace(/\u2014|\u2013/g, ' - ')}</p> : null}
         </div>
         {v.verdict ? <VerdictBadge verdict={v.verdict} /> : null}
       </div>
@@ -109,7 +128,13 @@ function AnalysisBrief({ a, analyzing, onAdd, onPark, ev }) {
       {(v.reasoning || []).length > 0 && (
         <ul className="reason-list">
           {v.reasoning.slice(0, 3).map((line, i) => (
-            <li key={i}>{line}</li>
+            <li key={i}>
+              {String(line)
+                .replace(/\u2014|\u2013/g, ' - ')
+                .replace(/\bmatch_winner\s*:\s*home\b/gi, `${ev?.home_team || 'Home'} to win`)
+                .replace(/\bmatch_winner\s*:\s*away\b/gi, `${ev?.away_team || 'Away'} to win`)
+                .replace(/\bmatch_winner\s*:\s*draw\b/gi, 'Draw')}
+            </li>
           ))}
         </ul>
       )}

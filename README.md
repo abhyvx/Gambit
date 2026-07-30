@@ -75,6 +75,30 @@ This section is words and math pointers only. **Before → after run charts live
 4. Optional Kelly fraction sizes a paper stake (capped). Low edge, low confidence, or book-offline estimates get softer verdicts or skips.
 5. The slip is still yours: Gambit never places the bet.
 
+### Match-discretion Recs (not a global template)
+
+Main **Recs** pick a structure **per fixture**, not from Settings goal/risk/structure:
+
+| Shape | When |
+|-------|------|
+| **Single** | Clear quality + model lean (high-confidence favourite). Prefer this when suited. |
+| **Spread / loss-min** | Draw-live or tight game — capital preservation beats forcing a winner. |
+| **SGM** | Same-game multi only when the combined read is better than a single. |
+| **Caution / thin** | No real edge — show a small lean or skip rather than invent +EV. |
+
+**Target** owns cashout / insurance / profit-route tickets. Those plans must not dump into main Recs as the default card.
+
+### Strength vs board priors (all sports)
+
+League boards stamp flat priors (soccer ~1.45 / 1.20 home/away xG). That is a **fallback only**. Before analyze:
+
+1. Resolve each side through `canon_team` aliases (e.g. Manchester United = Man United).
+2. Pull the strongest matching Elo from global + sport buckets (`elo` / `elo_by_sport`).
+3. `apply_strength_stats` overwrites flat attack/defence rates so a mid-table host cannot look like a 51% favourite over a top club.
+4. Basketball / cricket use the same identity + Elo path for two-way moneyline.
+
+Regression: `PYTHONPATH=src python3 scripts/check_strength_all_sports.py` (Hull/Man Utd, quality gaps, BB, cricket, human verdict labels). Run related `scripts/check_*.py` before shipping Recs/strength changes — do not treat one fixture as proof.
+
 ### How the model learns and improves
 
 1. **Fuel** — finished boards + history corpora for soccer, basketball, and cricket.

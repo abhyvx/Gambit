@@ -700,7 +700,7 @@ export default function PortfolioPage() {
         )}
         {!stakeLive && !loginUrl && (
           <p className="muted">
-            Live browser login is only available when a supported remote browser path is configured. Until then, keep using the Stake API token import.
+            Live odds use the cloud browser when configured, or your Stake API token. No laptop scripts required.
           </p>
         )}
       </section>

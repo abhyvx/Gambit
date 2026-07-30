@@ -1190,6 +1190,92 @@ def model_paper():
     }
 
 
+@app.post("/api/model/train-desk")
+def model_train_desk(
+    max_epochs: int = Query(default=0, ge=0, le=10000),
+    target_roi: float = Query(default=0.25, ge=0.05, le=1.0),
+    target_acc: float = Query(default=0.60, ge=0.45, le=0.95),
+):
+    """User-triggered desk training — overrides CRAFT_DISABLE and keeps going until
+    craft gates AND every insight container pass desk_quality (no negatives / building).
+    """
+    import threading
+    from bet_placer.ml.craft_store import get_meta, set_meta
+    from bet_placer.ml.desk_quality import desk_quality_report
+
+    global _INSIGHTS_CACHE
+    _INSIGHTS_CACHE = None
+
+    status = get_meta("train_status") or {}
+    if status.get("state") == "running" and status.get("owner") in {"api", "desk"}:
+        return {
+            "started": False,
+            "already_running": True,
+            "train_status": status,
+            "desk_quality": (status.get("gates") or {}).get("desk"),
+            "message": "Desk training already running — Model page will refresh as containers clear.",
+        }
+
+    set_meta("train_status", {
+        "state": "running",
+        "epoch": int(status.get("epoch") or 0),
+        "target_roi": target_roi,
+        "target_accuracy": target_acc,
+        "unlimited": max_epochs <= 0,
+        "owner": "desk",
+        "note": "train until craft gates + every container clean (no building / negative ROI)",
+    })
+
+    def _bg() -> None:
+        try:
+            # Refresh params / factors first so containers have depth to fill
+            try:
+                from bet_placer.ml.tracker import train as model_train
+                model_train()
+            except Exception:
+                logger.warning("desk pretrain (tracker.train) failed", exc_info=True)
+            try:
+                from bet_placer.ml.factor_store import rebuild as rebuild_factors
+                rebuild_factors()
+            except Exception:
+                logger.warning("factor rebuild failed", exc_info=True)
+
+            from bet_placer.ml.craft_train import train_until_roi
+            train_until_roi(
+                target_roi=target_roi,
+                target_acc=target_acc,
+                max_epochs=None if max_epochs <= 0 else max_epochs,
+                verbose=True,
+            )
+            from bet_placer.ml.model_insights import build_model_insights, save_insights_cache
+            desk = build_model_insights()
+            save_insights_cache(desk)
+            global _INSIGHTS_CACHE
+            import time as _time
+            _INSIGHTS_CACHE = (_time.time(), desk)
+            set_meta("train_status", {
+                **(get_meta("train_status") or {}),
+                "desk_quality": desk_quality_report(desk),
+                "owner": "desk",
+            })
+        except Exception as exc:
+            set_meta("train_status", {
+                "state": "error",
+                "error": str(exc),
+                "target_roi": target_roi,
+                "target_accuracy": target_acc,
+                "owner": "desk",
+            })
+
+    threading.Thread(target=_bg, daemon=True, name="train-desk-until-ready").start()
+    return {
+        "started": True,
+        "already_running": False,
+        "train_status": get_meta("train_status"),
+        "message": "Desk training started — keeps going until every container has clean real data.",
+    }
+
+
 @app.post("/api/model/paper/cycle")
 def model_paper_cycle(
     train_walkforward: bool = Query(default=True),
@@ -1203,67 +1289,9 @@ def model_paper_cycle(
     target_acc: float = Query(default=0.60, ge=0.45, le=0.95),
     max_epochs: int = Query(default=0, ge=0, le=10000),
 ):
-    """Run paper craft. until_roi=true starts unlimited craft in background until gates clear.
-
-    max_epochs=0 means unlimited (does not stop until targets hit).
-    """
+    """Legacy paper cycle — until_roi routes to train-desk (same quality gate)."""
     if until_roi:
-        import threading
-        from bet_placer.ml.craft_store import get_meta, set_meta
-        from bet_placer.ml.craft_train import train_until_roi
-
-        status = get_meta("train_status") or {}
-        gates = status.get("gates") or {}
-        stale_gates = status.get("state") == "running" and "monthly" not in gates
-        if status.get("state") == "running" and not stale_gates:
-            return {
-                "started": False,
-                "already_running": True,
-                "train_status": status,
-                "message": "Craft already running — watch Model insights / craft status",
-            }
-        if stale_gates:
-            set_meta("train_status", {
-                **status,
-                "state": "superseded",
-                "note": "restarting with monthly+positive-sport gates",
-            })
-
-        set_meta("train_status", {
-            "state": "running",
-            "epoch": 0,
-            "target_roi": target_roi,
-            "target_accuracy": target_acc,
-            "unlimited": max_epochs <= 0,
-            "owner": "api",
-        })
-
-        def _bg() -> None:
-            try:
-                train_until_roi(
-                    target_roi=target_roi,
-                    target_acc=target_acc,
-                    max_epochs=None if max_epochs <= 0 else max_epochs,
-                    bankroll=bankroll,
-                    match_budget=match_budget,
-                    verbose=True,
-                )
-            except Exception as exc:
-                set_meta("train_status", {
-                    "state": "error",
-                    "error": str(exc),
-                    "target_roi": target_roi,
-                    "target_accuracy": target_acc,
-                    "owner": "api",
-                })
-
-        threading.Thread(target=_bg, daemon=True, name="craft-until-targets").start()
-        return {
-            "started": True,
-            "already_running": False,
-            "train_status": get_meta("train_status"),
-            "message": "Craft training started in background — does not stop until ROI+accuracy gates clear",
-        }
+        return model_train_desk(max_epochs=max_epochs, target_roi=target_roi, target_acc=target_acc)
     from bet_placer.ml.paper_book import run_cycle
 
     return run_cycle(
@@ -1295,7 +1323,7 @@ _INSIGHTS_TTL = 120.0
 
 
 @app.get("/api/model/insights")
-def model_insights():
+def model_insights(force: bool = Query(default=False)):
     """Dashboard payload: corpus, 3-sport accuracy, learning/craft curves — no match dumps."""
     import time as _time
     from bet_placer.ml.model_insights import (
@@ -1305,15 +1333,19 @@ def model_insights():
         load_insights_cache,
         save_insights_cache,
     )
+    from bet_placer.ml.desk_quality import publish_clean_desk
 
     global _INSIGHTS_CACHE
     now = _time.time()
+    if force:
+        _INSIGHTS_CACHE = None
     if _INSIGHTS_CACHE and now - _INSIGHTS_CACHE[0] < _INSIGHTS_TTL:
         return _INSIGHTS_CACHE[1]
 
     # Disk / release cache — instant paint on Render (never block on full rebuild)
     disk = ensure_insights_cache_on_disk() or load_insights_cache(max_age_s=30 * 86400)
     if disk and (disk.get("containers") or disk.get("curves")):
+        disk = publish_clean_desk(disk)
         _INSIGHTS_CACHE = (now, disk)
         return disk
 
@@ -1321,6 +1353,7 @@ def model_insights():
     try:
         fallback = craft_fallback_desk()
         if fallback.get("containers") and int(fallback.get("total_corpus") or 0) > 100:
+            fallback = publish_clean_desk(fallback)
             _INSIGHTS_CACHE = (now, fallback)
             try:
                 save_insights_cache(fallback)
@@ -1331,12 +1364,12 @@ def model_insights():
         logger.warning("craft fallback desk failed: %s", exc)
 
     try:
-        payload = build_model_insights()
+        payload = publish_clean_desk(build_model_insights())
         _INSIGHTS_CACHE = (now, payload)
         return payload
     except Exception as exc:
         logger.warning("model insights failed: %s", exc)
-        return craft_fallback_desk("Model desk warming — craft charts only.")
+        return publish_clean_desk(craft_fallback_desk("Model desk warming — craft charts only."))
 
 
 _INSIGHTS_REFRESHING = False

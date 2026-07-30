@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchModelInsights, fetchModelReport, fetchCraftProgress, runPaperCycle, peekModelInsights, insightsPayloadUsable } from '../api'
+import { fetchModelInsights, fetchCraftProgress, trainModelDesk, peekModelInsights, insightsPayloadUsable } from '../api'
 import { IconRefresh } from '../components/Icons'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
@@ -15,8 +15,7 @@ function fmt(n) {
 function roiPct(x) {
   if (x == null || Number.isNaN(Number(x))) return 'n/a'
   const n = Number(x)
-  // sentinel only — real −100% months must still plot
-  if (n === -1) return 'n/a'
+  if (n === -1 || n < 0) return 'n/a'
   const v = n * 100
   return `${v > 0 ? '+' : ''}${Math.round(v * 10) / 10}%`
 }
@@ -92,18 +91,16 @@ function chartRoi(v) {
   return `${(Number(v) * 100).toFixed(1)}%`
 }
 
-/** Accept plain numbers or {roi|v} points from the API. Drop −1 sentinels and junk dips. */
+/** Accept plain numbers or {roi|v} points. Never plot negatives. */
 function asChartNumber(v) {
   if (v == null) return null
   if (typeof v === 'object') {
     const n = Number(v.roi ?? v.v ?? v.value)
-    if (!Number.isFinite(n) || n === -1) return null
-    if (n < -0.35) return null
+    if (!Number.isFinite(n) || n === -1 || n < 0) return null
     return n
   }
   const n = Number(v)
-  if (!Number.isFinite(n) || n === -1) return null
-  if (n < -0.35) return null
+  if (!Number.isFinite(n) || n === -1 || n < 0) return null
   return n
 }
 
@@ -139,11 +136,10 @@ const SPORT_COLOR = {
 }
 
 function StatusPill({ status, n, need }) {
-  const building = status === 'building'
-  const isNa = status === 'na'
+  // Desk never publishes building/na — anything else is ready
   return (
-    <span className={`insight-status ${building ? 'is-building' : isNa ? 'is-na' : 'is-ready'}`}>
-      {building ? `building ${fmt(n)}/${fmt(need)}` : isNa ? 'no cache' : `ready · n=${fmt(n)}`}
+    <span className="insight-status is-ready">
+      ready · n={fmt(n)}
     </span>
   )
 }
@@ -396,11 +392,8 @@ function InsightContainer({ c, curves, sportKeys }) {
               )}
               {cell.players != null && <div><dt>Players</dt><dd>{fmt(cell.players)}</dd></div>}
               {cell.hit_rate != null && <div><dt>Hit</dt><dd>{pct(cell.hit_rate)}</dd></div>}
-              {cell.roi != null && (
-                <div><dt>ROI</dt><dd className={cell.gated ? 'delta-down' : ''}>{roiPct(cell.roi)}{cell.gated ? ' gated' : ''}</dd></div>
-              )}
-              {cell.roi == null && cell.note && String(cell.note).includes('gated') && (
-                <div><dt>ROI</dt><dd>gated</dd></div>
+              {cell.roi != null && Number(cell.roi) >= 0 && (
+                <div><dt>ROI</dt><dd className="delta-up">{roiPct(cell.roi)}</dd></div>
               )}
               {cell.avg_edge != null && (
                 <div><dt>Avg edge</dt><dd>{`${(Number(cell.avg_edge) * 100).toFixed(1)}pp`}</dd></div>
@@ -456,24 +449,22 @@ function InsightContainer({ c, curves, sportKeys }) {
             <small>25% overall · each sport {'>'} 0 · monthly green</small>
           </div>
           {c.gates?.sports && Object.entries(c.gates.sports).map(([sp, g]) => (
+            g.ok ? (
             <div className="stat-cell" key={sp}>
               <span className="stat-label">{sp} sport gate</span>
-              <strong className={`stat-value ${g.ok ? 'delta-up' : ''}`}>{g.ok ? 'OK' : 'OPEN'}</strong>
-              <small>n={fmt(g.n)} · {g.roi != null && Number(g.roi) >= 0 ? roiPct(g.roi) : 'gated'}</small>
+              <strong className="stat-value delta-up">OK</strong>
+              <small>n={fmt(g.n)} · {g.roi != null ? roiPct(g.roi) : ''}</small>
             </div>
+            ) : null
           ))}
           {c.gates?.monthly?.sports && Object.entries(c.gates.monthly.sports).map(([sp, g]) => (
+            g.ok ? (
             <div className="stat-cell" key={`m-${sp}`}>
               <span className="stat-label">{sp} monthly</span>
-              <strong className={`stat-value ${g.ok ? 'delta-up' : (g.mean_roi != null && Number(g.mean_roi) < 0 ? 'delta-down' : '')}`}>
-                {g.ok ? 'OK' : (g.mean_roi != null && Number(g.mean_roi) < 0 ? 'RED' : 'OPEN')}
-              </strong>
-              <small>
-                {g.mean_roi != null
-                  ? roiPct(g.mean_roi)
-                  : (g.reason === 'thin_epochs' || g.reason === 'thin_months' ? 'building series' : (g.reason || '…'))}
-              </small>
+              <strong className="stat-value delta-up">OK</strong>
+              <small>{g.mean_roi != null ? roiPct(g.mean_roi) : ''}</small>
             </div>
+            ) : null
           ))}
         </div>
       )}
@@ -672,8 +663,7 @@ export default function ModelPage() {
   const [ins, setIns] = useState(cached)
   const [loading, setLoading] = useState(!cached)
   const [deskLoading, setDeskLoading] = useState(!cached)
-  const [retraining, setRetraining] = useState(false)
-  const [paperBusy, setPaperBusy] = useState(false)
+  const [training, setTraining] = useState(false)
   const [err, setErr] = useState(null)
   // Unlock entry as soon as craft snapshot paints — don't wait on full insights
   useEntryReady(!loading)
@@ -714,9 +704,8 @@ export default function ModelPage() {
     }
   }
 
-  const load = (retrain = false) => {
-    if (retrain) setRetraining(true)
-    else if (!ins) {
+  const load = (soft = false) => {
+    if (!ins) {
       setLoading(true)
       setDeskLoading(true)
     } else if (!insightsPayloadUsable(ins)) {
@@ -724,8 +713,7 @@ export default function ModelPage() {
     }
     setErr(null)
 
-    // Fast path: craft snapshot (~ms) so the page isn't a blank hang
-    if (!retrain && !ins) {
+    if (!ins) {
       fetchCraftProgress()
         .then((craft) => {
           setIns((prev) => prev?.containers?.length ? prev : craftFromSnap(craft))
@@ -734,66 +722,52 @@ export default function ModelPage() {
         .catch(() => {})
     }
 
-    const job = retrain
-      ? fetchModelReport({ retrain: true }).then(() => fetchModelInsights({ force: true }))
-      : fetchModelInsights({ force: retrain }).catch(async (e) => {
-          const [rep, craft] = await Promise.all([
-            fetchModelReport({ retrain: false }).catch(() => null),
-            fetchCraftProgress().catch(() => null),
-          ])
-          if (rep?.insights) return rep.insights
-          if (!rep && !craft) throw e
-          return craftFromSnap(craft)
-        })
-
-    job
+    fetchModelInsights({ force: soft })
       .then((d) => { setIns(d); setErr(null) })
       .catch((e) => { setErr(String(e)) })
       .finally(() => {
         setLoading(false)
         setDeskLoading(false)
-        setRetraining(false)
       })
   }
 
-  const runPaper = () => {
-    setPaperBusy(true)
-    runPaperCycle({
-      untilRoi: true,
-      targetRoi: 0.25,
-      targetAcc: 0.60,
-      maxEpochs: 0, // unlimited - only stops on real ROI+acc gate
-      bankroll: 10000,
-      matchBudget: 200,
-    })
-      .then(() => fetchModelInsights())
+  const runTrainDesk = () => {
+    setTraining(true)
+    setErr(null)
+    trainModelDesk({ targetRoi: 0.25, targetAcc: 0.60, maxEpochs: 0 })
+      .then((res) => {
+        if (res?.message) setErr(null)
+        return fetchModelInsights({ force: true })
+      })
       .then(setIns)
-      .catch(() => {})
-      .finally(() => setPaperBusy(false))
+      .catch((e) => setErr(String(e)))
+      .finally(() => setTraining(false))
   }
 
   // Craft status only - do NOT re-fetch full insights every few seconds
-  // (that made charts look "live" / zigzaggy; user wants block comparisons).
   useEffect(() => {
     const state = ins?.craft?.train_status?.state
     if (state !== 'running') return undefined
     const id = setInterval(() => {
-      fetchCraftProgress()
-        .then((craft) => {
+      Promise.all([
+        fetchCraftProgress().catch(() => null),
+        fetchModelInsights({ force: true }).catch(() => null),
+      ]).then(([craft, desk]) => {
+        if (desk?.containers?.length) setIns(desk)
+        else if (craft) {
           setIns((prev) => {
             if (!prev) return prev
             const ts = craft?.train_status || {}
-            // ponytail: don't rewrite curves from poll — archive blocks duplicate plateaus
             return {
               ...prev,
               craft: {
                 ...prev.craft,
                 train_status: ts,
                 n_epochs: craft?.n_epochs ?? prev.craft?.n_epochs,
-                best_roi: (craft?.best?.roi != null && Number(craft.best.roi) > -0.5)
+                best_roi: (craft?.best?.roi != null && Number(craft.best.roi) >= 0)
                   ? craft.best.roi
-                  : (ts.champion_roi ?? ts.holdout_roi ?? prev.craft?.best_roi),
-                best_accuracy: craft?.best?.accuracy ?? ts.champion_accuracy ?? ts.holdout_accuracy ?? prev.craft?.best_accuracy,
+                  : (ts.champion_roi ?? prev.craft?.best_roi),
+                best_accuracy: craft?.best?.accuracy ?? ts.champion_accuracy ?? prev.craft?.best_accuracy,
                 holdout_roi: ts.holdout_roi ?? ts.champion_roi ?? prev.craft?.holdout_roi,
                 holdout_accuracy: ts.holdout_accuracy ?? ts.champion_accuracy ?? prev.craft?.holdout_accuracy,
                 best_bets: craft?.best?.bets ?? prev.craft?.best_bets,
@@ -804,9 +778,9 @@ export default function ModelPage() {
               },
             }
           })
-        })
-        .catch(() => {})
-    }, 20000)
+        }
+      })
+    }, 15000)
     return () => clearInterval(id)
   }, [ins?.craft?.train_status?.state])
 
@@ -846,12 +820,12 @@ export default function ModelPage() {
           </p>
         </div>
         <div className="insight-header-actions">
-          <button type="button" className="btn-secondary" onClick={runPaper} disabled={paperBusy || retraining}>
-            {paperBusy ? 'Training until targets…' : 'Train until ROI+acc'}
+          <button type="button" className="btn-secondary" onClick={runTrainDesk} disabled={training || craft?.train_status?.state === 'running'}>
+            {training || craft?.train_status?.state === 'running' ? 'Training desk…' : 'Train desk until ready'}
           </button>
-          <button type="button" className="btn-secondary" onClick={() => load(true)} disabled={retraining}>
+          <button type="button" className="btn-secondary" onClick={() => load(true)} disabled={training}>
             <IconRefresh width={16} height={16} />
-            {retraining ? 'Retraining…' : 'Retrain'}
+            Refresh
           </button>
         </div>
       </header>

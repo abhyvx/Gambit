@@ -564,7 +564,8 @@ export async function fetchModelInsights({ force = false } = {}) {
     const hit = peekModelInsights()
     if (hit) return hit
   }
-  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
+  const qs = force ? '?force=true' : ''
+  const r = await fetch(`${API}/model/insights${qs}`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
   const data = await r.json()
   const prior = _insightsCache.data || peekModelInsights()
@@ -575,6 +576,24 @@ export async function fetchModelInsights({ force = false } = {}) {
   _insightsCache.data = data
   writeInsightsStore({ ts: _insightsCache.ts, data })
   return data
+}
+
+export async function trainModelDesk({
+  targetRoi = 0.25,
+  targetAcc = 0.60,
+  maxEpochs = 0,
+} = {}) {
+  const params = new URLSearchParams({
+    target_roi: String(targetRoi),
+    target_acc: String(targetAcc),
+    max_epochs: String(maxEpochs),
+  })
+  const r = await fetch(`${API}/model/train-desk?${params}`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!r.ok) throw new Error(`Train desk failed (${r.status})`)
+  return r.json()
 }
 
 export async function runPaperCycle({

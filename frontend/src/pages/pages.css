@@ -4287,7 +4287,7 @@
   text-align: center;
   color: #fff;
   padding: 0;
-  background: #0a1924;
+  background: var(--bg-deep);
 }
 .sport-banner-v-photo {
   position: absolute;

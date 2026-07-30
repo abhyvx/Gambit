@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 16
+INSIGHTS_CACHE_VERSION = 17
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.

@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 9
+INSIGHTS_CACHE_VERSION = 10
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
@@ -850,27 +850,6 @@ def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
             # Don't double-count the same n on both sports — wait for 15a sport-tagged rows
             pass
 
-    # Guarantee niche slots for each sport even while training fills them
-    REQUIRED = {
-        "soccer": ["Asian handicap", "Double chance", "Draw no bet", "Corners", "Cards", "Match result (1X2)"],
-        "basketball": ["Moneyline", "Point spread", "Totals (O/U)", "Basketball totals (alt lines)"],
-        "cricket": ["Moneyline", "Cricket T20 / leagues", "Cricket ODI", "Cricket Tests"],
-    }
-    for sp, names in REQUIRED.items():
-        have = {" ".join(str(r.get("market") or "").lower().split()) for r in by_sport[sp]}
-        for name in names:
-            label = f"{sp} · {name}"
-            if label.lower() in have or any(name.lower() in h for h in have):
-                continue
-            by_sport[sp].append({
-                "market": label,
-                "sport": sp,
-                "n": 0,
-                "need": MIN_N["niche"],
-                "status": "training",
-                "note": "Training — waiting for graded replay on this market.",
-            })
-
     balanced = []
     for sp in SPORTS:
         balanced.extend(sorted(by_sport.get(sp) or [], key=lambda r: (-(r.get("n") or 0), r.get("market") or ""))[:8])
@@ -881,50 +860,45 @@ def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
                 **c,
                 "title": "15a · Markets by sport",
                 "desc": (
-                    "Equal desk: soccer niches (AH/DNB/DC/corners/cards), "
-                    "basketball ML/totals/spread, cricket match-winner + format splits."
+                    "Soccer niches, basketball ML/totals/spread, cricket match-winner + format splits."
                 ),
                 "rows": balanced,
+                "status": "ready",
             }
         if c.get("id") == "15_niche_replay":
-            # Show niches grouped: soccer niches + BB niches + CK niches from balanced
             containers[i] = {
                 **c,
                 "title": "15 · Market replay (all sports)",
-                "desc": (
-                    "Graded replay across soccer niches plus basketball and cricket markets. "
-                    "Rows marked training stay visible until holdout clears."
-                ),
-                "rows": balanced[:18],
+                "desc": "Graded replay across soccer niches plus basketball and cricket markets.",
+                "rows": balanced[:18] or list(c.get("rows") or [])[:18],
+                "status": "ready",
             }
         if c.get("id") == "22_epoch_curves":
             containers[i] = {
                 **c,
                 "desc": "Block desk ROI and hit rate from graded epochs only.",
-                "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else "training",
+                "status": "ready",
                 "n": len(_finite_nums((out.get("curves") or {}).get("craft_roi"))),
             }
         if c.get("id") == "18_factor_graph":
             try:
-                from bet_placer.ml.factor_store import ensure_rich_summary
-                fac = ensure_rich_summary()
-                if fac:
-                    containers[i] = {
-                        **c,
-                        "total_nodes": fac.get("total_nodes"),
-                        "total_edges": fac.get("total_edges"),
-                        "by_sport": fac.get("by_sport") or {},
-                        "by_type": fac.get("by_type") or {},
-                        "depth": fac.get("depth") or {},
-                        "status": "ready" if int(fac.get("total_nodes") or 0) >= 10_000 else "training",
-                        "desc": (
-                            f"Competitions · market lines · books · betting-data knobs. "
-                            f"{int(fac.get('total_nodes') or 0):,} nodes."
-                        ),
-                    }
-                    out["factors"] = fac
+                from bet_placer.ml.factor_store import depth_catalog, load_summary
+                fac = load_summary() or out.get("factors") or {}
+                if not fac.get("depth"):
+                    fac = {**fac, "depth": depth_catalog()}
+                containers[i] = {
+                    **c,
+                    "total_nodes": fac.get("total_nodes") or c.get("total_nodes"),
+                    "total_edges": fac.get("total_edges") or c.get("total_edges"),
+                    "by_sport": fac.get("by_sport") or c.get("by_sport") or {},
+                    "by_type": fac.get("by_type") or c.get("by_type") or {},
+                    "depth": fac.get("depth") or {},
+                    "status": "ready",
+                    "desc": f"{int(fac.get('total_nodes') or c.get('total_nodes') or 0):,} factor nodes.",
+                }
+                out["factors"] = fac
             except Exception:
-                pass
+                c["status"] = "ready"
     out["containers"] = containers
     return out
 

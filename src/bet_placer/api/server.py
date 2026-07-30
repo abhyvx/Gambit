@@ -603,9 +603,26 @@ def stake_refresh():
 @app.post("/api/stake/connect")
 def stake_connect():
     """Warm Stake browser (local or cloud) and refresh odds overlay."""
-    from bet_placer.config import stake_network_enabled
+    from bet_placer.config import remote_stake_browser_enabled, stake_network_enabled
+    from bet_placer.engine.stake_odds import stake_overlay_status, warm_stake_cache_from_disk
+
+    if not remote_stake_browser_enabled():
+        warm_stake_cache_from_disk()
+        overlay = stake_overlay_status()
+        n = overlay.get("fixtures", 0)
+        return {
+            "connected": False,
+            "browser": {"ready": False, "remote_required": True, "remote": False},
+            "overlay": overlay,
+            "fixtures": n,
+            "message": (
+                f"Showing {n} cached Stake prices. Remote Browserbase/CDP is not configured yet, "
+                "so the app will not open a local Stake popup. Configure Browserbase for live odds, "
+                "or use the per-user API token flow for portfolio imports."
+            ),
+        }
+
     if not stake_network_enabled():
-        from bet_placer.engine.stake_odds import stake_overlay_status, warm_stake_cache_from_disk
         warm_stake_cache_from_disk()
         overlay = stake_overlay_status()
         n = overlay.get("fixtures", 0)

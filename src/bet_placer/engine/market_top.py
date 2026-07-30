@@ -231,6 +231,29 @@ def _hot_doubles(singles: list[dict], n: int = 2) -> list[dict]:
     pool = sorted(pool, key=lambda x: -float(x.get("score") or 0))
     out: list[dict] = []
     used: set[str] = set()
+
+    def _leg_payload(src: dict) -> dict:
+        """Full slip-ready leg so Add expands into a real multi, not one fused single."""
+        return {
+            "event_id": src.get("event_id"),
+            "sport_key": src.get("sport_key"),
+            "league": src.get("league"),
+            "home_team": src.get("home_team"),
+            "away_team": src.get("away_team"),
+            "home_logo": src.get("home_logo"),
+            "away_logo": src.get("away_logo"),
+            "kickoff": src.get("kickoff"),
+            "status": src.get("status"),
+            "market": src.get("market") or "match_winner",
+            "market_name": src.get("market_name") or "Match Result",
+            "selection": src.get("selection"),
+            "label": src.get("label"),
+            "line": src.get("line"),
+            "decimal_odds": src.get("decimal_odds"),
+            "odds": src.get("decimal_odds"),
+            "ticket_kind": "single",
+        }
+
     for i, a in enumerate(pool):
         if len(out) >= n:
             break
@@ -265,10 +288,7 @@ def _hot_doubles(singles: list[dict], n: int = 2) -> list[dict]:
                 "score": round(score, 2),
                 "credible": True,
                 "ticket_kind": "combo",
-                "legs": [
-                    {"label": a.get("label"), "odds": a.get("decimal_odds"), "event_id": a.get("event_id")},
-                    {"label": b.get("label"), "odds": b.get("decimal_odds"), "event_id": b.get("event_id")},
-                ],
+                "legs": [_leg_payload(a), _leg_payload(b)],
             })
             break
     return out
@@ -345,12 +365,19 @@ def _stake_market_bets(event, fx: dict, base_score: float) -> list[dict]:
         if not outcomes:
             continue
         if mkey == "combo_1x2_total":
-            # Hot combo slips — not singles
+            # Hot combo slips — expand into SGM legs on Add (not one fused single)
             for o in sorted(outcomes, key=lambda x: float(x.get("odds") or 99))[:2]:
                 price = float(o.get("odds") or 0)
                 if not (1.6 <= price <= 12):
                     continue
                 label = str(o.get("name") or "Combo")
+                parts = [p.strip() for p in label.replace("+", "&").split("&") if p.strip()]
+                if len(parts) < 2:
+                    parts = [label]
+                # Geometric share so each SGM leg has a usable decimal
+                per_odds = (
+                    round(price ** (1 / len(parts)), 3) if len(parts) > 1 and price > 1 else price
+                )
                 score = base_score + 55 + _price_band_boost(price)
                 out.append(_bet_row(
                     event=event,
@@ -365,7 +392,25 @@ def _stake_market_bets(event, fx: dict, base_score: float) -> list[dict]:
                     handle_usd=vol or None,
                     market_name=mname.split("(")[0].strip() or "Combo",
                     ticket_kind="combo",
-                    legs=[{"label": part.strip(), "odds": None} for part in label.replace("+", "&").split("&") if part.strip()] or None,
+                    legs=[
+                        {
+                            "event_id": getattr(event, "id", None),
+                            "sport_key": getattr(event, "sport_key", None),
+                            "league": getattr(event, "league", None),
+                            "home_team": home,
+                            "away_team": away,
+                            "home_logo": getattr(event, "home_logo", None),
+                            "away_logo": getattr(event, "away_logo", None),
+                            "market": "stake_combo_leg",
+                            "market_name": "Combo leg",
+                            "selection": part,
+                            "label": part,
+                            "decimal_odds": per_odds,
+                            "odds": per_odds,
+                            "ticket_kind": "single",
+                        }
+                        for part in parts
+                    ],
                 ))
             continue
 

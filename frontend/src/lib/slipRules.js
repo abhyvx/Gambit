@@ -108,7 +108,9 @@ export function canAddLeg(legs, next) {
 }
 
 export function legFromBet(b, stake) {
-  const kind = b.ticket_kind || (b.market === 'stake_combo' ? 'combo' : 'single')
+  const kind = b.ticket_kind || (
+    b.market === 'stake_combo' || b.market === 'hot_double' ? 'combo' : 'single'
+  )
   return {
     id: `${b.event_id}-${b.market || 'match_winner'}-${b.selection}-${b.line ?? ''}`,
     eventId: String(b.event_id),
@@ -121,11 +123,45 @@ export function legFromBet(b, stake) {
     market: b.market || 'match_winner',
     selection: b.selection,
     line: b.line ?? null,
-    odds: Number(b.decimal_odds),
+    odds: Number(b.decimal_odds || b.odds),
     sportKey: b.sport_key,
     league: b.league,
     stake: stake || null,
     ticketKind: kind,
     legs: Array.isArray(b.legs) ? b.legs : null,
   }
+}
+
+/** Expand hot doubles / Stake combos into real slip legs (multi or SGM). */
+export function legsFromBet(b, stake) {
+  const kind = b?.ticket_kind || b?.market
+  const isCombo = kind === 'combo'
+    || b?.market === 'hot_double'
+    || b?.market === 'stake_combo'
+  const parts = Array.isArray(b?.legs) ? b.legs.filter(Boolean) : []
+  if (!isCombo || parts.length < 2) {
+    return [legFromBet(b, stake)]
+  }
+  return parts.map((part, i) => {
+    const src = {
+      event_id: part.event_id || part.eventId || b.event_id,
+      sport_key: part.sport_key || b.sport_key,
+      league: part.league || b.league,
+      home_team: part.home_team || b.home_team,
+      away_team: part.away_team || b.away_team,
+      home_logo: part.home_logo || b.home_logo,
+      away_logo: part.away_logo || b.away_logo,
+      market: part.market || 'match_winner',
+      market_name: part.market_name || part.marketName || 'Match Result',
+      selection: part.selection || part.label,
+      label: part.label || part.selection,
+      line: part.line ?? null,
+      decimal_odds: part.decimal_odds || part.odds,
+      ticket_kind: 'single',
+    }
+    const leg = legFromBet(src, i === 0 ? stake : null)
+    // Unique ids when two legs share a fused selection string
+    leg.id = `${leg.eventId}-${leg.market}-${leg.selection}-${leg.line ?? ''}-${i}`
+    return leg
+  }).filter((l) => Number(l.odds) > 1 && l.eventId)
 }

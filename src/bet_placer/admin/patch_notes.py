@@ -11,6 +11,20 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v28",
+        "cycle": "combo-expand-legs",
+        "at": "2026-07-30",
+        "title": "Hot doubles / combos add as multi legs, not one fused single",
+        "fixed": [
+            "Top-bet Hot double and Stake combo Add put one combined ticket on the slip",
+        ],
+        "changes": [
+            "Hot double legs carry full event/market/odds payloads",
+            "TopBetTicket expands combo tickets via addLegs (multi or SGM)",
+            "Stake combo parts get geometric odds shares for SGM add",
+        ],
+    },
+    {
         "version": "v27",
         "cycle": "top-bets-summaries",
         "at": "2026-07-30",

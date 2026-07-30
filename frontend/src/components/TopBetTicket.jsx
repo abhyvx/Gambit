@@ -2,7 +2,7 @@ import { useState } from 'react'
 import TeamLogo from './TeamLogo'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import { fmtOdds } from './BoardBits'
-import { legFromBet } from '../lib/slipRules'
+import { legsFromBet } from '../lib/slipRules'
 
 function formatHandle(n) {
   if (n == null || !Number(n)) return null
@@ -30,14 +30,16 @@ function sourceLabel(src) {
 
 /** Stake-style vertical bet ticket - add without amount; payout only when amount set. */
 export default function TopBetTicket({ bet, onOpenMatch }) {
-  const { addLeg, setSlipMsg, setSlipOpen } = useBankroll()
+  const { addLegs, setSlipMsg, setSlipOpen } = useBankroll()
   const [stake, setStake] = useState('')
   const odds = Number(bet.decimal_odds)
   const stakeNum = Number(stake)
   const payout = odds && stakeNum > 0 ? Math.round(stakeNum * odds) : null
   const tag = sportTag(bet.sport_key)
-  const isCombo = bet.ticket_kind === 'combo' || bet.market === 'stake_combo'
-  const comboParts = (bet.legs || []).map((l) => String(l.label || '').replace(/[—–]/g, ' - ')).filter(Boolean)
+  const isCombo = bet.ticket_kind === 'combo'
+    || bet.market === 'stake_combo'
+    || bet.market === 'hot_double'
+  const comboParts = (bet.legs || []).map((l) => String(l.label || l.selection || '').replace(/[—–]/g, ' - ')).filter(Boolean)
   const marketLabel = String(bet.market_name || (isCombo ? 'Combo' : 'Match Result'))
     .replace(/[—–]/g, ' - ')
     .replace(/_/g, ' ')
@@ -46,20 +48,23 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
 
   const add = () => {
     const n = Number(stake)
-    const ok = addLeg(legFromBet({
+    // Hot doubles / combos expand into real multi or SGM legs — never one fused single
+    const payload = legsFromBet({
       ...bet,
       label: pickLabel,
       market: bet.market || (isCombo ? 'stake_combo' : 'match_winner'),
       market_name: marketLabel,
-    }, n > 0 ? n : null))
-    if (ok) setSlipOpen?.(true)
+    }, n > 0 ? n : null)
+    const { added, reasons } = addLegs(payload)
+    if (added) setSlipOpen?.(true)
+    else if (reasons?.[0]) setSlipMsg?.(reasons[0])
   }
 
   return (
     <article className={`bet-ticket-v ${bet.status === 'live' ? 'is-live' : ''} ${isCombo ? 'is-combo' : ''}`}>
       <div className="bet-ticket-v-top">
         {tag && <span className="bet-ticket-v-sport">{tag}</span>}
-        {isCombo && <span className="bet-ticket-v-kind">Combo</span>}
+        {isCombo && <span className="bet-ticket-v-kind">{bet.market === 'hot_double' ? 'Double' : 'Combo'}</span>}
         {bet.status === 'live' && <span className="live-tag">LIVE</span>}
       </div>
 
@@ -120,10 +125,11 @@ export default function TopBetTicket({ bet, onOpenMatch }) {
         {bet.bettors ? `${bet.handle_usd ? ' · ' : ''}${Number(bet.bettors).toLocaleString()} bettors` : ''}
         {bet.books > 1 ? `${bet.handle_usd || bet.bettors ? ' · ' : ''}Tracked at ${bet.books} books` : ''}
         {!bet.handle_usd && !bet.bettors && bet.source ? sourceLabel(bet.source) : ''}
+        {isCombo && comboParts.length > 1 ? `${bet.handle_usd || bet.bettors || bet.source ? ' · ' : ''}Adds as ${comboParts.length} legs` : ''}
       </p>
 
       <button type="button" className="btn-primary bet-ticket-v-add" onClick={add}>
-        Add to slip
+        {isCombo && comboParts.length > 1 ? `Add ${comboParts.length} legs` : 'Add to slip'}
       </button>
     </article>
   )

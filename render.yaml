@@ -6,6 +6,7 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     healthCheckPath: /api/health
+    # Render injects PORT; start_cloud.sh binds 0.0.0.0:$PORT immediately.
     envVars:
       - key: CRAFT_DISABLE
         value: "1"
@@ -17,6 +18,8 @@ services:
         value: "600"
       - key: GAMBIT_REPO
         value: abhyvx/Gambit
+      - key: PYTHONUNBUFFERED
+        value: "1"
       # Set in Render dashboard (do not commit secrets):
       #   DATABASE_URL + TURSO_AUTH_TOKEN   — persistent users/sessions/portfolios
       #   GAMBIT_SECRETS_KEY                — encrypt per-user Stake tokens

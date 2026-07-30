@@ -1,7 +1,27 @@
 #!/bin/bash
-set -e
+# Cloud entrypoint: bind Render's PORT immediately, then bootstrap in the background.
+# "No open ports detected" happens when bootstrap/downloads block before uvicorn listens.
+set -u
 cd /app
-bash scripts/bootstrap_model.sh
-# Render injects PORT — must listen on it (not a fixed 10000)
+
 PORT="${PORT:-${GAMBIT_PORT:-10000}}"
-exec uvicorn bet_placer.api.server:app --host 0.0.0.0 --port "$PORT"
+export PORT
+export GAMBIT_HOST=0.0.0.0
+export GAMBIT_PORT="$PORT"
+export PYTHONUNBUFFERED=1
+
+echo "gambit: listening on 0.0.0.0:${PORT}"
+
+# Model/release pull must never delay the open port.
+(
+  set +e
+  echo "gambit: background bootstrap starting…"
+  bash scripts/bootstrap_model.sh
+  echo "gambit: background bootstrap finished (exit $?)"
+) &
+
+exec uvicorn bet_placer.api.server:app \
+  --host 0.0.0.0 \
+  --port "$PORT" \
+  --timeout-keep-alive 5 \
+  --log-level info

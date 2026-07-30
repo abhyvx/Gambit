@@ -73,8 +73,12 @@ for a in d.get('assets',[]):
         print(a['browser_download_url']); break
 " 2>/dev/null || true)
   if [ -n "$URL" ]; then
-    curl -fsSL "$URL" -o "$DEST/$name"
-    echo "  → $DEST/$name"
+    if curl -fsSL --connect-timeout 20 --max-time 180 "$URL" -o "$DEST/$name"; then
+      echo "  → $DEST/$name"
+    else
+      echo "  ! failed $name (continuing)"
+      rm -f "$DEST/$name"
+    fi
   fi
 done
 

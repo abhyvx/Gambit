@@ -5167,6 +5167,22 @@
   font-weight: 600;
   color: var(--text);
 }
+.model-desk-revision-pill {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--blue-bright) 45%, var(--border));
+  background: var(--blue-a10);
+  color: var(--blue-bright);
+}
+.model-desk-revision.is-stale {
+  border-left-color: var(--text-dim);
+  opacity: 0.92;
+}
 .model-desk-revision-notes {
   margin: 0;
   padding-left: 1.15rem;

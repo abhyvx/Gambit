@@ -520,11 +520,14 @@ export async function fetchPaperBook() {
 
 const _insightsCache = { ts: 0, data: null }
 const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
-const INSIGHTS_DISK_KEY = 'gambit_insights_v2'
+// Bump key whenever desk schema/version meaning changes so stale localStorage
+// (e.g. cache_version 10) cannot paint over a live Desk v15+ response.
+const INSIGHTS_DISK_KEY = 'gambit_insights_v15'
+const MIN_INSIGHTS_CACHE_VERSION = 15
 
 function readInsightsStore() {
   try {
-    return JSON.parse(localStorage.getItem(INSIGHTS_DISK_KEY) || sessionStorage.getItem('gambit_insights_v1') || 'null')
+    return JSON.parse(localStorage.getItem(INSIGHTS_DISK_KEY) || 'null')
   } catch {
     return null
   }
@@ -533,6 +536,9 @@ function readInsightsStore() {
 function writeInsightsStore(payload) {
   try {
     localStorage.setItem(INSIGHTS_DISK_KEY, JSON.stringify(payload))
+    // Drop legacy keys that previously pinned Desk v10 for 24h
+    localStorage.removeItem('gambit_insights_v2')
+    sessionStorage.removeItem('gambit_insights_v1')
   } catch { /* quota / private mode */ }
 }
 
@@ -540,12 +546,33 @@ export function insightsPayloadUsable(data) {
   return Number(data?.total_corpus || 0) > 1000 || (data?.status && data.status !== 'needs_train')
 }
 
+/** Reject paint-from-cache when the stored desk predates the live revision. */
+export function insightsCacheFresh(data) {
+  if (!data || !insightsPayloadUsable(data)) return false
+  const ver = Number(data?.cache_version || data?.desk_revision?.version || 0)
+  if (!Number.isFinite(ver) || ver < MIN_INSIGHTS_CACHE_VERSION) return false
+  return Boolean(data?.desk_revision?.label) || ver >= MIN_INSIGHTS_CACHE_VERSION
+}
+
 export function peekModelInsights() {
-  if (_insightsCache.data && Date.now() - _insightsCache.ts <= INSIGHTS_CLIENT_TTL_MS) {
+  if (
+    _insightsCache.data
+    && Date.now() - _insightsCache.ts <= INSIGHTS_CLIENT_TTL_MS
+    && insightsCacheFresh(_insightsCache.data)
+  ) {
     return _insightsCache.data
   }
+  if (_insightsCache.data && !insightsCacheFresh(_insightsCache.data)) {
+    _insightsCache.ts = 0
+    _insightsCache.data = null
+  }
   const raw = readInsightsStore()
-  if (raw?.data && Date.now() - raw.ts <= INSIGHTS_CLIENT_TTL_MS && insightsPayloadUsable(raw.data)) {
+  if (
+    raw?.data
+    && Date.now() - raw.ts <= INSIGHTS_CLIENT_TTL_MS
+    && insightsPayloadUsable(raw.data)
+    && insightsCacheFresh(raw.data)
+  ) {
     _insightsCache.ts = raw.ts
     _insightsCache.data = raw.data
     return raw.data
@@ -562,14 +589,19 @@ export async function fetchCraftProgress() {
 export async function fetchModelInsights({ force = false } = {}) {
   if (!force) {
     const hit = peekModelInsights()
-    if (hit) return hit
+    if (hit && insightsCacheFresh(hit)) return hit
   }
-  const qs = force ? '?force=true' : ''
-  const r = await fetch(`${API}/model/insights${qs}`, { signal: AbortSignal.timeout(90000) })
+  // Always pull the live desk when local cache is missing/stale — don't require
+  // ?force=true (that path rebuilds server-side and can OOM on free tier).
+  const r = await fetch(`${API}/model/insights`, { signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`Model insights failed (${r.status})`)
   const data = await r.json()
-  const prior = _insightsCache.data || peekModelInsights()
-  if (!force && !insightsPayloadUsable(data) && insightsPayloadUsable(prior)) {
+  const prior = insightsCacheFresh(_insightsCache.data) ? _insightsCache.data : null
+  if (!insightsPayloadUsable(data) && prior) {
+    return prior
+  }
+  // Never keep a fresher network miss behind a stale v10 local paint
+  if (!insightsCacheFresh(data) && prior) {
     return prior
   }
   _insightsCache.ts = Date.now()

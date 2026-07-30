@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
-import { fetchModelInsights, fetchCraftProgress, trainModelDesk, peekModelInsights, insightsPayloadUsable } from '../api'
+import {
+  fetchModelInsights,
+  fetchCraftProgress,
+  trainModelDesk,
+  peekModelInsights,
+  insightsPayloadUsable,
+  insightsCacheFresh,
+} from '../api'
 import { IconRefresh } from '../components/Icons'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
@@ -788,10 +795,11 @@ export default function ModelPage() {
   }
 
   const load = (soft = false) => {
+    const staleLocal = Boolean(ins) && !insightsCacheFresh(ins)
     if (!ins) {
       setLoading(true)
       setDeskLoading(true)
-    } else if (!insightsPayloadUsable(ins)) {
+    } else if (!insightsPayloadUsable(ins) || staleLocal) {
       setDeskLoading(true)
     }
     setErr(null)
@@ -805,7 +813,8 @@ export default function ModelPage() {
         .catch(() => {})
     }
 
-    fetchModelInsights({ force: soft })
+    // soft refresh OR stale local cache (e.g. Desk v10) → bypass client TTL
+    fetchModelInsights({ force: soft || staleLocal || !insightsCacheFresh(peekModelInsights()) })
       .then((d) => { setIns(d); setErr(null) })
       .catch((e) => { setErr(String(e)) })
       .finally(() => {
@@ -892,6 +901,10 @@ export default function ModelPage() {
 
   const deskRev = ins?.desk_revision || {}
   const deskVer = Number(ins?.cache_version || deskRev.version || 0)
+  const deskFresh = insightsCacheFresh(ins)
+  const deskLabel = deskFresh
+    ? (deskRev.label || `Desk v${deskVer}`)
+    : (deskVer ? `Refreshing past Desk v${deskVer}…` : 'Loading live desk…')
 
   return (
     <div className="page model-page insight-page">
@@ -901,13 +914,14 @@ export default function ModelPage() {
           <span>Loading desk…</span>
         </div>
       )}
-      <div className="model-desk-revision fade-up" role="status">
+      <div className={`model-desk-revision fade-up ${deskFresh ? '' : 'is-stale'}`.trim()} role="status">
         <div className="model-desk-revision-lockup">
           <span className="model-desk-brand">Gambit</span>
           <span className="model-desk-revision-divider" aria-hidden="true" />
-          <span className="model-desk-revision-label">
-            {deskRev.label || `Desk v${deskVer || '—'}`}
-          </span>
+          <span className="model-desk-revision-label">{deskLabel}</span>
+          {deskFresh && (
+            <span className="model-desk-revision-pill">v{deskVer || 15}</span>
+          )}
         </div>
         <ul className="model-desk-revision-notes">
           {(deskRev.notes || [

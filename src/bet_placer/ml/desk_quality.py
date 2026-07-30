@@ -708,19 +708,33 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         out["depth"] = depth
         stake_by = {c.get("sport"): c for c in (stake_desk.get("by_sport") or []) if isinstance(c, dict)}
         book_by = {c.get("sport"): c for c in (book_depth.get("by_sport") or []) if isinstance(c, dict)}
+        # Prefer prior cached priced/events when live board disk is cold on Render
+        prior_book = {}
+        prior_stake = {}
+        for c in out.get("containers") or []:
+            if c.get("id") == "20_book_depth":
+                for s in c.get("sports") or []:
+                    if isinstance(s, dict) and s.get("sport"):
+                        prior_book[s["sport"]] = s
+            if c.get("id") == "19_stake_volume":
+                for s in c.get("sports") or []:
+                    if isinstance(s, dict) and s.get("sport"):
+                        prior_stake[s["sport"]] = s
         containers = list(out.get("containers") or [])
         for i, c in enumerate(containers):
             if c.get("id") == "19_stake_volume":
                 sports = []
                 for sp in SPORTS:
-                    cell = dict(stake_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
-                    bd = book_by.get(sp) or {}
+                    cell = dict(stake_by.get(sp) or prior_stake.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    bd = book_by.get(sp) or prior_book.get(sp) or {}
                     priced = int(cell.get("priced") or bd.get("priced") or 0)
                     avg = float(cell.get("avg_books") or bd.get("avg_books") or 1) or 1.0
                     events = int(bd.get("events") or cell.get("events") or 0)
                     if float(cell.get("volume") or 0) > 0:
                         cell["note"] = cell.get("note") or "Stake handle from overlay cache."
                         cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), 1)
+                        if priced:
+                            cell["priced"] = priced
                     elif priced > 0:
                         cell["priced"] = priced
                         cell["avg_books"] = avg
@@ -733,6 +747,11 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
                             f"Showing book depth: {priced} priced"
                             + (f" / {events} events" if events else "")
                             + f" · avg {avg:.1f} books."
+                        )
+                    else:
+                        cell["note"] = (
+                            cell.get("note")
+                            or f"No Stake {sp} handle and no priced boards cached yet."
                         )
                     cell["status"] = "ready"
                     sports.append(cell)
@@ -749,22 +768,34 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             if c.get("id") == "20_book_depth":
                 sports = []
                 for sp in SPORTS:
-                    bd = dict(book_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    fresh = book_by.get(sp) or {}
+                    prior = prior_book.get(sp) or {}
+                    # Keep prior priced if fresh disk scan is empty (common on free Render)
+                    if int(fresh.get("priced") or 0) > 0:
+                        bd = dict(fresh)
+                    elif int(prior.get("priced") or 0) > 0:
+                        bd = dict(prior)
+                    else:
+                        bd = dict(fresh or prior or {"sport": sp})
                     priced = int(bd.get("priced") or 0)
                     events = int(bd.get("events") or 0)
                     avg = float(bd.get("avg_books") or 0)
                     need = {"soccer": 80, "basketball": 40, "cricket": 20}.get(sp, 20)
+                    bd["sport"] = sp
                     bd["priced"] = priced
-                    bd["events"] = events
+                    bd["events"] = events or None
                     bd["avg_books"] = avg
                     bd["n"] = priced
                     bd["need"] = need
                     bd["depth_units"] = round(priced * max(avg, 1), 1) if priced else 0
-                    bd["note"] = (
-                        f"{priced} priced / {events} events · need {need} · avg books {avg:.1f}"
-                        if events or priced
-                        else f"No priced {sp} boards on disk yet."
-                    )
+                    if priced:
+                        bd["note"] = (
+                            f"{priced} priced"
+                            + (f" / {events} events" if events else "")
+                            + f" · need {need} · avg books {avg:.1f}"
+                        )
+                    else:
+                        bd["note"] = f"No priced {sp} boards on disk yet (need {need})."
                     bd["status"] = "ready"
                     sports.append(bd)
                 containers[i] = {
@@ -797,5 +828,5 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             "The bar the craft loop aims at: 25% overall ROI, every sport above 0%, accuracy ≥60%."
         ),
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 13)
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 14)
     return out

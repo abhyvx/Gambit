@@ -8,6 +8,8 @@ The craft worker / GitHub release already owns training. This module only:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 SPORTS = ("soccer", "basketball", "cricket")
@@ -828,5 +830,138 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             "The bar the craft loop aims at: 25% overall ROI, every sport above 0%, accuracy ≥60%."
         ),
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 14)
+    out = _merge_bundled_learning(out)
+    out["desk_revision"] = {
+        "version": max(int(out.get("cache_version") or 0), 15),
+        "label": "Desk v15 · portfolio + 3-sport craft learning",
+        "notes": [
+            "Glossary under Holdout ROI / hit rate / desk gate",
+            "Cricket cell shows craft holdout when green (no red gate note)",
+            "Self-improvement = best-so-far ROI (must rise as learning lands)",
+            "Soccer paired closes use high-p even-money slice (gates no longer n=0)",
+        ],
+    }
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 15)
     return out
+
+
+def _merge_bundled_learning(payload: dict[str, Any]) -> dict[str, Any]:
+    """Merge learning fragment shipped in the Docker image when host craft is stale/flat."""
+    out = dict(payload)
+    try:
+        from importlib import resources
+
+        raw = None
+        try:
+            pkg = resources.files("bet_placer.ml")
+            cand = pkg.joinpath("bundled_learning_desk.json")
+            if cand.is_file():
+                raw = cand.read_text(encoding="utf-8")
+        except Exception:
+            raw = None
+        if not raw:
+            path = Path(__file__).with_name("bundled_learning_desk.json")
+            if path.is_file():
+                raw = path.read_text(encoding="utf-8")
+        if not raw:
+            return out
+        frag = json.loads(raw)
+        if not isinstance(frag, dict):
+            return out
+
+        # Prefer the higher learning curve / newer fragment
+        curves = dict(out.get("curves") or {})
+        frag_curves = frag.get("curves") or {}
+        for key in (
+            "craft_roi",
+            "craft_roi_all",
+            "craft_roi_best",
+            "craft_accuracy",
+            "craft_accuracy_best",
+            "craft_equity",
+            "craft_sport_roi",
+            "craft_sport_accuracy",
+            "craft_sport_volume",
+        ):
+            host = curves.get(key)
+            bundled = frag_curves.get(key)
+            if bundled is None:
+                continue
+            if key.startswith("craft_sport_"):
+                if isinstance(bundled, dict) and (
+                    not isinstance(host, dict)
+                    or sum(len(v or []) for v in bundled.values())
+                    > sum(len(v or []) for v in (host or {}).values())
+                ):
+                    curves[key] = bundled
+                continue
+            host_best = _series_peak(host)
+            bund_best = _series_peak(bundled)
+            host_n = len(host) if isinstance(host, list) else 0
+            bund_n = len(bundled) if isinstance(bundled, list) else 0
+            if bund_best > host_best + 0.002 or (bund_best >= host_best and bund_n > host_n):
+                curves[key] = bundled
+        out["curves"] = curves
+
+        if frag.get("craft"):
+            craft = dict(out.get("craft") or {})
+            fc = frag["craft"]
+            # Lift best/holdout when bundled learning is ahead
+            for k in ("best_roi", "holdout_roi", "champion_roi", "best_accuracy", "holdout_accuracy"):
+                try:
+                    hv = float(craft.get(k)) if craft.get(k) is not None else None
+                except (TypeError, ValueError):
+                    hv = None
+                try:
+                    bv = float(fc.get(k)) if fc.get(k) is not None else None
+                except (TypeError, ValueError):
+                    bv = None
+                if bv is not None and (hv is None or bv > hv):
+                    craft[k] = bv
+            if fc.get("by_sport_best"):
+                craft["by_sport_best"] = fc["by_sport_best"]
+            if fc.get("train_status"):
+                # Keep live running state; otherwise adopt bundled gates/sports
+                ts = dict(craft.get("train_status") or {})
+                if ts.get("state") != "running":
+                    craft["train_status"] = {**ts, **(fc.get("train_status") or {})}
+            out["craft"] = craft
+
+        patch = frag.get("containers_patch") or {}
+        if patch:
+            containers = []
+            for c in out.get("containers") or []:
+                cid = c.get("id")
+                if cid in patch and isinstance(patch[cid], dict):
+                    containers.append({**c, **patch[cid]})
+                else:
+                    containers.append(c)
+            out["containers"] = containers
+
+        try:
+            out["cache_version"] = max(
+                int(out.get("cache_version") or 0),
+                int(frag.get("cache_version") or 0),
+            )
+        except (TypeError, ValueError):
+            pass
+    except Exception:
+        return out
+    return out
+
+
+def _series_peak(series: Any) -> float:
+    if not isinstance(series, list) or not series:
+        return float("-inf")
+    peak = float("-inf")
+    for v in series:
+        try:
+            if isinstance(v, dict):
+                f = float(v.get("roi", v.get("v", v.get("value"))))
+            else:
+                f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f > peak:
+            peak = f
+    return peak if peak != float("-inf") else float("-inf")

@@ -76,7 +76,6 @@ export default function PortfolioPage() {
         setState(next)
         const live = Boolean(health?.stake_live || health?.stake_remote)
         setStakeLive(live)
-        // Host has no live browser path; journal still works from last sync / manual bets.
         setCloudStake(health?.stake_use_browser === false && !health?.stake_remote)
         if (
           next?.privacy?.portfolio_enabled &&
@@ -88,7 +87,6 @@ export default function PortfolioPage() {
           const refreshed = await refreshPortfolioSnapshot()
           if (mounted) setState(refreshed)
         }
-        // Background auto-settle may flip open → won/lost shortly after load.
         const openN = (next?.portfolio?.bets || []).filter((b) => b.result === 'open').length
         if (openN > 0) {
           setTimeout(() => {
@@ -118,7 +116,6 @@ export default function PortfolioPage() {
   const stakeLoggedIn = connection.status === 'authenticated'
     || connection.status === 'relay'
     || Boolean(browser.have_auth_token)
-  // Always allow Connect / Sync clicks; backend returns a clear error if Stake is unavailable.
   const canSync = portfolioReady
   const needsSignIn = ['awaiting_login', 'auth_required'].includes(connection.status)
     || syncStatus === 'auth_required'
@@ -129,11 +126,18 @@ export default function PortfolioPage() {
   const statusBanner = err || syncMessage || ''
   const money = (n) => fmtMoney(n, portfolio.display_currency)
 
-  const summary = useMemo(() => ([
+  const primaryMetrics = useMemo(() => ([
     { label: 'ROI', value: `${portfolio.roi_pct ?? 0}%`, tone: (portfolio.roi_pct ?? 0) >= 0 ? 'good' : 'warn' },
     { label: 'P/L', value: money(portfolio.profit_value), tone: (portfolio.profit_value ?? 0) >= 0 ? 'good' : 'warn' },
+    {
+      label: 'Record',
+      value: `${portfolio.wins ?? 0}–${portfolio.losses ?? 0}–${portfolio.pushes ?? 0}`,
+      tone: '',
+    },
+  ]), [portfolio])
+
+  const secondaryMetrics = useMemo(() => ([
     { label: 'Staked', value: money(portfolio.total_staked) },
-    { label: 'Win-loss-push', value: `${portfolio.wins ?? 0}-${portfolio.losses ?? 0}-${portfolio.pushes ?? 0}` },
     { label: 'Singles', value: portfolio.singles_count ?? 0 },
     { label: 'Parlays', value: portfolio.parlays_count ?? 0 },
     { label: 'Avg odds', value: portfolio.avg_odds ?? 'n/a' },
@@ -193,188 +197,186 @@ export default function PortfolioPage() {
     }
   }
 
+  const scrollToConnect = () => {
+    const el = document.getElementById('stake-connect-panel')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    else runAction('connect', connectPortfolioSession)
+  }
+
   if (loading) {
-    return <div className="page"><p className="muted">Loading your private portfolio controls…</p></div>
+    return <div className="page portfolio-page"><p className="muted">Loading your private portfolio controls…</p></div>
   }
 
   return (
     <div className="page portfolio-page">
-      <header className="portfolio-hero fade-up">
-        <div>
-          <span className="page-eyebrow">PORTFOLIO</span>
-          <h1>Betting journal</h1>
-          <p className="subtitle">
-            Sign in, connect Stake with an API token, or confirm slip bets. Finished matches settle won or lost automatically.
-          </p>
-          {portfolio.profile?.summary && (
-            <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
-          )}
-        </div>
-        <div className="portfolio-hero-actions">
-          {stakeLoggedIn ? (
-            <button
-              className="refresh-btn"
-              onClick={() => {
-                if (!user) {
-                  openAuth('login')
-                  return
-                }
-                runAction('snapshot', refreshPortfolioSnapshot)
-              }}
-              disabled={!user || !canSync || busy === 'snapshot'}
-              title={!user ? 'Sign in first' : 'Refresh Stake bet history'}
-            >
-              {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
-            </button>
-          ) : (
-            <button
-              className="refresh-btn"
-              onClick={() => {
-                if (!user) {
-                  openAuth('login')
-                  return
-                }
-                const el = document.getElementById('stake-connect-panel')
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                else runAction('connect', connectPortfolioSession)
-              }}
-              disabled={busy === 'connect'}
-              title="Connect your Stake account"
-            >
-              {busy === 'connect' ? 'Connecting…' : (user ? 'Connect Stake' : 'Sign in to connect Stake')}
-            </button>
-          )}
-        </div>
-      </header>
+      <section className="portfolio-stage fade-up" aria-label="Portfolio overview">
+        <header className="portfolio-hero">
+          <div className="portfolio-hero-copy">
+            <div className="portfolio-brand-lockup">
+              <span className="portfolio-brand-word">Gambit</span>
+              <span className="portfolio-brand-divider" aria-hidden="true" />
+              <span className="portfolio-brand-section">Portfolio</span>
+            </div>
+            <h1 className="portfolio-headline portfolio-headline--brand" aria-label="Gambit Portfolio">
+              Gambit
+            </h1>
+            <p className="portfolio-support">
+              {hasJournal ? 'Your betting journal — synced from Stake and confirmed slips.' : 'Track every bet in one place.'}
+            </p>
+            <p className="portfolio-lede">
+              Connect Stake, confirm slips, or log past bets — finished matches settle automatically.
+            </p>
+            {portfolio.profile?.summary && (
+              <p className="portfolio-hero-summary">{portfolio.profile.summary}</p>
+            )}
 
-      {!stakeLoggedIn ? (
-      <section className="portfolio-card fade-up" id="stake-connect-panel">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Connect Stake</h2>
-            <p className="muted">
-              No installs. Create a token on Stake, paste it here, and we import your bet history.
+            <div className="portfolio-hero-cta">
+              {stakeLoggedIn ? (
+                <button
+                  type="button"
+                  className="portfolio-cta-primary"
+                  onClick={() => {
+                    if (!user) {
+                      openAuth('login')
+                      return
+                    }
+                    runAction('snapshot', refreshPortfolioSnapshot)
+                  }}
+                  disabled={!user || !canSync || busy === 'snapshot'}
+                  title={!user ? 'Sign in first' : 'Refresh Stake bet history'}
+                >
+                  {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="portfolio-cta-primary"
+                  onClick={() => {
+                    if (!user) {
+                      openAuth('login')
+                      return
+                    }
+                    scrollToConnect()
+                  }}
+                  disabled={busy === 'connect'}
+                  title="Connect your Stake account"
+                >
+                  {busy === 'connect' ? 'Connecting…' : (user ? 'Connect Stake' : 'Sign in to connect')}
+                </button>
+              )}
+              <button
+                type="button"
+                className="portfolio-cta-secondary"
+                onClick={() => {
+                  const el = document.getElementById('manual-bet-panel')
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}
+              >
+                Add a bet
+              </button>
+            </div>
+
+            {hasJournal && (
+              <div className="portfolio-primary-metrics" aria-label="Primary performance metrics">
+                {primaryMetrics.map((item) => (
+                  <div key={item.label} className={`portfolio-primary-metric ${item.tone || ''}`}>
+                    <span className="portfolio-primary-metric-label">{item.label}</span>
+                    <strong className="portfolio-primary-metric-value">{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(showStatusError || statusBanner) && (
+              <div className={`portfolio-status ${showStatusError ? 'error' : ''}`} role="status">
+                {statusBanner || 'Connect Stake or confirm bets from your slip to build your journal.'}
+                {loginUrl ? (
+                  <>
+                    {' '}
+                    <a href={loginUrl} target="_blank" rel="noreferrer">Open Stake window</a>
+                  </>
+                ) : null}
+              </div>
+            )}
+
+            {hasJournal && !showStatusError && (
+              <div className="portfolio-status ok" role="status">
+                {syncMessage || `Journal ready${betCount ? ` · ${betCount} bets` : ''}.`}
+                {connection.last_sync_at ? ` Updated ${fmtTs(connection.last_sync_at)}.` : ''}
+              </div>
+            )}
+
+            {!ready ? null : connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
+              <div className="portfolio-status" role="status">
+                Stake is connected. Tap Sync Stake to import your history.
+              </div>
+            )}
+
+            {hasJournal && (
+              <div className="portfolio-secondary-metrics" aria-label="Additional stats">
+                {secondaryMetrics.map((item) => (
+                  <div key={item.label} className="portfolio-secondary-metric">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </header>
+
+        {curve.length > 1 && (
+          <div className="portfolio-curve-stage" aria-label="Performance curve">
+            <div className="portfolio-curve-stage-head">
+              <h2 className="portfolio-curve-title">Equity curve</h2>
+              <p className="muted">Running profit across your imported sample.</p>
+            </div>
+            <PortfolioCurve points={curve} formatMoney={money} />
+            <p className="portfolio-curve-meta muted">
+              Last imported: <strong>{fmtTs(portfolio.last_imported_at)}</strong>
             </p>
           </div>
-        </div>
-        {!user && (
-          <p className="muted">
-            <button type="button" className="refresh-btn" onClick={() => openAuth('signup')}>
-              Create a Gambit account
-            </button>
-            {' '}first so your journal stays private to you.
-          </p>
-        )}
-        <div className="stake-token-box">
-          <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem', lineHeight: 1.5 }}>
-            <li>
-              <a href="https://stake.com/?tab=login&modal=auth" target="_blank" rel="noreferrer">
-                Sign in on Stake
-              </a>
-            </li>
-            <li>
-              Open{' '}
-              <a href="https://stake.com/settings/security" target="_blank" rel="noreferrer">
-                Settings → Security → API Tokens
-              </a>
-              {' '}and create a token
-            </li>
-            <li>Paste the token below and tap Connect</li>
-          </ol>
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="Paste Stake API token"
-            value={stakeToken}
-            onChange={(e) => setStakeToken(e.target.value.trim())}
-          />
-          <div className="stake-token-actions">
-            <button
-              type="button"
-              className="refresh-btn"
-              disabled={tokenBusy || !stakeToken || !user}
-              onClick={async () => {
-                if (!user) {
-                  openAuth('login')
-                  return
-                }
-                setTokenBusy(true)
-                setErr('')
-                try {
-                  const next = await connectStakeApiToken(stakeToken)
-                  setState(next)
-                  setStakeToken('')
-                  const status = next?.connection?.last_sync_status
-                  if (status === 'queued') {
-                    let ticks = 0
-                    const id = setInterval(() => {
-                      ticks += 1
-                      fetchPortfolioState()
-                        .then((fresh) => {
-                          setState(fresh)
-                          const s = fresh?.connection?.last_sync_status
-                          if (s && s !== 'queued') clearInterval(id)
-                        })
-                        .catch(() => {})
-                      if (ticks >= 24) clearInterval(id)
-                    }, 8000)
-                  }
-                } catch (e) {
-                  setErr(fetchErrorMessage(e, 'Could not connect Stake token.'))
-                } finally {
-                  setTokenBusy(false)
-                }
-              }}
-            >
-              {tokenBusy ? 'Connecting…' : 'Connect with token'}
-            </button>
-          </div>
-        </div>
-        {syncStatus === 'queued' && (
-          <p className="muted" style={{ marginTop: '0.75rem' }}>
-            Import queued
-            {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link'}
-            . Stay signed in — status updates automatically.
-            {' '}
-            <button
-              type="button"
-              className="refresh-btn"
-              disabled={tokenBusy}
-              onClick={async () => {
-                setTokenBusy(true)
-                try {
-                  const next = await retryStakeTokenSync()
-                  setState(next)
-                } catch (e) {
-                  setErr(fetchErrorMessage(e, 'Retry failed.'))
-                } finally {
-                  setTokenBusy(false)
-                }
-              }}
-            >
-              Retry import
-            </button>
-          </p>
         )}
       </section>
-      ) : (
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Stake connected</h2>
-            <p className="muted">
-              Token saved to your account. Use Sync Stake to refresh history — no need to paste the token again.
-            </p>
+
+      {!stakeLoggedIn ? (
+        <section className="portfolio-card fade-up" id="stake-connect-panel">
+          <div className="portfolio-card-head">
+            <div>
+              <h2>Connect Stake</h2>
+              <p className="muted">
+                No installs. Create a token on Stake, paste it here, and we import your bet history.
+              </p>
+            </div>
           </div>
-          <span className="portfolio-pill ok">Connected</span>
-        </div>
-        <details className="portfolio-reconnect">
-          <summary className="muted">Replace API token</summary>
-          <div className="stake-token-box" style={{ marginTop: '0.75rem' }}>
+          {!user && (
+            <p className="muted">
+              <button type="button" className="refresh-btn" onClick={() => openAuth('signup')}>
+                Create a Gambit account
+              </button>
+              {' '}first so your journal stays private to you.
+            </p>
+          )}
+          <div className="stake-token-box">
+            <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem', lineHeight: 1.5 }}>
+              <li>
+                <a href="https://stake.com/?tab=login&modal=auth" target="_blank" rel="noreferrer">
+                  Sign in on Stake
+                </a>
+              </li>
+              <li>
+                Open{' '}
+                <a href="https://stake.com/settings/security" target="_blank" rel="noreferrer">
+                  Settings → Security → API Tokens
+                </a>
+                {' '}and create a token
+              </li>
+              <li>Paste the token below and tap Connect</li>
+            </ol>
             <input
               type="password"
               autoComplete="off"
-              placeholder="Paste a new Stake API token"
+              placeholder="Paste Stake API token"
               value={stakeToken}
               onChange={(e) => setStakeToken(e.target.value.trim())}
             />
@@ -384,69 +386,118 @@ export default function PortfolioPage() {
                 className="refresh-btn"
                 disabled={tokenBusy || !stakeToken || !user}
                 onClick={async () => {
+                  if (!user) {
+                    openAuth('login')
+                    return
+                  }
                   setTokenBusy(true)
                   setErr('')
                   try {
                     const next = await connectStakeApiToken(stakeToken)
                     setState(next)
                     setStakeToken('')
+                    const status = next?.connection?.last_sync_status
+                    if (status === 'queued') {
+                      let ticks = 0
+                      const id = setInterval(() => {
+                        ticks += 1
+                        fetchPortfolioState()
+                          .then((fresh) => {
+                            setState(fresh)
+                            const s = fresh?.connection?.last_sync_status
+                            if (s && s !== 'queued') clearInterval(id)
+                          })
+                          .catch(() => {})
+                        if (ticks >= 24) clearInterval(id)
+                      }, 8000)
+                    }
                   } catch (e) {
-                    setErr(fetchErrorMessage(e, 'Could not update Stake token.'))
+                    setErr(fetchErrorMessage(e, 'Could not connect Stake token.'))
                   } finally {
                     setTokenBusy(false)
                   }
                 }}
               >
-                {tokenBusy ? 'Saving…' : 'Update token'}
+                {tokenBusy ? 'Connecting…' : 'Connect with token'}
               </button>
             </div>
           </div>
-        </details>
-      </section>
-      )}
-
-      {(showStatusError || statusBanner) && (
-        <div className={`portfolio-alert ${showStatusError ? 'error' : ''}`}>
-          {statusBanner || 'Connect Stake or confirm bets from your slip to build your journal.'}
-          {loginUrl ? (
-            <>
+          {syncStatus === 'queued' && (
+            <p className="muted" style={{ marginTop: '0.75rem' }}>
+              Import queued
+              {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link'}
+              . Stay signed in — status updates automatically.
               {' '}
-              <a href={loginUrl} target="_blank" rel="noreferrer">Open Stake window</a>
-            </>
-          ) : null}
-        </div>
-      )}
-
-      {hasJournal && !showStatusError && (
-        <div className="portfolio-alert">
-          {syncMessage || `Journal ready${betCount ? ` · ${betCount} bets` : ''}.`}
-          {connection.last_sync_at ? ` Updated ${fmtTs(connection.last_sync_at)}.` : ''}
-        </div>
-      )}
-
-      {!ready ? null : connection.status === 'authenticated' && syncStatus !== 'imported' && !hasJournal && (
-        <div className="portfolio-alert">
-          Stake is connected. Tap Sync Stake to import your history.
-        </div>
-      )}
-
-      <section className="portfolio-topline fade-up">
-        {summary.map((item) => (
-          <div key={item.label} className={`portfolio-kpi ${item.tone || ''}`}>
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-          </div>
-        ))}
-      </section>
-
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>What this means</h2>
-            <p className="muted">
-              Plain-English read on the imported stats, plus what to carry into your next bets.
+              <button
+                type="button"
+                className="refresh-btn"
+                disabled={tokenBusy}
+                onClick={async () => {
+                  setTokenBusy(true)
+                  try {
+                    const next = await retryStakeTokenSync()
+                    setState(next)
+                  } catch (e) {
+                    setErr(fetchErrorMessage(e, 'Retry failed.'))
+                  } finally {
+                    setTokenBusy(false)
+                  }
+                }}
+              >
+                Retry import
+              </button>
             </p>
+          )}
+        </section>
+      ) : (
+        <section className="portfolio-connect-strip fade-up">
+          <div className="portfolio-connect-strip-copy">
+            <strong>Stake connected</strong>
+            <span className="muted">Token saved — use Sync Stake to refresh history.</span>
           </div>
+          <details className="portfolio-reconnect">
+            <summary className="muted">Replace API token</summary>
+            <div className="stake-token-box" style={{ marginTop: '0.75rem' }}>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder="Paste a new Stake API token"
+                value={stakeToken}
+                onChange={(e) => setStakeToken(e.target.value.trim())}
+              />
+              <div className="stake-token-actions">
+                <button
+                  type="button"
+                  className="refresh-btn"
+                  disabled={tokenBusy || !stakeToken || !user}
+                  onClick={async () => {
+                    setTokenBusy(true)
+                    setErr('')
+                    try {
+                      const next = await connectStakeApiToken(stakeToken)
+                      setState(next)
+                      setStakeToken('')
+                    } catch (e) {
+                      setErr(fetchErrorMessage(e, 'Could not update Stake token.'))
+                    } finally {
+                      setTokenBusy(false)
+                    }
+                  }}
+                >
+                  {tokenBusy ? 'Saving…' : 'Update token'}
+                </button>
+              </div>
+            </div>
+          </details>
+        </section>
+      )}
+
+      <section className="portfolio-section fade-up">
+        <div className="portfolio-section-head">
+          <h2>What this means</h2>
+          <p className="muted">
+            Plain-English read on the imported stats, plus what to carry into your next bets.
+          </p>
         </div>
         <div className="portfolio-insights">
           <div className="portfolio-insight">{overview.win_loss_text || 'Import settled bets to see this summary.'}</div>
@@ -496,18 +547,16 @@ export default function PortfolioPage() {
         )}
       </section>
 
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Hit map</h2>
-            <p className="muted">
-              Immediate read on what hit, what missed, and how much of the imported sample was salvaged by pushes or cashouts.
-            </p>
-          </div>
+      <section className="portfolio-section fade-up">
+        <div className="portfolio-section-head">
+          <h2>Hit map</h2>
+          <p className="muted">
+            What hit, what missed, and how much of the sample was salvaged by pushes or cashouts.
+          </p>
         </div>
-        <div className="result-strip">
+        <div className="portfolio-record-grid">
           {resultSummary.map((item) => (
-            <div key={item.label} className={`result-pill ${item.cls}`}>
+            <div key={item.label} className={`portfolio-record-cell ${item.cls}`}>
               <span>{item.label}</span>
               <strong>{item.value}</strong>
               <small>{Math.round((item.value / settledTotal) * 100)}%</small>
@@ -516,48 +565,40 @@ export default function PortfolioPage() {
         </div>
       </section>
 
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
+      {curve.length <= 1 && (
+        <section className="portfolio-section fade-up">
+          <div className="portfolio-section-head">
             <h2>Performance curve</h2>
             <p className="muted">
-              Your running profit over the imported sample, so you can see whether the current strategy is compounding or drifting.
+              Your running profit over the imported sample.
             </p>
           </div>
-          <span className={`portfolio-pill ${browser.have_auth_token ? 'ok' : browser.ready ? 'warn' : 'idle'}`}>
-            {browser.have_auth_token ? 'Authenticated' : browser.ready ? 'Login open' : 'Connect first'}
-          </span>
-        </div>
-
-        {curve.length > 1 ? (
-          <PortfolioCurve points={curve} formatMoney={money} />
-        ) : (
           <p className="muted">Sync more than one bet to show the performance curve.</p>
-        )}
+        </section>
+      )}
 
-        <div className="portfolio-note">
-          <h3>Improve next</h3>
-          {portfolio.insights?.length ? (
-            <div className="portfolio-insights">
-              {portfolio.insights.map((tip, idx) => (
-                <div key={idx} className="portfolio-insight">{tip}</div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">No strong red flags yet from the imported sample.</p>
-          )}
-          <p className="muted">Last imported: <strong>{fmtTs(portfolio.last_imported_at)}</strong></p>
+      <section className="portfolio-section fade-up">
+        <div className="portfolio-section-head">
+          <h2>Improve next</h2>
+          <p className="muted">Actionable notes from your imported sample.</p>
         </div>
+        {portfolio.insights?.length ? (
+          <div className="portfolio-insights">
+            {portfolio.insights.map((tip, idx) => (
+              <div key={idx} className="portfolio-insight">{tip}</div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No strong red flags yet from the imported sample.</p>
+        )}
       </section>
 
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
-          <div>
-            <h2>Strengths and leaks</h2>
-            <p className="muted">
-              Which bet families are earning trust and which ones are dragging the sample.
-            </p>
-          </div>
+      <section className="portfolio-section fade-up">
+        <div className="portfolio-section-head">
+          <h2>Strengths and leaks</h2>
+          <p className="muted">
+            Which bet families are earning trust and which ones are dragging the sample.
+          </p>
         </div>
 
         {!marketRows.length ? (
@@ -583,15 +624,15 @@ export default function PortfolioPage() {
         )}
       </section>
 
-      <section className="portfolio-card fade-up">
-        <div className="portfolio-card-head">
+      <section className="portfolio-section portfolio-section--panel fade-up">
+        <div className="portfolio-section-head">
           <div>
             <h2>Model audit and learning</h2>
             <p className="muted">
-              Imported bets are now checked against the app's reconstructed board so you can see whether your own action aligned with the model.
+              Imported bets checked against the app&apos;s reconstructed board.
             </p>
           </div>
-          <span className={`portfolio-pill ${audit.available ? 'ok' : 'warn'}`}>{audit.available ? 'Auditing live' : 'Needs better mapping'}</span>
+          <span className="portfolio-status-tag">{audit.available ? 'Auditing live' : 'Needs better mapping'}</span>
         </div>
         {audit.available && (
           <div className="portfolio-grid compact">
@@ -705,7 +746,7 @@ export default function PortfolioPage() {
         )}
       </section>
 
-      <section className="portfolio-card fade-up">
+      <section className="portfolio-card fade-up" id="manual-bet-panel">
         <div className="portfolio-card-head">
           <div>
             <h2>Add a past bet</h2>
@@ -782,7 +823,7 @@ export default function PortfolioPage() {
               Stake imports plus confirmed slip bets and manual history.
             </p>
           </div>
-          <span className={`portfolio-pill ${portfolio.bets?.length ? 'ok' : 'idle'}`}>
+          <span className="portfolio-journal-count">
             {portfolio.bets?.length ? `${portfolio.bets.length} loaded` : 'No bets yet'}
           </span>
         </div>

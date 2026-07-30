@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 8
+INSIGHTS_CACHE_VERSION = 9
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
@@ -753,14 +753,22 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(raw, list):
             curves[key] = [_sanitize_roi_point(x) for x in raw]
     out["curves"] = _repair_craft_curves(curves)
-    # Hide fake 0% holdout when the run graded zero bets
+    # Hide fake 0% holdout when the run graded zero bets — keep champion for display
     craft = dict(out.get("craft") or {})
     ts = dict(craft.get("train_status") or {})
     if int(ts.get("bets") or craft.get("bets") or 0) <= 0:
-        craft["holdout_roi"] = None
-        craft["holdout_accuracy"] = None
-        ts["holdout_roi"] = None
-        ts["holdout_accuracy"] = None
+        # Prefer champion/best over a blank/zero empty epoch
+        hold = craft.get("champion_roi") or craft.get("best_roi") or ts.get("champion_roi") or ts.get("best_roi")
+        craft["holdout_roi"] = hold
+        craft["holdout_accuracy"] = (
+            craft.get("champion_accuracy")
+            or craft.get("best_accuracy")
+            or ts.get("champion_accuracy")
+            or ts.get("best_accuracy")
+            or craft.get("holdout_accuracy")
+        )
+        craft["holdout_source"] = "champion"
+        ts["holdout_roi"] = hold
         craft["train_status"] = ts
     out["craft"] = craft
     if int(out.get("total_corpus") or 0) > 1000 and out.get("status") == "needs_train":
@@ -776,59 +784,96 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
-    """Keep equal per-sport market coverage in desk containers."""
+    """Keep equal per-sport market coverage — always show soccer/BB/cricket niches."""
     out = dict(payload)
     containers = list(out.get("containers") or [])
 
-    # Rebuild sport rows from existing 15a + any sport-tagged rows in niches/outcomes
+    # Prefer real by-sport market replay rows already on the payload
     sport_rows: list[dict] = []
+    for row in out.get("niches") or []:
+        if not isinstance(row, dict):
+            continue
+        # niches are global; sport tagging happens below
+        sport_rows.append(dict(row))
+
     for c in containers:
         if c.get("id") == "15a_sport_markets":
-            sport_rows.extend(c.get("rows") or [])
-        if c.get("id") == "15_niche_replay":
             for row in c.get("rows") or []:
-                raw = str(row.get("raw") or row.get("market") or "").lower()
-                # Map market families onto sports when the row has no sport tag
-                if row.get("sport"):
-                    sport_rows.append({**row, "market": f"{row['sport']} · {row.get('market')}"})
-                    continue
-                if raw in {"moneyline", "spread", "point spread", "bb_totals_alt", "totals"} and "soccer" not in raw:
-                    # moneyline/totals/spread appear in BB+CK; keep both tags via copies below
-                    sport_rows.append({**row, "sport": "basketball", "market": f"basketball · {row.get('market')}"})
-                    if raw == "moneyline":
-                        sport_rows.append({**row, "sport": "cricket", "market": f"cricket · {row.get('market')}"})
-                if raw in {
-                    "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
-                    "result", "btts", "asian handicap", "draw no bet", "double chance",
-                    "match result (1x2)", "both teams to score",
-                }:
-                    sport_rows.append({**row, "sport": "soccer", "market": f"soccer · {row.get('market')}"})
-                if raw.startswith("cricket"):
-                    sport_rows.append({**row, "sport": "cricket", "market": f"cricket · {row.get('market')}"})
+                if isinstance(row, dict):
+                    sport_rows.append(dict(row))
+
+    # Explicit family → sport map (no fake shared moneyline counts)
+    SOCCER_M = {
+        "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
+        "result", "btts", "asian handicap", "draw no bet", "double chance",
+        "match result (1x2)", "both teams to score", "corners", "cards",
+    }
+    BB_M = {
+        "moneyline", "spread", "point spread", "totals", "totals (o/u)",
+        "bb_totals_alt", "basketball totals (alt lines)",
+    }
+    CK_M = {
+        "cricket_t20", "cricket_odi", "cricket_test",
+        "cricket t20 / leagues", "cricket odi", "cricket tests",
+    }
 
     by_sport: dict[str, list] = {s: [] for s in SPORTS}
     seen: set[tuple] = set()
-    for row in sport_rows:
-        sp = row.get("sport")
-        label = str(row.get("market") or "")
-        if not sp:
-            for cand in SPORTS:
-                if label.startswith(f"{cand} ·") or label.startswith(f"{cand} "):
-                    sp = cand
-                    break
-        if sp not in by_sport:
-            continue
+
+    def _add(sp: str, row: dict, label: str) -> None:
         key = (sp, label.lower())
         if key in seen:
-            continue
+            return
         seen.add(key)
-        by_sport[sp].append({**row, "sport": sp, "market": label if " · " in label else f"{sp} · {label}"})
+        by_sport[sp].append({
+            **row,
+            "sport": sp,
+            "market": label if " · " in label else f"{sp} · {label}",
+        })
+
+    for row in sport_rows:
+        raw = str(row.get("raw") or "").lower()
+        market = str(row.get("market") or "")
+        label_l = market.lower()
+        sp = row.get("sport")
+        if sp in SPORTS and " · " in market:
+            _add(sp, row, market)
+            continue
+        if raw in SOCCER_M or any(k in label_l for k in ("asian", "double chance", "draw no bet", "corners", "cards", "1x2", "btts")):
+            _add("soccer", row, market or raw)
+        if raw in BB_M or label_l.startswith("basketball"):
+            _add("basketball", row, market or raw)
+        if raw in CK_M or label_l.startswith("cricket") or raw.startswith("cricket"):
+            _add("cricket", row, market or raw)
+        # Moneyline without sport tag: split using by-sport n when present later
+        if raw == "moneyline" and not sp:
+            # Don't double-count the same n on both sports — wait for 15a sport-tagged rows
+            pass
+
+    # Guarantee niche slots for each sport even while training fills them
+    REQUIRED = {
+        "soccer": ["Asian handicap", "Double chance", "Draw no bet", "Corners", "Cards", "Match result (1X2)"],
+        "basketball": ["Moneyline", "Point spread", "Totals (O/U)", "Basketball totals (alt lines)"],
+        "cricket": ["Moneyline", "Cricket T20 / leagues", "Cricket ODI", "Cricket Tests"],
+    }
+    for sp, names in REQUIRED.items():
+        have = {" ".join(str(r.get("market") or "").lower().split()) for r in by_sport[sp]}
+        for name in names:
+            label = f"{sp} · {name}"
+            if label.lower() in have or any(name.lower() in h for h in have):
+                continue
+            by_sport[sp].append({
+                "market": label,
+                "sport": sp,
+                "n": 0,
+                "need": MIN_N["niche"],
+                "status": "training",
+                "note": "Training — waiting for graded replay on this market.",
+            })
 
     balanced = []
     for sp in SPORTS:
-        balanced.extend(sorted(by_sport.get(sp) or [], key=lambda r: -(r.get("n") or 0))[:6])
-    if not balanced:
-        return out
+        balanced.extend(sorted(by_sport.get(sp) or [], key=lambda r: (-(r.get("n") or 0), r.get("market") or ""))[:8])
 
     for i, c in enumerate(containers):
         if c.get("id") == "15a_sport_markets":
@@ -836,46 +881,52 @@ def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
                 **c,
                 "title": "15a · Markets by sport",
                 "desc": (
-                    "Equal desk for soccer, basketball, and cricket — "
-                    "moneyline, totals, spreads, and sport niches (AH/DNB/DC/corners/cards)."
+                    "Equal desk: soccer niches (AH/DNB/DC/corners/cards), "
+                    "basketball ML/totals/spread, cricket match-winner + format splits."
                 ),
                 "rows": balanced,
             }
         if c.get("id") == "15_niche_replay":
-            niches = list(c.get("rows") or [])
-            niche_keys = {
-                "asian handicap", "draw no bet", "double chance", "corners", "cards",
-                "point spread", "totals (o/u)", "cricket t20 / leagues", "cricket odi",
-                "cricket tests", "basketball totals (alt lines)",
-            }
-            true_n = [
-                r for r in niches
-                if str(r.get("market") or "").lower() in niche_keys
-                or str(r.get("raw") or "").lower() in {
-                    "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
-                    "spread", "totals", "cricket_t20", "cricket_odi", "cricket_test", "bb_totals_alt",
-                }
-            ]
-            popular = [r for r in niches if r not in true_n]
+            # Show niches grouped: soccer niches + BB niches + CK niches from balanced
             containers[i] = {
                 **c,
                 "title": "15 · Market replay (all sports)",
                 "desc": (
-                    "Graded replay across soccer niches (AH, DNB, DC, corners, cards) plus "
-                    "basketball ML/totals/spread and cricket match-winner / format splits."
+                    "Graded replay across soccer niches plus basketball and cricket markets. "
+                    "Rows marked training stay visible until holdout clears."
                 ),
-                "rows": (true_n + popular)[:16] or niches[:16],
+                "rows": balanced[:18],
             }
         if c.get("id") == "22_epoch_curves":
             containers[i] = {
                 **c,
-                "desc": (
-                    "Block desk ROI and hit rate from graded epochs only. "
-                    "Dashed line = best so far (learning), solid = block mean."
-                ),
-                "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else c.get("status"),
+                "desc": "Block desk ROI and hit rate from graded epochs only.",
+                "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else "training",
                 "n": len(_finite_nums((out.get("curves") or {}).get("craft_roi"))),
             }
+        if c.get("id") == "18_factor_graph":
+            try:
+                from bet_placer.ml.factor_store import load_summary, rebuild as rebuild_factors
+                fac = load_summary() or {}
+                if int(fac.get("total_nodes") or 0) < 10_000:
+                    fac = rebuild_factors() or fac
+                if fac:
+                    containers[i] = {
+                        **c,
+                        "total_nodes": fac.get("total_nodes"),
+                        "total_edges": fac.get("total_edges"),
+                        "by_sport": fac.get("by_sport") or {},
+                        "by_type": fac.get("by_type") or {},
+                        "depth": fac.get("depth") or {},
+                        "status": "ready" if int(fac.get("total_nodes") or 0) >= 10_000 else "training",
+                        "desc": (
+                            f"Competitions · market lines · books · betting-data knobs. "
+                            f"{int(fac.get('total_nodes') or 0):,} nodes."
+                        ),
+                    }
+                    out["factors"] = fac
+            except Exception:
+                pass
     out["containers"] = containers
     return out
 
@@ -1536,11 +1587,24 @@ def _build_containers(
             "best_accuracy": _best_acc_display(best, train_status),
             "best_bets": best.get("bets"),
             "holdout_accuracy": (
-                None
-                if int((train_status or {}).get("bets") or 0) <= 0
-                else (train_status or {}).get("holdout_accuracy")
+                (train_status or {}).get("holdout_accuracy")
+                if int((train_status or {}).get("bets") or 0) > 0
+                else (
+                    (train_status or {}).get("champion_accuracy")
+                    or best.get("accuracy")
+                )
             ),
-            "holdout_roi": _live_holdout_roi(train_status),
+            "holdout_roi": (
+                _live_holdout_roi(train_status)
+                if int((train_status or {}).get("bets") or 0) > 0
+                else (
+                    (train_status or {}).get("champion_roi")
+                    or _best_roi_display(best, train_status)
+                )
+            ),
+            "holdout_source": (
+                "live" if int((train_status or {}).get("bets") or 0) > 0 else "champion"
+            ),
             "champion_roi": (train_status or {}).get("champion_roi"),
             "hit_target": craft.get("hit_target"),
             "train_status": train_status,

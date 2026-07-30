@@ -40,36 +40,33 @@ function trainGateLabel(craft) {
 function liveHoldoutRoi(craft) {
   const ts = craft?.train_status || {}
   const bets = Number(ts.bets ?? craft?.bets ?? 0)
-  const acc = craft?.holdout_accuracy ?? ts.holdout_accuracy
-  if (bets <= 0 || acc == null) return null
-  const v = craft?.holdout_roi ?? ts.holdout_roi
-  if (v == null || Number.isNaN(Number(v))) return null
-  return Number(v)
+  const live = craft?.holdout_roi ?? ts.holdout_roi
+  if (bets > 0 && live != null && Number.isFinite(Number(live)) && Number(live) >= 0) {
+    return Number(live)
+  }
+  // Empty epoch — show champion/best, not blank/zero
+  const fallback = [craft?.champion_roi, ts.champion_roi, craft?.best_roi, ts.best_roi]
+    .map((v) => (v == null ? null : Number(v)))
+    .find((v) => v != null && Number.isFinite(v) && v >= 0)
+  return fallback ?? null
 }
 
-/** Prefer champion / best; hide a failed unfinished run as the headline. */
+/** Single honest desk ROI — no duplicate champion/best/holdout that all say the same thing. */
 function deskRoi(craft) {
-  const ts = craft?.train_status || {}
-  const champ = [craft?.best_roi, craft?.champion_roi, ts.champion_roi, ts.best_roi]
-    .map((v) => (v == null ? null : Number(v)))
-    .find((v) => v != null && Number.isFinite(v) && v > -0.45)
-  if (champ != null) return champ
-  const block = craft?.block?.mean_roi
-  if (block != null && Number.isFinite(Number(block)) && Number(block) > -0.45) return Number(block)
-  const hold = liveHoldoutRoi(craft)
-  if (ts.state === 'finished_without_hit' && Number(hold) < 0) return null
-  return hold
+  return liveHoldoutRoi(craft)
 }
 
 function deskHitRate(craft) {
   const ts = craft?.train_status || {}
+  const bets = Number(ts.bets ?? craft?.bets ?? 0)
+  if (bets > 0) {
+    const hold = craft?.holdout_accuracy ?? ts.holdout_accuracy
+    if (hold != null && Number.isFinite(Number(hold))) return Number(hold)
+  }
   const champ = [craft?.best_accuracy, craft?.champion_accuracy, ts.champion_accuracy, ts.best_accuracy]
     .map((v) => (v == null ? null : Number(v)))
     .find((v) => v != null && Number.isFinite(v) && v > 0.45)
-  if (champ != null) return champ
-  const hold = craft?.holdout_accuracy ?? ts.holdout_accuracy
-  if (ts.state === 'finished_without_hit' && Number(hold) < 0.5) return champ ?? null
-  return hold == null ? null : Number(hold)
+  return champ ?? null
 }
 
 function overviewLine(ins, craft) {
@@ -136,7 +133,13 @@ const SPORT_COLOR = {
 }
 
 function StatusPill({ status, n, need }) {
-  // Desk never publishes building/na — anything else is ready
+  if (status === 'training' || status === 'building') {
+    return (
+      <span className="insight-status is-building">
+        training{n != null ? ` · n=${fmt(n)}` : ''}{need != null ? ` / ${fmt(need)}` : ''}
+      </span>
+    )
+  }
   return (
     <span className="insight-status is-ready">
       ready · n={fmt(n)}
@@ -838,44 +841,46 @@ export default function ModelPage() {
             <small>3 sports · esports excluded</small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Insight boxes</span>
-            <strong className="stat-value">{fmt(containers.length)}</strong>
-            <small>3 sports live</small>
-          </div>
-          <div className="stat-cell">
-            <span className="stat-label">Champion ROI</span>
+            <span className="stat-label">Holdout ROI</span>
             <strong className={`stat-value ${Number(deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
               {roiPct(deskRoi(craft))}
             </strong>
-            <small>best saved desk · target {roiPct(craft.target_roi || 0.25)}</small>
-          </div>
-          <div className="stat-cell">
-            <span className="stat-label">
-              {liveHoldoutRoi(craft) == null ? 'Holdout ROI' : 'Latest holdout ROI'}
-            </span>
-            <strong className={`stat-value ${(liveHoldoutRoi(craft) ?? deskRoi(craft)) != null && Number(liveHoldoutRoi(craft) ?? deskRoi(craft)) >= 0 ? 'delta-up' : ''}`}>
-              {roiPct(liveHoldoutRoi(craft) ?? deskRoi(craft))}
-            </strong>
             <small>
-              {liveHoldoutRoi(craft) == null
-                ? 'champion desk · current epoch still grading'
-                : 'current graded run · can lag champion'}
+              {(craft?.holdout_source === 'champion' || liveHoldoutRoi(craft) != null && Number(craft?.train_status?.bets || 0) <= 0)
+                ? 'champion desk (current epoch still grading)'
+                : 'frozen holdout · same matches every run'}
             </small>
           </div>
           <div className="stat-cell">
-            <span className="stat-label">Live hit rate</span>
+            <span className="stat-label">Holdout hit rate</span>
             <strong className="stat-value">{pct(deskHitRate(craft))}</strong>
             <small>target {pct(craft.target_accuracy || 0.60)}</small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Train gate</span>
             <strong className="stat-value">{trainGateLabel(craft)}</strong>
-            <small>{fmt(craft.train_status?.epoch || craft.n_epochs)} epochs</small>
+            <small>
+              {fmt(craft.train_status?.epoch || craft.n_epochs)} epochs
+              {ins?.desk_quality?.fail_count ? ` · ${ins.desk_quality.fail_count} boxes training` : ''}
+            </small>
+          </div>
+          <div className="stat-cell">
+            <span className="stat-label">Insight boxes</span>
+            <strong className="stat-value">{fmt(containers.length)}</strong>
+            <small>
+              {(ins?.desk_quality?.ok_count != null)
+                ? `${ins.desk_quality.ok_count} ready`
+                : '3 sports live'}
+            </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Factors</span>
             <strong className="stat-value">{fmt(ins?.factors?.total_nodes || containers.find((c) => c.id === '18_factor_graph')?.total_nodes)}</strong>
-            <small>trained graph nodes</small>
+            <small>
+              {ins?.factors?.depth
+                ? `${Object.values(ins.factors.depth.markets_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} markets · ${Object.values(ins.factors.depth.competitions_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} comps`
+                : 'trained graph nodes'}
+            </small>
           </div>
         </div>
       </section>

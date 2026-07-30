@@ -779,6 +779,8 @@ def admin_accounts(request: Request):
 
     _require_admin(request)
     settings = get_settings()
+    from bet_placer.admin.patch_notes import list_patch_notes
+
     accounts = list_accounts_for_admin()
     overlay = stake_overlay_status()
     browser = {}
@@ -868,8 +870,36 @@ def admin_accounts(request: Request):
                 "portfolios": port_n,
             },
             "database": database_status(),
+            "patch_notes": list_patch_notes(16),
         },
     }
+
+
+@app.post("/api/admin/request-laptop-sync")
+def admin_request_laptop_sync(request: Request):
+    from bet_placer.portfolio.store import request_laptop_odds_sync
+
+    _require_admin(request)
+    return request_laptop_odds_sync()
+
+
+@app.post("/api/admin/requeue-sync-jobs")
+def admin_requeue_sync_jobs(request: Request):
+    from bet_placer.portfolio.store import requeue_failed_sync_jobs
+
+    _require_admin(request)
+    return requeue_failed_sync_jobs()
+
+
+@app.get("/api/relay/tasks")
+def relay_tasks(secret: str = Query(...)):
+    """Laptop relay poll: pending portfolio jobs + on-demand odds push flag."""
+    from bet_placer.portfolio.store import relay_pending_tasks
+
+    try:
+        return relay_pending_tasks(secret)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.post("/api/admin/revoke-sessions")

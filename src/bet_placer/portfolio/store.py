@@ -358,9 +358,11 @@ def _save_state(state: dict[str, Any]) -> dict[str, Any]:
 def _merged_status(state: dict[str, Any]) -> dict[str, Any]:
     """Attach live browser flags without rewriting login status from CF-ready alone."""
     out = deepcopy(state)
+    sealed = bool((out.get("secrets") or {}).get("stake_api_token"))
     out.pop("secrets", None)
     browser = browser_status()
     out["connection"]["browser"] = browser
+    out["connection"]["has_stake_token"] = sealed or bool(out["connection"].get("has_stake_token"))
     out["odds_link"] = relay_heartbeat()
     if browser.get("warming") and out["connection"].get("status") not in ("cloud", "authenticated", "relay", "syncing"):
         out["connection"]["status"] = "connecting"
@@ -1155,6 +1157,67 @@ def retry_stake_token_sync(*, user_id: str | None = None) -> dict[str, Any]:
         _CURRENT_USER_ID.reset(token_reset)
 
 
+def requeue_failed_sync_jobs() -> dict[str, Any]:
+    """Admin: re-queue portfolio imports that errored so the laptop relay can retry."""
+    jobs = _load_sync_jobs()
+    if not isinstance(jobs, list):
+        return {"requeued": 0}
+    requeued = 0
+    out = []
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") == "error" and row.get("token"):
+            out.append({
+                **row,
+                "status": "pending",
+                "error": None,
+                "completed_at": None,
+                "requeued_at": _utc_now(),
+            })
+            requeued += 1
+        else:
+            out.append(row)
+    if requeued:
+        _save_sync_jobs(out[-40:])
+    return {"requeued": requeued, "pending": sum(1 for j in out if j.get("status") == "pending")}
+
+
+def request_laptop_odds_sync() -> dict[str, Any]:
+    """Flag that the laptop relay should push odds ASAP on its next poll."""
+    path = data_path("laptop_sync_request.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"requested_at": _utc_now(), "kind": "odds_overlay"}
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    hb = relay_heartbeat()
+    return {
+        "ok": True,
+        "requested_at": payload["requested_at"],
+        "relay_online": bool(hb.get("online")),
+        "message": (
+            "Laptop relay will push on its next cycle."
+            if hb.get("online")
+            else "Request stored. Start ./scripts/start_stake_relay.sh on your laptop."
+        ),
+    }
+
+
+def consume_laptop_sync_request() -> dict[str, Any] | None:
+    """Relay pulls and clears a pending odds push request."""
+    path = data_path("laptop_sync_request.json")
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        raw = {"kind": "odds_overlay"}
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return raw if isinstance(raw, dict) else {"kind": "odds_overlay"}
+
+
 def _enqueue_sync_job(job: dict[str, Any]) -> None:
     jobs = _load_sync_jobs()
     # Replace pending job for same user
@@ -1178,6 +1241,29 @@ def list_pending_sync_jobs(secret: str) -> list[dict[str, Any]]:
         for j in (jobs or [])
         if j.get("status") == "pending" and j.get("token")
     ]
+
+
+def relay_pending_tasks(secret: str) -> dict[str, Any]:
+    """Laptop relay poll: portfolio jobs + optional odds push request."""
+    settings = get_settings()
+    if not settings.stake_relay_secret or secret != settings.stake_relay_secret:
+        raise ValueError("Invalid relay secret")
+    touch_relay_heartbeat()
+    jobs = _load_sync_jobs()
+    pending = [
+        {
+            **j,
+            "token": _reveal_token(j.get("token")),
+        }
+        for j in (jobs or [])
+        if isinstance(j, dict) and j.get("status") == "pending" and j.get("token")
+    ]
+    odds_req = consume_laptop_sync_request()
+    return {
+        "portfolio_jobs": pending,
+        "odds_push_requested": bool(odds_req),
+        "odds_request": odds_req,
+    }
 
 
 def sync_jobs_snapshot(limit: int = 12) -> dict[str, Any]:

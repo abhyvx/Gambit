@@ -889,15 +889,16 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
     }
     out = _merge_bundled_learning(out)
     out["desk_revision"] = {
-        "version": max(int(out.get("cache_version") or 0), 16),
-        "label": "Desk v16 · guide links",
+        "version": max(int(out.get("cache_version") or 0), 17),
+        "label": "Desk v17 · patch notes + sync retry",
         "notes": [
             "Info on each box opens the Guide for that container",
-            "Cricket craft holdout no longer paints a separate red number when pairs/craft are green",
-            "Self-improvement = best-so-far ROI across graded blocks (existing equity / epoch curves)",
+            "Takeaways are short ranked lines only",
+            "Admin patch notes track each version / debugging cycle",
+            "Self-improvement = best-so-far ROI across graded blocks",
         ],
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 16)
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 17)
     return out
 
 

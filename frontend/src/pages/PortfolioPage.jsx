@@ -197,6 +197,23 @@ export default function PortfolioPage() {
     }
   }
 
+  const hasStakeToken = Boolean(connection.has_stake_token)
+  const needsImportRetry = ['error', 'queued', 'auth_required'].includes(syncStatus)
+    || (hasStakeToken && !hasJournal && syncStatus !== 'imported')
+
+  const syncStakeLive = async () => {
+    if (!user) {
+      openAuth('login')
+      return
+    }
+    // Cloud / laptop path: sealed token re-queue. Browser snapshot only when no token.
+    if (hasStakeToken || needsImportRetry) {
+      await runAction('retry', retryStakeTokenSync)
+      return
+    }
+    await runAction('snapshot', refreshPortfolioSnapshot)
+  }
+
   const scrollToConnect = () => {
     const el = document.getElementById('stake-connect-panel')
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -231,21 +248,15 @@ export default function PortfolioPage() {
             )}
 
             <div className="portfolio-hero-cta">
-              {stakeLoggedIn ? (
+              {stakeLoggedIn || hasStakeToken ? (
                 <button
                   type="button"
                   className="portfolio-cta-primary"
-                  onClick={() => {
-                    if (!user) {
-                      openAuth('login')
-                      return
-                    }
-                    runAction('snapshot', refreshPortfolioSnapshot)
-                  }}
-                  disabled={!user || !canSync || busy === 'snapshot'}
-                  title={!user ? 'Sign in first' : 'Refresh Stake bet history'}
+                  onClick={() => syncStakeLive()}
+                  disabled={!user || !canSync || busy === 'snapshot' || busy === 'retry'}
+                  title={!user ? 'Sign in first' : (hasStakeToken ? 'Re-queue Stake import via token / laptop relay' : 'Refresh Stake bet history')}
                 >
-                  {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
+                  {(busy === 'snapshot' || busy === 'retry') ? 'Syncing…' : 'Sync Stake'}
                 </button>
               ) : (
                 <button
@@ -296,6 +307,19 @@ export default function PortfolioPage() {
                     <a href={loginUrl} target="_blank" rel="noreferrer">Open Stake window</a>
                   </>
                 ) : null}
+                {needsImportRetry && hasStakeToken && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="refresh-btn"
+                      disabled={busy === 'retry'}
+                      onClick={() => syncStakeLive()}
+                    >
+                      {busy === 'retry' ? 'Retrying…' : 'Retry Stake sync'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -425,7 +449,7 @@ export default function PortfolioPage() {
           {syncStatus === 'queued' && (
             <p className="muted" style={{ marginTop: '0.75rem' }}>
               Import queued
-              {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link'}
+              {state?.odds_link?.online ? ' · odds link online' : ' · waiting for odds link / laptop relay'}
               . Stay signed in. Status updates automatically.
               {' '}
               <button
@@ -445,6 +469,31 @@ export default function PortfolioPage() {
                 }}
               >
                 Retry import
+              </button>
+            </p>
+          )}
+          {(syncStatus === 'error' || (hasStakeToken && syncStatus !== 'imported' && syncStatus !== 'queued' && !hasJournal)) && (
+            <p className="muted" style={{ marginTop: '0.75rem' }}>
+              First sync can fail on cloud. Retry queues the laptop / token import again.
+              {' '}
+              <button
+                type="button"
+                className="refresh-btn"
+                disabled={tokenBusy}
+                onClick={async () => {
+                  setTokenBusy(true)
+                  setErr('')
+                  try {
+                    const next = await retryStakeTokenSync()
+                    setState(next)
+                  } catch (e) {
+                    setErr(fetchErrorMessage(e, 'Retry failed.'))
+                  } finally {
+                    setTokenBusy(false)
+                  }
+                }}
+              >
+                {tokenBusy ? 'Retrying…' : 'Retry Stake sync'}
               </button>
             </p>
           )}

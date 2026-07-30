@@ -644,8 +644,10 @@ function InsightContainer({ c, curves, sportKeys }) {
       )}
 
       {c.kind === 'bullets' && (
-        <ul className="insight-bullets">
-          {(c.rows || []).map((line) => <li key={line}>{line}</li>)}
+        <ul className={`insight-bullets${c.id === '24_takeaways' ? ' insight-takeaways' : ''}`}>
+          {(c.rows || []).slice(0, c.id === '24_takeaways' ? 6 : 8).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
         </ul>
       )}
 

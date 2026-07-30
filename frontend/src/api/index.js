@@ -336,6 +336,30 @@ export async function fetchAdminAccounts() {
   return r.json()
 }
 
+export async function requestLaptopOddsSync() {
+  const r = await fetch(`${API}/admin/request-laptop-sync`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Laptop sync request failed (${r.status})`)
+  }
+  return r.json()
+}
+
+export async function requeueFailedSyncJobs() {
+  const r = await fetch(`${API}/admin/requeue-sync-jobs`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Requeue failed (${r.status})`)
+  }
+  return r.json()
+}
+
 export async function revokeAdminSessions(userId) {
   const r = await fetch(`${API}/admin/revoke-sessions`, {
     method: 'POST',
@@ -522,8 +546,8 @@ const _insightsCache = { ts: 0, data: null }
 const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
 // Bump key whenever desk schema/version meaning changes so stale localStorage
 // (e.g. cache_version 10) cannot paint over a live Desk v15+ response.
-const INSIGHTS_DISK_KEY = 'gambit_insights_v16'
-const MIN_INSIGHTS_CACHE_VERSION = 16
+const INSIGHTS_DISK_KEY = 'gambit_insights_v17'
+const MIN_INSIGHTS_CACHE_VERSION = 17
 
 function readInsightsStore() {
   try {

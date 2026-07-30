@@ -1812,18 +1812,20 @@ def _build_containers(
         calibration.get("market_replay_accuracy"),
         factors, betting, niches,
     )
-    if stake_desk.get("updated_note"):
-        bullets = [f"Stake: {stake_desk['updated_note']} · ${int(stake_desk.get('total_volume') or 0):,} handle / {int(stake_desk.get('total_users') or 0):,} bettors"] + bullets
-    if craft.get("n_epochs"):
-        bullets = [f"Craft epochs logged: {craft.get('n_epochs'):,} (champion ROI {((best.get('roi') or 0) * 100):+.1f}%)"] + bullets
+    # Prefer one craft line over Stake/epoch noise at the top
+    if craft.get("n_epochs") and best.get("roi") is None:
+        bullets = [
+            f"Craft epochs logged: {craft.get('n_epochs'):,}"
+        ] + bullets
     for c in containers:
         # Keep titles; drop long desk blurbs
         if c.get("desc") and len(str(c.get("desc"))) > 80:
             c["desc"] = None
         if c["id"] == "24_takeaways":
-            c["rows"] = bullets or ["Run craft until sample health is ready."]
-        if c["id"] == "25_craft_notes" and not c["rows"]:
-            c["rows"] = ["No craft notes yet. Start craft training."]
+            c["desc"] = "Highest-signal desk lines only."
+            c["rows"] = (bullets or ["Run craft until sample health is ready."])[:6]
+        if c["id"] == "25_craft_notes":
+            c["rows"] = (c.get("rows") or [])[:5] or ["No craft notes yet. Start craft training."]
     return containers
 
 
@@ -2205,63 +2207,63 @@ def _insight_bullets(
     sports, craft, best, metrics, confident, market_replay_acc,
     factors=None, betting=None, niches=None,
 ) -> list[str]:
-    out = []
+    """Short ranked takeaways for the Model page — keep it scannable."""
+    out: list[str] = []
     factors = factors or {}
     betting = betting or {}
     niches = niches or []
-    if factors.get("total_nodes"):
+
+    if best.get("roi") is not None:
         out.append(
-            f"Factor graph: {factors['total_nodes']:,} trained fields · "
-            f"{factors.get('total_edges') or 0:,} edges across 3 sports"
+            f"Craft best holdout ROI {float(best['roi']) * 100:+.1f}% "
+            f"· {best.get('bets') or '?'} tickets · gate still needs 25% overall"
         )
-    for sport, s in sports.items():
+
+    sport_bits = []
+    for sport, s in (sports or {}).items():
         acc = s.get("primary_accuracy")
         n = s.get("corpus") or 0
         if acc is not None and n:
-            pl = s.get("players")
-            extra = f", {pl:,} players" if pl else ""
-            intl = s.get("intl_teams")
-            sides = f"{s.get('teams') or 0} {s.get('entity') or 'sides'}"
-            if intl:
-                sides += f" · {intl:,} intl Elo"
-            out.append(
-                f"{sport.title()}: {acc*100:.0f}% walk-forward on {n:,} games"
-                f" ({sides}{extra}) · {s.get('span') or ''}"
-            )
-    if betting.get("n_years"):
-        out.append(
-            f"Historical betting pairs span {betting['n_years']} years "
-            f"({sum((r.get('n') or 0) for r in (betting.get('by_sport') or {}).values()):,} graded tickets)"
-        )
+            sport_bits.append(f"{sport} {float(acc) * 100:.0f}% / {int(n):,}")
+    if sport_bits:
+        out.append("Walk-forward: " + " · ".join(sport_bits))
+
+    bet_bits = []
     for sport, row in (betting.get("by_sport") or {}).items():
         if row.get("n"):
-            out.append(
-                f"{sport.title()} close/fair bets: {row['n']:,} · "
-                f"hit {((row.get('hit_rate') or 0)*100):.0f}% · "
-                f"unit ROI {((row.get('roi') or 0)*100):+.1f}%"
+            bet_bits.append(
+                f"{sport} {((row.get('roi') or 0) * 100):+.1f}% ROI ({int(row['n']):,})"
             )
-    for row in niches[:4]:
-        if row.get("accuracy") is not None and row.get("n") and row.get("status") == "ready":
-            out.append(
-                f"Niche replay {row['market']}: {row['accuracy']*100:.0f}% "
-                f"({row['n']} bets)"
-            )
-    if best.get("roi") is not None:
-        focus = best.get("focus_sport") or "mixed"
+    if bet_bits:
+        out.append("Close/fair pairs: " + " · ".join(bet_bits[:3]))
+
+    if factors.get("total_nodes"):
         out.append(
-            f"Craft paper best ROI {best['roi']*100:.0f}% "
-            f"({focus}, {best.get('bets') or '?'} bets. not a live bankroll guarantee)"
+            f"Factor graph {int(factors['total_nodes']):,} nodes"
+            + (f" · {int(factors.get('total_edges') or 0):,} edges" if factors.get("total_edges") else "")
         )
+
+    ready_niches = [
+        row for row in niches[:6]
+        if row.get("accuracy") is not None and row.get("n") and row.get("status") == "ready"
+    ]
+    if ready_niches:
+        top = ready_niches[0]
+        out.append(
+            f"Niche ready: {top.get('market')} {float(top['accuracy']) * 100:.0f}% "
+            f"({int(top['n'])} bets)"
+            + (f" · +{len(ready_niches) - 1} more" if len(ready_niches) > 1 else "")
+        )
+
     conf65 = (confident or {}).get("65") or (confident or {}).get(65)
     if conf65 and conf65.get("accuracy") is not None:
         out.append(
-            f"When ≥65% confident: {conf65['accuracy']*100:.0f}% "
-            f"({conf65.get('n') or '?'} calls)"
+            f"≥65% confidence calls hit {float(conf65['accuracy']) * 100:.0f}% "
+            f"({conf65.get('n') or '?'} sample)"
         )
+
     if market_replay_acc is not None:
-        out.append(f"Multi-market replay accuracy {market_replay_acc*100:.0f}%")
-    brier = (metrics or {}).get("result_brier")
-    if brier is not None:
-        out.append(f"Brier {brier:.3f} (lower = better calibrated)")
-    out.append("Odds API: cache-only on boards/craft. preserve remaining credits.")
-    return out[:18]
+        out.append(f"Multi-market replay {float(market_replay_acc) * 100:.0f}%")
+
+    # Cap hard — Model page should stay calm
+    return out[:6]

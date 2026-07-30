@@ -13,6 +13,7 @@ Setup:
   3. Run: PYTHONPATH=src python3 scripts/stake_relay.py
 
 Keep this terminal open while you use the cloud app.
+Admin → Request laptop odds sync will wake the next push early when this is running.
 """
 from __future__ import annotations
 
@@ -21,6 +22,40 @@ import sys
 import time
 
 import requests
+
+
+def _push_odds(cloud: str, secret: str) -> dict:
+    os.environ.setdefault("STAKE_USE_BROWSER", "true")
+    from bet_placer.data.stake_scraper import StakeScraper
+    from bet_placer.engine.stake_odds import (
+        _overlay_key,
+        _serialize_fixture,
+        fetch_fast_stake_overlay,
+        persist_match_stake_data,
+    )
+
+    scraper = StakeScraper(timeout=90, allow_browser_launch=True)
+    overlay = fetch_fast_stake_overlay(scraper)
+    for fx in overlay.values():
+        if fx.markets:
+            persist_match_stake_data(fx.home_team, fx.away_team, fx, None)
+    fixtures = {
+        _overlay_key(fx.home_team, fx.away_team): _serialize_fixture(fx)
+        for fx in overlay.values()
+        if fx.markets
+    }
+    if not fixtures:
+        print("no Stake fixtures (open Chrome / complete Cloudflare if prompted)")
+        return {"ingested": 0}
+    r = requests.post(
+        f"{cloud}/api/stake/relay",
+        json={"secret": secret, "fixtures": fixtures},
+        timeout=120,
+    )
+    r.raise_for_status()
+    out = r.json()
+    print("OK", out.get("ingested"), "fixtures", out.get("status", {}))
+    return out
 
 
 def main() -> None:
@@ -33,42 +68,37 @@ def main() -> None:
         print("Set GAMBIT_CLOUD_URL in .env (your Render app URL)", file=sys.stderr)
         sys.exit(1)
 
-    os.environ.setdefault("STAKE_USE_BROWSER", "true")
-    from bet_placer.data.stake_scraper import StakeScraper
-    from bet_placer.engine.stake_odds import fetch_fast_stake_overlay, persist_match_stake_data
-
     print(f"Stake relay -> {cloud}/api/stake/relay every {interval}s (Ctrl+C to stop)")
     while True:
         try:
-            scraper = StakeScraper(timeout=90, allow_browser_launch=True)
-            overlay = fetch_fast_stake_overlay(scraper)
-            for fx in overlay.values():
-                if fx.markets:
-                    persist_match_stake_data(fx.home_team, fx.away_team, fx, None)
-            from bet_placer.engine.stake_odds import _overlay_key, _serialize_fixture
-            fixtures = {
-                _overlay_key(fx.home_team, fx.away_team): _serialize_fixture(fx)
-                for fx in overlay.values()
-                if fx.markets
-            }
-            if not fixtures:
-                print("no Stake fixtures (open Chrome / complete Cloudflare if prompted)")
-                time.sleep(interval)
-                continue
-            r = requests.post(
-                f"{cloud}/api/stake/relay",
-                json={"secret": secret, "fixtures": fixtures},
-                timeout=120,
-            )
-            r.raise_for_status()
-            out = r.json()
-            print("OK", out.get("ingested"), "fixtures", out.get("status", {}))
+            # Admin "Request laptop odds sync" or pending portfolio jobs
+            force = False
+            try:
+                tr = requests.get(
+                    f"{cloud}/api/relay/tasks",
+                    params={"secret": secret},
+                    timeout=30,
+                )
+                if tr.ok:
+                    tasks = tr.json() or {}
+                    force = bool(tasks.get("odds_push_requested"))
+                    jobs = tasks.get("portfolio_jobs") or []
+                    if jobs:
+                        print(f"{len(jobs)} pending portfolio sync job(s) for laptop agent")
+                    if force:
+                        print("admin requested immediate odds push")
+            except Exception as exc:
+                print("tasks poll:", exc)
+
+            _push_odds(cloud, secret)
+            # After a forced push, still sleep a short beat so we don't hammer Stake
+            time.sleep(20 if force else interval)
         except KeyboardInterrupt:
             print("\nStopped.")
             break
         except Exception as exc:
             print("relay error:", exc)
-        time.sleep(interval)
+            time.sleep(min(60, interval))
 
 
 if __name__ == "__main__":

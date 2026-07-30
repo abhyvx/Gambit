@@ -375,9 +375,41 @@ def _summarize_bets(bets: list[dict[str, Any]]) -> dict[str, Any]:
     losses = sum(1 for b in bets if b.get("result") == "lost")
     pushes = sum(1 for b in bets if b.get("result") == "push")
     cashouts = sum(1 for b in bets if b.get("result") == "cashed_out")
-    total_staked = round(sum(float(b.get("stake_value") or 0) for b in bets), 2)
-    total_return = round(sum(float(b.get("payout_value") or 0) for b in settled), 2)
-    profit = round(total_return - total_staked, 2)
+    total_staked = round(sum(float(b.get("stake_value") or b.get("stake") or 0) for b in bets), 2)
+
+    def _bet_payout(b: dict[str, Any]) -> float:
+        if b.get("payout_value") is not None:
+            try:
+                return float(b.get("payout_value") or 0)
+            except (TypeError, ValueError):
+                pass
+        if b.get("payout") is not None:
+            try:
+                return float(b.get("payout") or 0)
+            except (TypeError, ValueError):
+                pass
+        result = b.get("result")
+        stake = float(b.get("stake_value") or b.get("stake") or 0)
+        odds = float(b.get("combined_odds") or b.get("odds") or 0)
+        if result == "won" and odds > 1:
+            return round(stake * odds, 2)
+        if result == "push":
+            return stake
+        return 0.0
+
+    total_return = round(sum(_bet_payout(b) for b in settled), 2)
+    # Prefer summing settled profit_value when present (handles legacy payout vs payout_value)
+    profit_parts = []
+    for b in settled:
+        if b.get("profit_value") is not None:
+            try:
+                profit_parts.append(float(b.get("profit_value") or 0))
+            except (TypeError, ValueError):
+                pass
+    if len(profit_parts) == len(settled) and settled:
+        profit = round(sum(profit_parts), 2)
+    else:
+        profit = round(total_return - total_staked, 2)
     roi_pct = round((profit / total_staked) * 100, 2) if total_staked else 0.0
     singles = sum(1 for b in bets if (b.get("selection_count") or 0) <= 1)
     parlays = sum(1 for b in bets if (b.get("selection_count") or 0) > 1)

@@ -33,6 +33,7 @@ def _demo_bet(
     market: str = "match_winner",
 ) -> dict[str, Any]:
     profit = round(stake * (odds - 1), 2) if result == "won" else (-stake if result == "lost" else 0.0)
+    payout = round(stake * odds, 2) if result == "won" else (stake if result == "push" else 0.0)
     return {
         "id": bid,
         "fixture_name": f"{home} vs {away}",
@@ -52,7 +53,8 @@ def _demo_bet(
         "result": result,
         "status": result,
         "profit_value": profit,
-        "payout": round(stake * odds, 2) if result == "won" else (stake if result == "push" else 0),
+        "payout": payout,
+        "payout_value": payout,
         "bet_type": "single",
         "selection_count": 1,
         "source": "demo_seed",
@@ -118,14 +120,15 @@ def _wrap_portfolio(bets: list[dict[str, Any]], *, learning: bool) -> dict[str, 
 
 
 def ensure_seed_accounts() -> dict[str, Any]:
-    """Create demo users + positive journals if missing. Safe to call on every boot."""
+    """Create/refresh demo users + positive journals. Safe to call on every boot."""
     import json
 
     from bet_placer.auth.users import _LOCK, _USERS, _hash_password, _load, _save
     from bet_placer.config import data_path
-    from bet_placer.persistence.db import db_enabled, save_portfolio_state
+    from bet_placer.persistence.db import db_enabled, load_portfolio_state, save_portfolio_state
 
     created = []
+    refreshed = []
     with _LOCK:
         users = _load(_USERS)
         specs = [
@@ -135,28 +138,39 @@ def ensure_seed_accounts() -> dict[str, Any]:
         ]
         changed = False
         for email, name, uid, port_fn in specs:
-            if email in users:
-                continue
-            salt, digest = _hash_password(DEMO_PASSWORDS[email])
-            users[email] = {
-                "id": uid,
-                "email": email,
-                "name": name,
-                "salt": salt,
-                "password": digest,
-                "created_at": time.time(),
-            }
             port = port_fn()
+            if email not in users:
+                salt, digest = _hash_password(DEMO_PASSWORDS[email])
+                users[email] = {
+                    "id": uid,
+                    "email": email,
+                    "name": name,
+                    "salt": salt,
+                    "password": digest,
+                    "created_at": time.time(),
+                }
+                created.append(email)
+                changed = True
+            else:
+                uid = str(users[email].get("id") or uid)
+            # Always rewrite demo journals so P/L stays correct after summarize fixes
             if db_enabled():
                 save_portfolio_state(uid, port)
             else:
                 path = data_path("portfolios", f"{uid}.json")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(port, indent=2), encoding="utf-8")
-            created.append(email)
+            if email not in created:
+                refreshed.append(email)
             changed = True
         if changed:
             _save(_USERS, users)
     if created:
         logger.info("Seeded demo accounts: %s", ", ".join(created))
-    return {"created": created, "passwords": {e: DEMO_PASSWORDS[e] for e in created}}
+    if refreshed:
+        logger.info("Refreshed demo journals: %s", ", ".join(refreshed))
+    return {
+        "created": created,
+        "refreshed": refreshed,
+        "passwords": {e: DEMO_PASSWORDS[e] for e in DEMO_PASSWORDS},
+    }

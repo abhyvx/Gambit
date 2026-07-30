@@ -100,7 +100,9 @@ def signup(*, email: str, password: str, name: str | None = None) -> dict[str, A
             schedule_users_persist()
         except Exception:
             pass
-        return {"token": token, "user": public_user(users[email])}
+        user = public_user(users[email])
+        user["is_admin"] = is_admin(user)
+        return {"token": token, "user": user}
 
 
 def login(*, email: str, password: str) -> dict[str, Any]:
@@ -111,7 +113,9 @@ def login(*, email: str, password: str) -> dict[str, Any]:
         if not row or not _check_password(password, row.get("salt") or "", row.get("password") or ""):
             raise ValueError("Email or password is wrong.")
         token = _issue_session(row["id"], email)
-        return {"token": token, "user": public_user(row)}
+        user = public_user(row)
+        user["is_admin"] = is_admin(user)
+        return {"token": token, "user": user}
 
 
 def _issue_session(uid: str, email: str) -> str:
@@ -200,13 +204,20 @@ def is_admin(user: dict[str, Any] | None) -> bool:
         return False
     from bet_placer.config import get_settings
 
+    email = (user.get("email") or "").strip().lower()
+    # Owner accounts always admin even when Render env forgot GAMBIT_ADMIN_EMAILS
+    if email in {
+        "abhyudayk16@gmail.com",
+        "akhanna8@terpmail.umd.edu",
+    }:
+        return True
     settings = get_settings()
     emails = {
         e.strip().lower()
         for e in (settings.gambit_admin_emails or "").split(",")
         if e.strip()
     }
-    return bool(emails) and (user.get("email") or "").strip().lower() in emails
+    return bool(emails) and email in emails
 
 
 def list_accounts_for_admin() -> list[dict[str, Any]]:

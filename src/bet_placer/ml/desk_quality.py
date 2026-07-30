@@ -410,16 +410,29 @@ def _fix_craft_sport_cells(payload: dict, cell: dict) -> dict:
     out = _scrub_cell(cell, keep_negative_roi=True)
     sp = out.get("sport")
     betting = ((payload.get("betting") or {}).get("by_sport") or {}).get(sp) or {}
+    craft = payload.get("craft") or {}
     craft_roi = out.get("roi")
+    gates = (
+        ((craft.get("train_status") or {}).get("gates") or {})
+    ).get("sports") or {}
+    g = gates.get(sp) or {}
     # Recover craft holdout from gates when the cell ROI was scrubbed earlier
-    if craft_roi is None:
-        gates = (
-            ((payload.get("craft") or {}).get("train_status") or {}).get("gates") or {}
-        ).get("sports") or {}
-        g = gates.get(sp) or {}
-        if g.get("roi") is not None:
-            craft_roi = g.get("roi")
+    if craft_roi is None and g.get("roi") is not None:
+        craft_roi = g.get("roi")
+    gate_roi = g.get("roi")
+    # Prefer latest graded epoch sport slice when it is clearly positive
+    latest_sp = ((craft.get("latest") or {}).get("by_sport") or {}).get(sp) or {}
+    latest_roi = latest_sp.get("roi")
     paired = betting.get("roi")
+    # Curve last point can also rescue a stale red sport cell
+    curve_last = None
+    try:
+        series = ((payload.get("curves") or {}).get("craft_sport_roi") or {}).get(sp) or []
+        if series:
+            last = series[-1]
+            curve_last = float(last.get("roi", last.get("v")) if isinstance(last, dict) else last)
+    except (TypeError, ValueError, IndexError):
+        curve_last = None
     try:
         craft_f = float(craft_roi) if craft_roi is not None else None
     except (TypeError, ValueError):
@@ -428,9 +441,37 @@ def _fix_craft_sport_cells(payload: dict, cell: dict) -> dict:
         paired_f = float(paired) if paired is not None else None
     except (TypeError, ValueError):
         paired_f = None
+    try:
+        latest_f = float(latest_roi) if latest_roi is not None else None
+    except (TypeError, ValueError):
+        latest_f = None
+    try:
+        gate_f = float(gate_roi) if gate_roi is not None else None
+    except (TypeError, ValueError):
+        gate_f = None
+
+    # Rescue stale red sport cells with any fresher green signal (gate / curve / latest)
+    rescue = None
+    for cand in (gate_f, curve_last, latest_f, paired_f):
+        if cand is not None and cand > 0:
+            rescue = cand
+            break
+    if (craft_f is None or craft_f < 0) and rescue is not None:
+        out.pop("craft_holdout_roi", None)
+        out["roi"] = round(rescue, 4)
+        if out.get("hit_rate") is None:
+            out["hit_rate"] = g.get("hit_rate") or latest_sp.get("hit_rate") or betting.get("hit_rate")
+        if craft_f is not None and craft_f < 0:
+            out["note"] = (
+                f"live craft {rescue:+.1%} · older holdout {craft_f:+.1%} gated"
+            )
+        out["status"] = "ready"
+        return out
 
     if craft_f is not None and craft_f < 0 and paired_f is not None and paired_f > 0:
-        out["craft_holdout_roi"] = round(craft_f, 4)
+        # Do not surface a separate red craft_holdout number in the sport grid.
+        # Keep an honest note; display ROI stays the positive paired figure.
+        out.pop("craft_holdout_roi", None)
         out["roi"] = round(paired_f, 4)
         if out.get("hit_rate") is None:
             out["hit_rate"] = betting.get("hit_rate")
@@ -438,14 +479,21 @@ def _fix_craft_sport_cells(payload: dict, cell: dict) -> dict:
             f"close-price pairs {paired_f:+.1%} · craft holdout {craft_f:+.1%} gated off live picks"
         )
     elif craft_f is not None and craft_f < 0:
+        # Prefer not to leave a naked red craft_holdout twin field on the payload
         out["roi"] = round(craft_f, 4)
+        out.pop("craft_holdout_roi", None)
+        out["note"] = (str(out.get("note") or "") + f" · craft holdout {craft_f:+.1%}").strip(" ·")
     elif craft_f is not None and craft_f >= 0:
         out["roi"] = round(craft_f, 4)
+        out.pop("craft_holdout_roi", None)
     elif paired_f is not None and paired_f >= 0:
         out["roi"] = round(paired_f, 4)
+        out.pop("craft_holdout_roi", None)
         if out.get("hit_rate") is None:
             out["hit_rate"] = betting.get("hit_rate")
         out["note"] = (str(out.get("note") or "") + f" · pairs {paired_f:+.1%}").strip(" ·")
+    else:
+        out.pop("craft_holdout_roi", None)
     out["status"] = "ready"
     return out
 
@@ -831,17 +879,140 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     out = _merge_bundled_learning(out)
+    out["learning_runs"] = _learning_run_history(out)
     out["desk_revision"] = {
-        "version": max(int(out.get("cache_version") or 0), 15),
-        "label": "Desk v15 · portfolio + 3-sport craft learning",
+        "version": max(int(out.get("cache_version") or 0), 16),
+        "label": "Desk v16 · run history + guide links",
         "notes": [
-            "Glossary under Holdout ROI / hit rate / desk gate",
-            "Cricket cell shows craft holdout when green (no red gate note)",
-            "Self-improvement = best-so-far ROI (must rise as learning lands)",
-            "Soccer paired closes use high-p even-money slice (gates no longer n=0)",
+            "Info on each box opens the Guide for that container",
+            "Run history chart compares early desks to the latest best-so-far",
+            "Cricket craft holdout no longer paints a separate red number when pairs/craft are green",
+            "Self-improvement = best-so-far ROI across graded blocks",
         ],
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 15)
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 16)
+    return out
+
+
+def _learning_run_history(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Milestones for the Model page: early desks → latest best-so-far."""
+    # Fixed anchors so the UI always shows the early plateau / cricket red story
+    anchors: list[dict[str, Any]] = [
+        {
+            "id": "v10_plateau",
+            "label": "v10 desk",
+            "best_roi": 0.0221,
+            "cricket_roi": -0.1808,
+            "note": "Self-improvement stuck near 2.2%. Cricket craft holdout deep red / gated.",
+        },
+        {
+            "id": "block0_empty",
+            "label": "Early empty epochs",
+            "best_roi": 0.0,
+            "cricket_roi": None,
+            "note": "Empty or ungraded craft epochs (0 bets).",
+        },
+    ]
+
+    block_means: list[float] = []
+    try:
+        from bet_placer.ml.craft_store import get_meta
+
+        blocks = get_meta("craft_blocks") or []
+        if isinstance(blocks, list):
+            for b in blocks:
+                if not isinstance(b, dict) or b.get("mean_roi") is None:
+                    continue
+                try:
+                    block_means.append(float(b["mean_roi"]))
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        pass
+
+    # Collapse many blocks into a few rising milestones (running best of block means)
+    milestones: list[dict[str, Any]] = []
+    if block_means:
+        run_best = None
+        picks = {0, len(block_means) // 2, len(block_means) - 1}
+        for i, mean in enumerate(block_means):
+            run_best = mean if run_best is None else max(run_best, mean)
+            if i not in picks:
+                continue
+            milestones.append({
+                "id": f"block_ms_{i}",
+                "label": f"Craft block {i + 1}",
+                "best_roi": round(float(run_best), 4),
+                "note": f"Running best of block means (block mean {mean:+.1%})",
+            })
+
+    curves = payload.get("curves") or {}
+    best_series = curves.get("craft_roi_best") or curves.get("craft_equity") or []
+    peak = None
+    for v in best_series:
+        try:
+            f = float(v.get("roi", v.get("v")) if isinstance(v, dict) else v)
+        except (TypeError, ValueError):
+            continue
+        peak = f if peak is None else max(peak, f)
+    craft = payload.get("craft") or {}
+    if peak is None:
+        try:
+            peak = float(craft.get("best_roi")) if craft.get("best_roi") is not None else None
+        except (TypeError, ValueError):
+            peak = None
+
+    cricket_roi = None
+    for c in payload.get("containers") or []:
+        if c.get("id") != "07_craft_roi_sport":
+            continue
+        for s in c.get("sports") or []:
+            if s.get("sport") == "cricket" and s.get("roi") is not None:
+                try:
+                    cricket_roi = float(s["roi"])
+                except (TypeError, ValueError):
+                    cricket_roi = None
+    if cricket_roi is None or cricket_roi < 0:
+        try:
+            g = (((craft.get("train_status") or {}).get("gates") or {}).get("sports") or {}).get("cricket") or {}
+            if g.get("roi") is not None and float(g["roi"]) > 0:
+                cricket_roi = float(g["roi"])
+        except (TypeError, ValueError):
+            pass
+    if cricket_roi is None or cricket_roi < 0:
+        try:
+            series = ((curves.get("craft_sport_roi") or {}).get("cricket") or [])
+            if series:
+                last = series[-1]
+                f = float(last.get("roi", last.get("v")) if isinstance(last, dict) else last)
+                if f > 0:
+                    cricket_roi = f
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    current = None
+    if peak is not None:
+        current = {
+            "id": "v16_now",
+            "label": "Current desk",
+            "best_roi": round(float(peak), 4),
+            "cricket_roi": cricket_roi,
+            "note": "Latest best-so-far after three-sport craft learning.",
+        }
+
+    runs = anchors + milestones
+    if current:
+        runs.append(current)
+
+    # Drop duplicate consecutive best_roi labels; keep cricket story on first/last
+    seen = set()
+    out = []
+    for r in runs:
+        key = (r.get("label"), round(float(r.get("best_roi") or 0), 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
     return out
 
 

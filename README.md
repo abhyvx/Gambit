@@ -11,7 +11,7 @@ If that line feels blunt, good. I would rather people understand the product tha
 ## Table of contents
 
 1. [What it actually does](#what-it-actually-does)
-2. [Learning improvement (before → after)](#learning-improvement-before--after)
+2. [How recommendations and learning work](#how-recommendations-and-learning-work)
 3. [Tech stack (detailed)](#tech-stack-detailed)
 4. [Math and calculations](#math-and-calculations)
 5. [Configuration variables](#configuration-variables)
@@ -47,43 +47,46 @@ If that line feels blunt, good. I would rather people understand the product tha
 
 ---
 
-## Learning improvement (before → after)
+## How recommendations and learning work
 
-Craft grades tickets on a **frozen holdout** (same match IDs every epoch). Early runs were empty or underwater. After the three-sport even-money soccer fix and continued training, block means and best-so-far equity moved clearly into the green.
+This section is words and math pointers only. **Before → after run charts live on the Model page** (not here), so the README stays readable and the live desk stays the source of truth.
 
-### Self-improvement best-so-far
+### What the terms mean
 
-Live desk used to sit on a flat **~2.2%** best-so-far curve. After the learning pass it rises toward **~6.3%**.
+| Term | Meaning |
+|------|---------|
+| **Model chance / \(P\)** | Calibrated probability that a selection wins, from Elo + market models + craft blend. |
+| **Odds / \(O\)** | Decimal price from Stake, a book cache, or a labeled model fair line. |
+| **Implied chance** | Vig-free fair chance from \(O\) (see [Math](#math-and-calculations)). |
+| **Edge** | \(P\) minus that fair chance. Positive edge means the model likes the price on paper. |
+| **Verdict** | Plain language on the ticket: worth considering, fair, or skip — never a guarantee. |
+| **Holdout** | A **frozen** set of match IDs. Every craft epoch grades the same games so improvement is comparable. |
+| **Holdout ROI** | \(\sum\mathrm{PnL} / \sum\mathrm{stake}\) on that frozen book. Not your live bankroll. |
+| **Holdout hit rate** | Wins / settled holdout tickets. Bar is **60%+**. |
+| **Craft gates / desk gate** | Clears only when overall ROI \(\ge\) **25%**, every sport ROI \(>\) **0%**, and accuracy \(\ge\) **60%**. Until then the desk says **Below target**. |
+| **Self-improvement / equity** | Running **best-so-far** block mean holdout ROI. Rising = a new graded best. Flat = champion already locked. |
+| **Paired closes** | Model-fair vs close-price pairs in `betting_evolution.db` — used when craft holdout for a sport is thin or gated. |
 
-![Self-improvement before vs after](docs/assets/self-improvement-before-after.svg)
+### How we decide what to recommend
 
-### Craft block mean ROI (10-epoch blocks)
+1. Build a chance \(P\) for the selection (sport Elo / Poisson / totals / craft blend).
+2. Attach a real or labeled decimal price \(O\).
+3. Remove vig → fair chance; **edge** = \(P -\) fair.
+4. Optional Kelly fraction sizes a paper stake (capped). Low edge, low confidence, or book-offline estimates get softer verdicts or skips.
+5. The slip is still yours: Gambit never places the bet.
 
-First block was **0%** (empty / ungraded). Later blocks land around **2–3%** mean holdout ROI with peaks near **4%** on individual epochs.
+### How the model learns and improves
 
-![Craft block mean ROI](docs/assets/craft-block-roi.svg)
+1. **Fuel** — finished boards + history corpora for soccer, basketball, and cricket.
+2. **Craft epoch** — train `CraftNet` on rotating fuel; evaluate on the **same** holdout IDs.
+3. **Champion policy** — if a run regresses, restore the best graded slice so the public desk does not silently get worse.
+4. **Sport gates** — a sport under water (e.g. early cricket craft) is gated off live picks; paired ROI may still show for honesty.
+5. **Blocks** — every ~10 epochs, mean holdout ROI is recorded. Best-so-far equity only moves up when a block beats the prior champion.
+6. **Portfolio opt-in** — graded user journals can feed learning later; opt out anytime.
 
-### Epoch path: empty → red → positive
+Early desks sat near a flat ~2% best-so-far with cricket craft deep red and gated. Later desks moved best-so-far into the mid-single digits with all three sports green on the published cells. The desk gate can still honestly say **Below target** until the 25% bar clears. Open **Model** for the version/run comparison chart.
 
-Early epochs graded **0 bets**. Then a stretch of thin or negative holdout ROI (worst about **−2.3%**). After the soccer paired-close fix, champion holdout cleared **+4.1%** with accuracy near **68%**.
-
-![Epoch ROI sample](docs/assets/epoch-roi-sample.svg)
-
-### Per-sport craft holdout
-
-Cricket craft holdout was **−18.1%** on the public desk (gated, with paired display only). After learning, soccer / basketball / cricket craft cells are all **positive**.
-
-![Sport ROI before vs after](docs/assets/sport-roi-before-after.svg)
-
-| Metric | Before | After (bundled desk v15) |
-|--------|--------|---------------------------|
-| Self-improvement best-so-far | ~2.2% flat | ~4.3% → **6.3%** rising |
-| Cricket craft holdout | **−18.1%** (gated) | **+1.4%** green |
-| Soccer craft tickets | often `n=0` | ~350 / epoch, ~+4.3% ROI |
-| Basketball craft | ~+3.8% | ~+4.3% |
-| Desk gate (25% bar) | Below target | Still Below target (honest) |
-
-Past paper results do not guarantee live profit. The charts are holdout research, not a tip sheet.
+Past paper results do not guarantee live profit.
 
 ---
 
@@ -360,7 +363,6 @@ src/bet_placer/
   auth/                  Users + sessions
 frontend/src/pages/      Model, Portfolio, Guide, Legal, boards
 scripts/                 run.sh, start_cloud.sh, bootstrap, checks
-docs/assets/             Learning improvement SVGs
 DEPLOY.md                Render / Browserbase / secrets
 ```
 

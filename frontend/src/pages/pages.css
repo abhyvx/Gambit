@@ -5413,6 +5413,70 @@
   gap: 12px;
   flex-wrap: wrap;
 }
+.insight-box-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.insight-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+  text-decoration: none;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.insight-info-btn:hover,
+.insight-info-btn:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-glow);
+  outline: none;
+}
+.learning-runs-table-wrap {
+  overflow-x: auto;
+  margin-top: 0.75rem;
+}
+.learning-runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.learning-runs-table th,
+.learning-runs-table td {
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.learning-runs-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.guide-box-card {
+  margin: 1rem 0;
+  padding: 0.85rem 0 0.25rem;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 5rem;
+}
+.guide-box-card h3 {
+  margin: 0 0 0.5rem;
+}
+.guide-section[id],
+.guide-box-card[id] {
+  scroll-margin-top: 5rem;
+}
 .insight-status {
   font-size: var(--fs-xs);
   padding: 2px 8px;

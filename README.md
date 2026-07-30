@@ -55,23 +55,23 @@ This section is words and math pointers only. **Before → after run charts live
 
 | Term | Meaning |
 |------|---------|
-| **Model chance / \(P\)** | Calibrated probability that a selection wins, from Elo + market models + craft blend. |
-| **Odds / \(O\)** | Decimal price from Stake, a book cache, or a labeled model fair line. |
-| **Implied chance** | Vig-free fair chance from \(O\) (see [Math](#math-and-calculations)). |
-| **Edge** | \(P\) minus that fair chance. Positive edge means the model likes the price on paper. |
+| **Model chance (P)** | Calibrated probability that a selection wins, from Elo + market models + craft blend. |
+| **Odds (O)** | Decimal price from Stake, a book cache, or a labeled model fair line. |
+| **Implied chance** | Vig-free fair chance from the decimal odds (see [Math](#math-and-calculations)). |
+| **Edge** | Model chance minus that fair chance. Positive edge means the model likes the price on paper. |
 | **Verdict** | Plain language on the ticket: worth considering, fair, or skip — never a guarantee. |
 | **Holdout** | A **frozen** set of match IDs. Every craft epoch grades the same games so improvement is comparable. |
-| **Holdout ROI** | \(\sum\mathrm{PnL} / \sum\mathrm{stake}\) on that frozen book. Not your live bankroll. |
+| **Holdout ROI** | Total paper profit divided by total stake on that frozen book. Not your live bankroll. |
 | **Holdout hit rate** | Wins / settled holdout tickets. Bar is **60%+**. |
-| **Craft gates / desk gate** | Clears only when overall ROI \(\ge\) **25%**, every sport ROI \(>\) **0%**, and accuracy \(\ge\) **60%**. Until then the desk says **Below target**. |
+| **Craft gates / desk gate** | Clears only when overall ROI is at least **25%**, every sport ROI is above **0%**, and accuracy is at least **60%**. Until then the desk says **Below target**. |
 | **Self-improvement / equity** | Running **best-so-far** block mean holdout ROI. Rising = a new graded best. Flat = champion already locked. |
 | **Paired closes** | Model-fair vs close-price pairs in `betting_evolution.db` — used when craft holdout for a sport is thin or gated. |
 
 ### How we decide what to recommend
 
-1. Build a chance \(P\) for the selection (sport Elo / Poisson / totals / craft blend).
-2. Attach a real or labeled decimal price \(O\).
-3. Remove vig → fair chance; **edge** = \(P -\) fair.
+1. Build a chance **P** for the selection (sport Elo / Poisson / totals / craft blend).
+2. Attach a real or labeled decimal price **O**.
+3. Remove vig → fair chance; **edge** = P minus fair.
 4. Optional Kelly fraction sizes a paper stake (capped). Low edge, low confidence, or book-offline estimates get softer verdicts or skips.
 5. The slip is still yours: Gambit never places the bet.
 
@@ -112,7 +112,7 @@ Past paper results do not guarantee live profit.
 
 - React + Vite for the SPA
 - No heavy chart library required for core boards; Model desk draws SVG series from API curve arrays
-- `localStorage` for auth token, age gate, bankroll/slip prefs, insights cache key `gambit_insights_v15`
+- `localStorage` for auth token, age gate, bankroll/slip prefs, insights cache key `gambit_insights_v16`
 
 ### Backend packages (high level)
 
@@ -125,79 +125,55 @@ Past paper results do not guarantee live profit.
 
 ## Math and calculations
 
+Plain English only — no LaTeX. Code lives in `ml/elo.py`, `markets/odds.py`, and the EV / Kelly helpers.
+
 ### Elo match probabilities
 
-For ratings \(R_h\), \(R_a\) and home advantage \(H\) (soccer default **65** Elo points; basketball **55**; cricket **20**):
+Each side has a rating (home Rh, away Ra). Home advantage H is added to the home side (soccer default **65** Elo points; basketball **55**; cricket **20**).
 
-\[
-E_h = \frac{1}{1 + 10^{-(R_h + H - R_a)/400}}
-\]
+1. Home expected score Eh = 1 / (1 + 10^(-(Rh + H - Ra) / 400)).
+2. Soccer draw mass shrinks with the rating gap: d = 0.28 * e^(-|Rh + H - Ra| / 200).
+3. Then: P(home) = Eh * (1 - d), P(away) = (1 - Eh) * (1 - d), P(draw) = d, then normalize so they sum to 1.
 
-Draw mass for soccer shrinks with rating gap:
-
-\[
-d = 0.28 \cdot e^{-|R_h+H-R_a|/200}
-\]
-
-Then
-
-\[
-P(H) = E_h (1-d),\quad P(A) = (1-E_h)(1-d),\quad P(D)=d
-\]
-
-normalized to sum to 1. Basketball / cricket use a tiny draw mass (~0.02) and are treated as two-way for fair prices.
+Basketball / cricket use a tiny draw mass (~0.02) and are treated as two-way for fair prices.
 
 ### Fair decimal odds from probability
 
-With overround margin \(m\) (model fair often uses **1.04**):
+With overround margin m (model fair often uses **1.04**):
 
-\[
-\text{odds}_i = \frac{m}{\max(P_i,\, P_{\min})}
-\]
+odds_i = m / max(P_i, P_min)
 
 ### Book implied and de-vig
 
-Decimal odds \(O\) imply \(1/O\). Two-way and three-way vig removal lives in `markets/odds.py` (`remove_vig_two_way`, `remove_vig_three_way`) so “fair implied” is the book chance without the juice.
+Decimal odds O imply chance 1/O. Two-way and three-way vig removal lives in `markets/odds.py` (`remove_vig_two_way`, `remove_vig_three_way`) so “fair implied” is the book chance without the juice.
 
 ### Expected value and edge
 
-\[
-\mathrm{EV} = P_{\text{true}} \cdot O - 1
-\]
+- **EV** = P_true * O - 1
+- **Edge** = P_calibrated - P_fair_implied
 
-\[
-\text{edge} = P_{\text{calibrated}} - P_{\text{fair implied}}
-\]
+When model and book disagree modestly, the value finder blends:
 
-Calibration in the value finder blends model and book when they disagree modestly:
+P_true = 0.62 * P_model + 0.38 * P_fair
 
-\[
-P_{\text{true}} = 0.62\, P_{\text{model}} + 0.38\, P_{\text{fair}}
-\]
-
-and **drops** the pick if \(|P_{\text{model}} - P_{\text{fair}}| > 0.25\) (treat as model error, not a free lunch). Also skip if \(\mathrm{EV} > 0.25\) (unrealistic in liquid markets) or \(P_{\text{true}} < 0.45\) (longshot filter).
+It **drops** the pick if |P_model - P_fair| > 0.25 (treat as model error, not a free lunch). Also skip if EV > 0.25 (unrealistic in liquid markets) or P_true < 0.45 (longshot filter).
 
 ### Fractional Kelly stake
 
-\[
-f^* = \frac{P\cdot b - (1-P)}{b},\quad b = O - 1
-\]
+With b = O - 1 (net decimal odds):
 
-\[
-\text{stake fraction} = \max(0,\, f^* \cdot \kappa)
-\]
+- full Kelly fraction f* = (P * b - (1 - P)) / b
+- stake fraction = max(0, f* * kappa)
 
-with \(\kappa =\) `KELLY_FRACTION` (default **0.25**). Caps: `MAX_STAKE_PCT` of bankroll, per-match `MATCH_MAX_STAKE_PCT`.
+kappa is `KELLY_FRACTION` (default **0.25**). Caps: `MAX_STAKE_PCT` of bankroll, per-match `MATCH_MAX_STAKE_PCT`.
 
 ### Craft holdout ROI
 
 For a graded book of tickets:
 
-\[
-\mathrm{ROI} = \frac{\sum \mathrm{PnL}}{\sum \text{stake}}
-\]
+**ROI** = (sum of PnL) / (sum of stake)
 
-Hit rate = wins / settled tickets. Sport ROI uses the same ratio per sport bucket (stake ≈ \(n \times\) match budget when stake is not logged).
+Hit rate = wins / settled tickets. Sport ROI uses the same ratio per sport bucket (stake is about n times match budget when stake is not logged).
 
 ### Craft gates (desk bar)
 
@@ -205,9 +181,9 @@ All must clear:
 
 | Gate | Default |
 |------|---------|
-| Overall holdout ROI | \(\ge\) `TARGET_ROI` = **0.25** |
-| Each of soccer, basketball, cricket ROI | \(>\) **0** |
-| Holdout accuracy | \(\ge\) `TARGET_ACC` = **0.60** |
+| Overall holdout ROI | at least `TARGET_ROI` = **0.25** |
+| Each of soccer, basketball, cricket ROI | above **0** |
+| Holdout accuracy | at least `TARGET_ACC` = **0.60** |
 | Minimum ticket volume | `MIN_BETS` / `MIN_BETS_PER_SPORT` |
 
 `FLOOR_P` = **0.60**: blend / model_p floor when placing craft tickets. Soccer even-money (~1.91) paired closes use a higher model_p floor (**~0.85**) so the sport actually places bets.

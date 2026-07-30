@@ -6,7 +6,6 @@ can happen via a live-view link — no local Chrome required when configured.
 
 Env (no SDK dependency — plain HTTPS):
   BROWSERBASE_API_KEY
-  BROWSERBASE_PROJECT_ID   (optional; inferred from key on many plans)
   STAKE_CDP_URL            (optional raw ws:// / wss:// override)
 """
 from __future__ import annotations
@@ -61,10 +60,7 @@ def ensure_browserbase_context_id() -> str | None:
     except Exception:
         pass
 
-    body: dict[str, Any] = {}
-    if (s.browserbase_project_id or "").strip():
-        body["projectId"] = s.browserbase_project_id.strip()
-    created = _http_json("POST", f"{_BB_API}/contexts", body)
+    created = _http_json("POST", f"{_BB_API}/contexts", {})
     cid = str(created.get("id") or "").strip()
     if not cid:
         raise RuntimeError("Browserbase context create returned no id")
@@ -99,8 +95,6 @@ def create_remote_session(*, timeout_s: int = 7200, keep_alive: bool = True) -> 
             "blockAds": True,
         },
     }
-    if (s.browserbase_project_id or "").strip():
-        payload["projectId"] = s.browserbase_project_id.strip()
     ctx = ensure_browserbase_context_id()
     if ctx:
         payload["browserSettings"]["context"] = {"id": ctx, "persist": True}

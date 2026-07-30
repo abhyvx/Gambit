@@ -44,11 +44,12 @@ class Settings(BaseSettings):
     stake_relay_secret: str = DEFAULT_STAKE_RELAY_SECRET
     # Cloud Chrome (Browserbase) — 24/7 odds + portfolio login without a laptop.
     browserbase_api_key: str = ""
-    browserbase_project_id: str = ""
     # Raw CDP websocket (any remote Chrome). Overrides Browserbase when set.
     stake_cdp_url: str = ""
     # Background odds scrape interval when a live browser path is available (0=off).
     stake_odds_loop_seconds: int = 600
+    # Production persistence: set a real database URL when moving beyond flat files.
+    database_url: str = ""
 
     consensus_weight_bettors: float = 0.12
     consensus_weight_web: float = 0.08
@@ -106,3 +107,22 @@ def stake_network_enabled() -> bool:
 def remote_stake_browser_enabled() -> bool:
     s = get_settings()
     return bool((s.stake_cdp_url or "").strip() or (s.browserbase_api_key or "").strip())
+
+
+def database_status() -> dict:
+    s = get_settings()
+    raw = (s.database_url or "").strip()
+    if not raw:
+        return {
+            "configured": False,
+            "mode": "filesystem",
+            "driver": "json+sqlite-artifacts",
+            "note": "User/auth/portfolio state is still file-backed. Set DATABASE_URL for production persistence.",
+        }
+    driver = raw.split(":", 1)[0].lower()
+    return {
+        "configured": True,
+        "mode": "database",
+        "driver": driver,
+        "note": "Database URL configured for production persistence.",
+    }

@@ -71,6 +71,7 @@ export default function AdminPage() {
   const craft = debug?.craft || {}
   const users = debug?.users || {}
   const bundle = debug?.bundle || {}
+  const database = debug?.database || {}
   const security = debug?.security || {}
 
   return (
@@ -180,6 +181,15 @@ export default function AdminPage() {
               <li>Portfolios persisted: <strong>{bundle.portfolios ?? 0}</strong></li>
               <li>Path: <strong className="mono">{bundle.path || '—'}</strong></li>
             </ul>
+          </article>
+          <article className="admin-debug-card">
+            <h3>Database status</h3>
+            <ul className="admin-debug-list">
+              <li>Configured: <strong>{fmtBool(database.configured)}</strong></li>
+              <li>Mode: <strong>{database.mode || 'filesystem'}</strong></li>
+              <li>Driver: <strong>{database.driver || '—'}</strong></li>
+            </ul>
+            <p className="muted">{database.note || 'No database status reported yet.'}</p>
           </article>
           <article className="admin-debug-card">
             <h3>Admin security</h3>

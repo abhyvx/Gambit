@@ -19,7 +19,6 @@ Stake on your laptop.
 Set these env vars on Render:
 
 - `BROWSERBASE_API_KEY=<your real key>`
-- `BROWSERBASE_PROJECT_ID=<your project id>` (optional on some plans, but recommended)
 
 Optional alternative:
 
@@ -30,6 +29,12 @@ With Browserbase/CDP configured:
 - `/api/stake/connect` uses the remote browser path
 - portfolio connect opens a Browserbase live-view URL instead of a local popup
 - the background odds loop can keep Stake fresh server-side
+
+Production persistence:
+
+- `DATABASE_URL=<your production database url>`
+
+Today the app still stores auth/session/portfolio state in files unless `DATABASE_URL` is wired into the runtime persistence layer.
 
 If Browserbase is **not** configured, the app now stays token-only / cache-only rather than
 falling back to a local laptop popup.

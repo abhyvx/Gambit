@@ -748,7 +748,7 @@ def _require_admin(request: Request):
 def admin_accounts(request: Request):
     from bet_placer.auth.persist import bundle_path, export_users_bundle
     from bet_placer.auth.users import list_accounts_for_admin
-    from bet_placer.config import remote_stake_browser_enabled
+    from bet_placer.config import database_status, remote_stake_browser_enabled
     from bet_placer.engine.stake_odds import stake_overlay_status
     from bet_placer.ml.activity_log import get_activity_log
     from bet_placer.ml.craft_store import progress_snapshot
@@ -822,6 +822,7 @@ def admin_accounts(request: Request):
                 "users": len((bundle.get("users") or {})),
                 "portfolios": len((bundle.get("portfolios") or {})),
             },
+            "database": database_status(),
         },
     }
 

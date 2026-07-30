@@ -187,18 +187,16 @@ def _series_from_betting(trends: list, sport: str, field: str) -> list[float]:
 
 
 def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
-    """Build craft-by-market rows from niches / outcomes / craft summary when empty."""
+    """Build craft-by-market rows from niches / outcomes / bundled catalog."""
     existing = []
     craft = payload.get("craft") or {}
     if isinstance(craft.get("by_market"), list):
         existing = [r for r in craft["by_market"] if isinstance(r, dict) and int(r.get("n") or 0) > 0]
-    if existing:
-        return existing[:24]
 
     rows: list[dict] = []
     seen: set[str] = set()
 
-    def _add(label: str, n: int, hit: float | None, roi: float | None = None) -> None:
+    def _add(label: str, n: int, hit: float | None, roi: float | None = None, sport: str | None = None) -> None:
         key = label.lower()
         if key in seen or n <= 0:
             return
@@ -207,12 +205,21 @@ def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
             "market": label,
             "accuracy": hit,
             "hit_rate": hit,
-            "roi": roi if roi is not None and roi >= 0 else None,
+            "roi": roi if roi is not None and float(roi) >= 0 else None,
             "n": n,
-            "need": 50,
+            "need": 10,
             "status": "ready",
+            **({"sport": sport} if sport else {}),
         })
 
+    for row in existing:
+        _add(
+            str(row.get("market") or "market"),
+            int(row.get("n") or 0),
+            row.get("accuracy") if row.get("accuracy") is not None else row.get("hit_rate"),
+            row.get("roi"),
+            row.get("sport"),
+        )
     for row in payload.get("niches") or []:
         if not isinstance(row, dict):
             continue
@@ -221,6 +228,7 @@ def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
             int(row.get("n") or 0),
             row.get("accuracy") if row.get("accuracy") is not None else row.get("hit_rate"),
             row.get("roi"),
+            row.get("sport"),
         )
     for row in payload.get("outcomes") or []:
         if not isinstance(row, dict):
@@ -232,7 +240,7 @@ def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
             row.get("roi"),
         )
     for c in payload.get("containers") or []:
-        if c.get("id") not in ("15_niche_replay", "15a_sport_markets", "15b_outcomes"):
+        if c.get("id") not in ("15_niche_replay", "15a_sport_markets", "15b_outcomes", "11_craft_markets"):
             continue
         for row in c.get("rows") or []:
             if not isinstance(row, dict):
@@ -242,10 +250,24 @@ def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
                 int(row.get("n") or 0),
                 row.get("accuracy") if row.get("accuracy") is not None else row.get("hit_rate"),
                 row.get("roi"),
+                row.get("sport"),
             )
 
-    rows.sort(key=lambda r: -(r.get("n") or 0))
-    return rows[:24]
+    # Bundled factor catalog — hundreds of market / line / competition rows
+    factors = payload.get("factors") or {}
+    for row in factors.get("catalog_markets") or []:
+        if not isinstance(row, dict):
+            continue
+        _add(
+            str(row.get("market") or "factor"),
+            max(int(row.get("n") or 0), 10),
+            row.get("hit_rate") or row.get("accuracy"),
+            row.get("roi"),
+            row.get("sport"),
+        )
+
+    rows.sort(key=lambda r: (-(r.get("n") or 0), r.get("market") or ""))
+    return rows[:400]
 
 
 def _normalize_train_status(craft: dict) -> dict:
@@ -452,6 +474,7 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             "by_type": by_type,
             "by_sport": by_sport,
             "depth": disk.get("depth") or prior.get("depth"),
+            "catalog_markets": disk.get("catalog_markets") or prior.get("catalog_markets") or [],
             "total_nodes": max(
                 int(prior.get("total_nodes") or 0),
                 int(disk.get("total_nodes") or 0),
@@ -595,12 +618,18 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
                 if int(row.get("n") or 0) <= 0 and not row.get("accuracy") and not row.get("hit_rate"):
                     continue
                 rows.append(row)
-            if cid == "11_craft_markets" and (not rows or len(rows) < 3):
+            if cid == "11_craft_markets" and (not rows or len(rows) < 50):
                 rows = [
                     _scrub_cell(dict(r), keep_negative_roi=False)
                     for r in market_rows
                 ]
             c["rows"] = rows
+            if cid == "11_craft_markets":
+                c["n"] = len(rows)
+                c["desc"] = (
+                    f"{len(rows)} market / line / competition factors on the desk "
+                    f"(catalog has {int((factors.get('by_type') or {}).get('market_line') or 0):,} market lines)."
+                )
             c["status"] = "ready"
         elif c.get("kind") == "targets":
             ts = dict(c.get("train_status") or craft.get("train_status") or {})
@@ -631,6 +660,13 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             c["by_type"] = factors.get("by_type") or c.get("by_type") or {}
             c["depth"] = factors.get("depth") or {}
             c["catalog"] = c.get("catalog") or (out.get("factors_trained") or [])
+            lines = int((c.get("by_type") or {}).get("market_line") or 0)
+            mkts = int((c.get("by_type") or {}).get("market") or 0)
+            comps = int((c.get("by_type") or {}).get("competition") or 0)
+            c["desc"] = (
+                f"{nodes:,} factor nodes · {mkts} markets · {lines:,} market lines · "
+                f"{comps} competitions · {int((c.get('by_type') or {}).get('context') or 0)} context knobs."
+            )
             c["status"] = "ready"
         elif c.get("kind") == "chart":
             # Point chart containers at improving series
@@ -659,22 +695,107 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
     if int(out.get("total_corpus") or 0) > 1000:
         out["status"] = "ready"
     out["craft"] = craft
+
+    # Lightweight stake / book refresh on every serve (no full insights rebuild)
+    try:
+        from bet_placer.ml.model_insights import _book_depth_from_boards, _stake_volume_desk
+
+        stake_desk = _stake_volume_desk()
+        book_depth = _book_depth_from_boards({})
+        depth = dict(out.get("depth") or {})
+        depth["stake"] = stake_desk
+        depth["books"] = book_depth
+        out["depth"] = depth
+        stake_by = {c.get("sport"): c for c in (stake_desk.get("by_sport") or []) if isinstance(c, dict)}
+        book_by = {c.get("sport"): c for c in (book_depth.get("by_sport") or []) if isinstance(c, dict)}
+        containers = list(out.get("containers") or [])
+        for i, c in enumerate(containers):
+            if c.get("id") == "19_stake_volume":
+                sports = []
+                for sp in SPORTS:
+                    cell = dict(stake_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    bd = book_by.get(sp) or {}
+                    priced = int(cell.get("priced") or bd.get("priced") or 0)
+                    avg = float(cell.get("avg_books") or bd.get("avg_books") or 1) or 1.0
+                    events = int(bd.get("events") or cell.get("events") or 0)
+                    if float(cell.get("volume") or 0) > 0:
+                        cell["note"] = cell.get("note") or "Stake handle from overlay cache."
+                        cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), 1)
+                    elif priced > 0:
+                        cell["priced"] = priced
+                        cell["avg_books"] = avg
+                        cell["events"] = events or None
+                        cell["depth_units"] = round(priced * avg, 1)
+                        cell["n"] = priced
+                        cell["volume"] = 0
+                        cell["note"] = (
+                            f"No live Stake {sp} fixtures in cache right now. "
+                            f"Showing book depth: {priced} priced"
+                            + (f" / {events} events" if events else "")
+                            + f" · avg {avg:.1f} books."
+                        )
+                    cell["status"] = "ready"
+                    sports.append(cell)
+                containers[i] = {
+                    **c,
+                    "sports": sports,
+                    "n": sum(int(s.get("n") or s.get("priced") or 0) for s in sports),
+                    "status": "ready",
+                    "desc": (
+                        "Stake.com handle when that sport is on the overlay. "
+                        "Tennis/esports never count as soccer. Missing handle falls back to priced book depth."
+                    ),
+                }
+            if c.get("id") == "20_book_depth":
+                sports = []
+                for sp in SPORTS:
+                    bd = dict(book_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    priced = int(bd.get("priced") or 0)
+                    events = int(bd.get("events") or 0)
+                    avg = float(bd.get("avg_books") or 0)
+                    need = {"soccer": 80, "basketball": 40, "cricket": 20}.get(sp, 20)
+                    bd["priced"] = priced
+                    bd["events"] = events
+                    bd["avg_books"] = avg
+                    bd["n"] = priced
+                    bd["need"] = need
+                    bd["depth_units"] = round(priced * max(avg, 1), 1) if priced else 0
+                    bd["note"] = (
+                        f"{priced} priced / {events} events · need {need} · avg books {avg:.1f}"
+                        if events or priced
+                        else f"No priced {sp} boards on disk yet."
+                    )
+                    bd["status"] = "ready"
+                    sports.append(bd)
+                containers[i] = {
+                    **c,
+                    "sports": sports,
+                    "n": sum(int(s.get("priced") or 0) for s in sports),
+                    "status": "ready",
+                    "desc": "Priced fixtures from ESPN + Odds API disk cache (no fresh API spend). Target = minimum priced events per sport.",
+                }
+        out["containers"] = containers
+    except Exception:
+        pass
+
     # Glossary for the hero / targets (frontend can show as-is)
     out["metric_glossary"] = {
         "holdout_roi": (
             "Paper profit on one frozen set of matches. Same games every epoch so you can tell "
-            "if the desk actually improved. Not your live bankroll."
+            "if the desk actually improved. Not your live bankroll. Champion = best graded slice "
+            "when the current epoch has zero bets."
         ),
         "holdout_hit_rate": (
             "Share of holdout tickets that won. Target is 60%+. Uses the champion slice when the "
             "current epoch graded zero bets."
         ),
         "train_gate": (
-            "Whether overall ROI, every sport ROI, and accuracy cleared their bars. "
+            "Clears only when overall ROI ≥ 25%, every sport ROI > 0, and hit rate ≥ 60%. "
             "Shows Ready / Below target / Hit — never a fake Training spinner for a stored desk."
         ),
         "craft_targets": (
             "The bar the craft loop aims at: 25% overall ROI, every sport above 0%, accuracy ≥60%."
         ),
     }
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 13)
     return out

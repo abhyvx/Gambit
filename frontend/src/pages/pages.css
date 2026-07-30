@@ -4688,6 +4688,22 @@
   gap: 12px;
   margin-bottom: 18px;
 }
+.insight-glossary {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.insight-glossary p { margin: 0; }
+.insight-glossary strong { color: var(--text); font-weight: 600; }
+.insight-market-scroll {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
 .insight-corpus-track {
   display: flex;
   height: 12px;

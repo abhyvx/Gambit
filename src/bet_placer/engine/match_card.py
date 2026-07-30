@@ -1506,7 +1506,7 @@ def build_match_card_slip(
 
     return {
         "id": "match_card",
-        "name": f"🎫 {path_label}" if path_label else "🎫 Your match card",
+        "name": f" {path_label}" if path_label else " Your match card",
         "description": (
             (f"{path_label} · " if path_label else "")
             + f"{len(singles)} separate singles"
@@ -1751,7 +1751,7 @@ def build_match_card_plan(
     return {
         "plan_type": "match_card",
         "plan_type_label": label,
-        "name": "🎫 Your match card",
+        "name": " Your match card",
         "description": slip["description"],
         "why": slip["why"],
         "path_headline": headline,

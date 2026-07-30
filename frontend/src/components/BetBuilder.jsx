@@ -40,10 +40,8 @@ const ISO2 = {
   'New Zealand': 'nz', Jamaica: 'jm', Honduras: 'hn',
 }
 
-function flagEmoji(name) {
-  const code = ISO2[name]
-  if (!code || code.includes('-')) return '🏴'
-  return code.toUpperCase().replace(/./g, (ch) => String.fromCodePoint(127397 + ch.charCodeAt(0)))
+function flagEmoji(_name) {
+  return ''
 }
 
 function fmtKickoff(iso) {
@@ -217,7 +215,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
     return (
       <div className="sk slip-tab-content">
         <div className="stake-fallback">
-          <span className="fallback-icon" aria-hidden>🔒</span>
+          <span className="fallback-icon" aria-hidden></span>
           <h5>Bet menu unavailable</h5>
           <p>{error || data?.reason || 'Could not build the bet menu for this match.'}</p>
         </div>
@@ -231,7 +229,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
   const recKeys = new Set(recommended.map((p) => keyOf(p)))
 
   // Tabs in Stake's order, only those with markets present.
-  const presentCats = new Set(data.categories.map((c) => c.category))
+  const presentCats = new Set((data.categories || []).map((c) => c.category))
   const tabs = STAKE_TABS.filter((t) => t.id === 'All' || t.id === 'Main' || presentCats.has(t.id))
 
   // "Main" = Stake's curated headline board: full-match result/goals/BTTS/handicap,
@@ -282,7 +280,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
       >
         {!oddsOnly && (
           <span className="sk-out-main">
-            <span className="sk-out-label">{rec && <span className="sk-star">★</span>}{o.label}</span>
+            <span className="sk-out-label">{rec && <span className="sk-star"></span>}{o.label}</span>
             {our != null && (
               <span className="sk-out-read">
                 <span className="sk-read-prob">{our}% model</span>
@@ -294,7 +292,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
         <span className="sk-out-right">
           {rated && <span className={`sk-out-badge ${TONE_CLASS[v.tone]}`}>{v.icon}</span>}
           {oddsOnly && our != null && <span className="sk-cell-prob">{our}%</span>}
-          {oddsOnly && rec && <span className="sk-star">★</span>}
+          {oddsOnly && rec && <span className="sk-star"></span>}
           <span className="sk-out-odds">{o.odds}</span>
         </span>
       </button>
@@ -403,7 +401,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
 
           {data.source !== 'stake' && (
             <div className="builder-warn" style={{ margin: '0 0 12px' }}>
-              ⚠️ Stake hasn't opened the full live board for this game yet - these are our estimated prices.
+              Stake hasn't opened the full live board for this game yet - these are our estimated prices.
             </div>
           )}
 
@@ -474,7 +472,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
                           <div className="apick-top"><span className="apick-tag">{p.tag}</span><span className="apick-odds">{p.odds}x</span></div>
                           {p.market_label && <div className="apick-mkt">{p.market_label}</div>}
                           <div className="apick-label">{p.label}{p.our_probability_pct != null && <span className="apick-pct">{p.our_probability_pct}%</span>}</div>
-                          <div className="apick-add">{blocked ? 'conflicts with slip' : sel ? '✓ in slip' : '+ add'}</div>
+                          <div className="apick-add">{blocked ? 'conflicts with slip' : sel ? ' in slip' : '+ add'}</div>
                         </button>
                       )
                     })}
@@ -572,7 +570,7 @@ export default function BetBuilder({ home, away, budget, sport }) {
                       <div><span>Back if it hits</span><strong className="green">{formatINR(Math.round(multiReturn))}</strong></div>
                     </div>
                     <p className="slip-multi-note">All {picks.length} legs must win or you lose the whole bet.</p>
-                    {data.parlay_caution && <p className="slip-multi-caution">⚠️ {data.parlay_caution}</p>}
+                    {data.parlay_caution && <p className="slip-multi-caution"> {data.parlay_caution}</p>}
                   </div>
                 )}
 

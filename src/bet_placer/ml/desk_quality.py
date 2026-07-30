@@ -337,7 +337,10 @@ def _plain_titles(c: dict) -> dict:
     if cid in labels:
         title, desc = labels[cid]
         out["title"] = title
-        out["desc"] = desc
+        # Keep richer stake/book fallback copy when already present
+        prior_desc = str(out.get("desc") or "")
+        if len(prior_desc) < len(desc) + 20:
+            out["desc"] = desc
     return out
 
 
@@ -902,14 +905,25 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             if c.get("id") == "19_stake_volume":
                 sports = []
                 for sp in SPORTS:
-                    cell = dict(stake_by.get(sp) or prior_stake.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    live = stake_by.get(sp) or {}
+                    prior = prior_stake.get(sp) or {}
+                    # Preserve real handle: never let a cold live scan wipe prior volume
+                    cell = dict(prior)
+                    cell.update({k: v for k, v in live.items() if v not in (None, "", [])})
+                    cell["sport"] = sp
+                    for k in ("volume", "users", "fixtures", "priced", "bets", "markets", "combos"):
+                        try:
+                            cell[k] = max(float(prior.get(k) or 0), float(live.get(k) or 0))
+                        except (TypeError, ValueError):
+                            pass
                     bd = book_by.get(sp) or prior_book.get(sp) or {}
                     priced = int(cell.get("priced") or bd.get("priced") or 0)
                     avg = float(cell.get("avg_books") or bd.get("avg_books") or 1) or 1.0
                     events = int(bd.get("events") or cell.get("events") or 0)
-                    if float(cell.get("volume") or 0) > 0:
+                    vol = float(cell.get("volume") or 0)
+                    if vol > 0:
                         cell["note"] = cell.get("note") or "Stake handle from overlay cache."
-                        cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), 1)
+                        cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), int(vol), 1)
                         if priced:
                             cell["priced"] = priced
                     elif priced > 0:
@@ -918,7 +932,7 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
                         cell["events"] = events or None
                         cell["depth_units"] = round(priced * avg, 1)
                         cell["n"] = priced
-                        cell["volume"] = 0
+                        # Do not force volume=0 over a prior handle — already max'd above
                         cell["note"] = (
                             f"No live Stake {sp} fixtures in cache right now. "
                             f"Showing book depth: {priced} priced"
@@ -935,7 +949,10 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
                 containers[i] = {
                     **c,
                     "sports": sports,
-                    "n": sum(int(s.get("n") or s.get("priced") or 0) for s in sports),
+                    "n": sum(
+                        int(float(s.get("volume") or 0) or s.get("n") or s.get("priced") or 0)
+                        for s in sports
+                    ),
                     "status": "ready",
                     "desc": (
                         "Stake.com handle when that sport is on the overlay. "
@@ -947,8 +964,12 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
                 for sp in SPORTS:
                     fresh = book_by.get(sp) or {}
                     prior = prior_book.get(sp) or {}
-                    # Keep prior priced if fresh disk scan is empty (common on free Render)
-                    if int(fresh.get("priced") or 0) > 0:
+                    # Prefer richer prior over thin fresh cold-disk scans
+                    if int(prior.get("priced") or 0) >= int(fresh.get("priced") or 0) and int(prior.get("priced") or 0) > 0:
+                        bd = dict(prior)
+                        bd.update({k: v for k, v in fresh.items() if v not in (None, "", []) and k != "priced"})
+                        bd["priced"] = max(int(prior.get("priced") or 0), int(fresh.get("priced") or 0))
+                    elif int(fresh.get("priced") or 0) > 0:
                         bd = dict(fresh)
                     elif int(prior.get("priced") or 0) > 0:
                         bd = dict(prior)
@@ -1056,21 +1077,21 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
     out["containers"] = containers
     out = _rewrite_takeaways(out)
     out["desk_revision"] = {
-        "version": max(int(out.get("cache_version") or 0), 18),
-        "label": "Desk v18 · safe odds + clear labels",
+        "version": max(int(out.get("cache_version") or 0), 19),
+        "label": "Desk v19 · preserve data + clear labels",
         "notes": [
-            "Odds / Build / Recs never launch browser on the API host",
-            "Takeaways and craft labels are plain English",
-            "Paper craft targets re-sync after bundled learning merge",
-            "Admin Users is its own dashboard; patch notes at the bottom",
+            "Stake/book depth keep max(prior, live) — never wipe real handles",
+            "Bundled learning soft-merges without inventing running state",
+            "Odds / Build / Recs stay cache/relay-safe on the API host",
+            "Conviction-first recommendations across markets",
         ],
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 18)
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 19)
     return out
 
 
 def _rewrite_takeaways(payload: dict[str, Any]) -> dict[str, Any]:
-    """Replace messy / stale takeaway bullets with short live lines every serve."""
+    """Replace empty / stale +0.0% takeaway bullets — keep real host lines."""
     out = dict(payload)
     craft = out.get("craft") or {}
     best = _first_finite(craft.get("best_roi"), craft.get("champion_roi"), craft.get("holdout_roi")) or 0.0
@@ -1085,7 +1106,6 @@ def _rewrite_takeaways(payload: dict[str, Any]) -> dict[str, Any]:
         lines.append(f"Paper holdout ROI {hold_f * 100:+.1f}% · gate still needs 25% overall")
     if epochs > 0:
         lines.append(f"{epochs:,} craft epochs logged")
-    # Sport ROIs from container 07
     for c in out.get("containers") or []:
         if c.get("id") != "07_craft_roi_sport":
             continue
@@ -1107,7 +1127,17 @@ def _rewrite_takeaways(payload: dict[str, Any]) -> dict[str, Any]:
     containers = []
     for c in out.get("containers") or []:
         if c.get("id") == "24_takeaways":
-            containers.append({**c, "rows": lines, "desc": "Highest-signal desk lines only."})
+            host_rows = [str(r) for r in (c.get("rows") or []) if r]
+            stale = (
+                not host_rows
+                or all("+0.0%" in r or "0.0%" in r or "champion ROI" in r.lower() for r in host_rows)
+                or any("stake dump" in r.lower() or "overlay map" in r.lower() for r in host_rows)
+            )
+            containers.append({
+                **c,
+                "rows": lines if stale else host_rows[:6],
+                "desc": "Highest-signal desk lines only.",
+            })
         elif c.get("id") == "25_craft_notes":
             rows = list(c.get("rows") or [])[:5]
             containers.append({**c, "rows": rows or ["No craft notes yet."]})
@@ -1160,12 +1190,21 @@ def _merge_bundled_learning(payload: dict[str, Any]) -> dict[str, Any]:
             if bundled is None:
                 continue
             if key.startswith("craft_sport_"):
-                if isinstance(bundled, dict) and (
-                    not isinstance(host, dict)
-                    or sum(len(v or []) for v in bundled.values())
-                    > sum(len(v or []) for v in (host or {}).values())
-                ):
+                if not isinstance(bundled, dict):
+                    continue
+                # Prefer host series that already have signal; don't swap for longer zeros
+                if not isinstance(host, dict):
                     curves[key] = bundled
+                    continue
+                merged_sp = dict(host)
+                for sp, series in bundled.items():
+                    host_s = host.get(sp) or []
+                    bund_s = series or []
+                    if _series_peak(bund_s) > _series_peak(host_s) + 0.002:
+                        merged_sp[sp] = bund_s
+                    elif not host_s and bund_s:
+                        merged_sp[sp] = bund_s
+                curves[key] = merged_sp
                 continue
             host_best = _series_peak(host)
             bund_best = _series_peak(bundled)
@@ -1193,10 +1232,34 @@ def _merge_bundled_learning(payload: dict[str, Any]) -> dict[str, Any]:
             if fc.get("by_sport_best"):
                 craft["by_sport_best"] = fc["by_sport_best"]
             if fc.get("train_status"):
-                # Keep live running state; otherwise adopt bundled gates/sports
+                # Lift numeric gates only — never adopt a fake "running" state from static JSON
                 ts = dict(craft.get("train_status") or {})
-                if ts.get("state") != "running":
-                    craft["train_status"] = {**ts, **(fc.get("train_status") or {})}
+                fts = dict(fc.get("train_status") or {})
+                for k in (
+                    "champion_roi", "best_roi", "holdout_roi",
+                    "champion_accuracy", "best_accuracy", "holdout_accuracy",
+                    "target_roi", "target_accuracy", "epoch", "bets",
+                ):
+                    try:
+                        hv = float(ts[k]) if ts.get(k) is not None else None
+                    except (TypeError, ValueError):
+                        hv = None
+                    try:
+                        bv = float(fts[k]) if fts.get(k) is not None else None
+                    except (TypeError, ValueError):
+                        bv = None
+                    if bv is not None and (hv is None or bv > hv):
+                        ts[k] = bv
+                if isinstance(fts.get("gates"), dict):
+                    ts["gates"] = {**(ts.get("gates") or {}), **fts["gates"]}
+                if isinstance(fts.get("sports"), dict) and not ts.get("sports"):
+                    ts["sports"] = fts["sports"]
+                # Keep host state unless idle/empty
+                if ts.get("state") in (None, "", "idle", "needs_train") and fts.get("state") not in (
+                    "running", "training", "building",
+                ):
+                    ts["state"] = fts.get("state") or ts.get("state")
+                craft["train_status"] = ts
             out["craft"] = craft
 
         patch = frag.get("containers_patch") or {}
@@ -1205,7 +1268,51 @@ def _merge_bundled_learning(payload: dict[str, Any]) -> dict[str, Any]:
             for c in out.get("containers") or []:
                 cid = c.get("id")
                 if cid in patch and isinstance(patch[cid], dict):
-                    containers.append({**c, **patch[cid]})
+                    # Soft merge: keep host sports/rows when richer; never blind-replace
+                    patched = dict(patch[cid])
+                    merged = dict(c)
+                    for k, v in patched.items():
+                        if k in ("title", "desc"):
+                            continue  # plain titles applied later
+                        if k == "sports" and isinstance(v, list) and isinstance(c.get("sports"), list):
+                            by_sp = {str(s.get("sport")): dict(s) for s in c["sports"] if isinstance(s, dict)}
+                            for s in v:
+                                if not isinstance(s, dict):
+                                    continue
+                                sp = str(s.get("sport") or "")
+                                host_s = by_sp.get(sp) or {}
+                                cell = dict(host_s)
+                                for ck, cv in s.items():
+                                    if cv in (None, "", []):
+                                        continue
+                                    if ck in ("n", "roi", "hit_rate", "accuracy", "volume", "priced", "last_n"):
+                                        try:
+                                            hv = float(host_s.get(ck)) if host_s.get(ck) is not None else None
+                                            bv = float(cv)
+                                            if hv is None or bv > hv:
+                                                cell[ck] = cv
+                                        except (TypeError, ValueError):
+                                            cell[ck] = cv
+                                    else:
+                                        cell.setdefault(ck, cv)
+                                by_sp[sp] = cell
+                            merged["sports"] = [by_sp[sp] for sp in ("soccer", "basketball", "cricket") if sp in by_sp] or list(by_sp.values())
+                        elif k == "rows" and isinstance(v, list) and c.get("rows"):
+                            continue  # keep host takeaways/notes
+                        elif k in ("best_roi", "holdout_roi", "champion_roi", "best_accuracy", "holdout_accuracy", "best_bets", "n_epochs", "n"):
+                            try:
+                                hv = float(c[k]) if c.get(k) is not None else None
+                            except (TypeError, ValueError):
+                                hv = None
+                            try:
+                                bv = float(v) if v is not None else None
+                            except (TypeError, ValueError):
+                                bv = None
+                            if bv is not None and (hv is None or bv > hv):
+                                merged[k] = v
+                        elif k not in merged or merged.get(k) in (None, "", [], {}):
+                            merged[k] = v
+                    containers.append(merged)
                 else:
                     containers.append(c)
             out["containers"] = containers

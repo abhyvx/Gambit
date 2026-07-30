@@ -436,7 +436,7 @@ def _search_singles(pool, budget, target, profile, stake_only, ctx, home, away) 
         out.append({
             "plan_type": "single",
             "plan_type_label": "Single bet",
-            "name": "🎯 Single to target",
+            "name": " Single to target",
             "description": f"{opt.label} @ {opt.odds}x — stake {format_inr(stake)}",
             "why": (
                 f"One bet: if it wins you get {format_inr(ret)} "
@@ -828,7 +828,7 @@ def _search_stake_combos(
         out.append({
             "plan_type": "stake_combo",
             "plan_type_label": "Stake SGM (verified combo)",
-            "name": "🔗 Stake combo",
+            "name": " Stake combo",
             "description": f"{c['label']} @ {c['odds']}x — scraped from Stake Combos",
             "why": (
                 f"This exact combo exists on Stake under Combos. "
@@ -934,7 +934,7 @@ def _allocate_split(combo, budget, target, profile, stake_only, home: str = "", 
     return {
         "plan_type": "split",
         "plan_type_label": f"Separate singles · {n} must all win",
-        "name": "📊 Separate singles (all hit)",
+        "name": " Separate singles (all hit)",
         "description": f"{n} independent singles on Stake · {labels}",
         "why": (
             f"Place {n} separate singles — not a same-game multi. "
@@ -992,7 +992,7 @@ def _search_target_hit_routes(
         out.append({
             "plan_type": "coverage",
             "plan_type_label": f"Target routes · {n} singles",
-            "name": f"🎯 {n} routes to {format_inr(target)}",
+            "name": f" {n} routes to {format_inr(target)}",
             "description": f"{n} separate singles — any one pays {format_inr(target)} if it wins",
             "why": _target_route_why(legs, target, p_win),
             "path_headline": _target_route_headline(legs, target, p_win),
@@ -1105,7 +1105,7 @@ def _search_coverage(pool, budget, target, profile, stake_only, ctx, betting_sty
             plan = {
                 "plan_type": "coverage",
                 "plan_type_label": f"Separate singles · {n} routes",
-                "name": f"🛤️ {n} routes to {format_inr(target)}",
+                "name": f" {n} routes to {format_inr(target)}",
                 "description": f"{n} separate singles — any one can hit your target if it wins",
                 "why": _target_route_why(legs, target, p_win),
                 "path_headline": _target_route_headline(legs, target, p_win),
@@ -1269,7 +1269,7 @@ def _search_ticket_stack(
         plan = {
             "plan_type": "coverage",
             "plan_type_label": f"{n} separate tickets",
-            "name": f"🎫 {n}-ticket stack",
+            "name": f" {n}-ticket stack",
             "description": (
                 f"{n} separate bets on Stake — {format_inr(total)} deployed. "
                 f"Target ticket nets {format_inr(net)} if it wins."
@@ -1386,7 +1386,7 @@ def _search_spray_routes(
                 plan = {
                     "plan_type": "coverage",
                     "plan_type_label": f"{n} separate tickets",
-                    "name": f"🎫 {n}-ticket spread",
+                    "name": f" {n}-ticket spread",
                     "description": (
                         f"{n} separate bets — {format_inr(total)} deployed. "
                         f"If the target route wins you net {format_inr(net)}."
@@ -1587,7 +1587,7 @@ def _search_moderate_sgm_portfolio(
         plan = {
             "plan_type": "coverage",
             "plan_type_label": f"Stake SGMs · {len(legs)} separate tickets",
-            "name": f"🔗 {len(legs)} Stake SGMs",
+            "name": f" {len(legs)} Stake SGMs",
             "description": (
                 f"{len(legs)} verified same-game multis on Stake — "
                 f"{format_inr(total)} deployed · lead SGM ~{p_target:.0%}"
@@ -1802,7 +1802,7 @@ def _search_spread_portfolio(
         plan = {
             "plan_type": "match_card",
             "plan_type_label": f"Spread portfolio · {n} separate tickets",
-            "name": f"🎫 {n}-ticket spread",
+            "name": f" {n}-ticket spread",
             "description": (
                 f"{n} separate bets on Stake — {format_inr(total)} deployed, "
                 f"{format_inr(reserve)} kept · lotto ticket nets {format_inr(net)} if it hits"
@@ -1951,7 +1951,7 @@ def _search_volume_singles(
             plan = {
                 "plan_type": "match_card",
                 "plan_type_label": f"Match card · {n} separate singles",
-                "name": "🎫 Spread singles (your style)",
+                "name": " Spread singles (your style)",
                 "description": (
                     f"{n} separate singles ~{format_inr(per_stake)} each — "
                     f"combined wins can reach {format_inr(target)}"

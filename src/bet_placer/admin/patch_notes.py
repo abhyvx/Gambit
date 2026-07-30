@@ -11,6 +11,24 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v19",
+        "cycle": "odds-crash-recs-data",
+        "at": "2026-07-30",
+        "title": "Odds blank fix, preserve desk data, conviction-first recs",
+        "fixed": [
+            "Odds tab crashed blank when board-estimate categories used markets/outcomes instead of options",
+            "Model desk wiped Stake handles / thinned book depth and compressed container numbers",
+            "Admin history corpus / token / portfolio counts showed 0; patch notes easy to miss",
+            "Recs preferred high-odds underdogs over sides more likely to win",
+        ],
+        "changes": [
+            "Odds UI accepts both Stake and board shapes; API book fallback includes options",
+            "Desk polish keeps max(prior, live) volumes and soft-merges bundled learning",
+            "Admin reads report.trained_on_history, connection token flag, portfolio counts from bets",
+            "Conviction-first ranking (≥55% chance) across value/build/analyze; emojis removed from UI paths",
+        ],
+    },
+    {
         "version": "v18",
         "cycle": "odds-safe-admin-split",
         "at": "2026-07-30",

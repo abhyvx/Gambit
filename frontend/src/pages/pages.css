@@ -3365,7 +3365,7 @@
 .agegate-card > p { color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6; margin-bottom: var(--sp-4); }
 .agegate-points { text-align: left; list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: var(--sp-5); }
 .agegate-points li { position: relative; padding-left: 24px; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; }
-.agegate-points li::before { content: '✓'; position: absolute; left: 0; color: var(--brand-2); font-weight: 800; }
+.agegate-points li::before { content: ''; position: absolute; left: 0; top: 0.55em; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--brand-2); }
 .agegate-accept {
   width: 100%; padding: 14px; border-radius: var(--r-md);
   background: var(--grad-brand); color: #fff; font-weight: 800; font-size: var(--fs-base);

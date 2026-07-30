@@ -288,7 +288,7 @@ function pathOptionTitle(opt, index) {
     const pl = (opt?.path_label || '').replace(/^Stake SGM ·\s*/i, '').trim()
     return pl ? `Stake SGM · ${pl}` : 'Stake SGM'
   }
-  const pl = (opt?.path_label || '').replace(/^🎫\s*/, '').trim()
+  const pl = (opt?.path_label || '').replace(/^\s*/, '').trim()
   const legs = pathLegLabels(opt)
   if (pl && / path$/i.test(pl)) return pl
   if (pl && /\balt\b/i.test(pl) && !pl.includes('tickets ·')) return pl.split('·')[0].trim()
@@ -593,7 +593,7 @@ function PathOptionContent({ opt, index, compact = false }) {
     <>
       <div className="path-option-head">
         <span className="path-option-title">
-          {(opt.is_recommended_option || opt.pick_label === 'Our pick') && '★ '}
+          {(opt.is_recommended_option || opt.pick_label === 'Our pick') && ' '}
           {title}
         </span>
         <div className="path-option-badges">
@@ -1152,22 +1152,41 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
               </span>
               {stake.note && <p className="muted">{stake.note}</p>}
               <p className="muted">Payouts at {formatINR(perMatchBudget)} stake:</p>
-              {stake.categories.map((cat) => (
-                <div key={cat.category} className="options-category">
-                  <h5>{cat.category}</h5>
-                  <div className="table-wrap">
-                    <table className="options-table">
-                      <thead><tr><th>Bet</th><th>Odds</th><th>Payout</th></tr></thead>
-                      <tbody>
-                        {cat.options.map((o, i) => (
-                          <tr key={i}><td>{o.label}</td><td className="odds-cell">{o.odds}x</td><td className="green">{formatINR(o.return_inr)}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
+              {(Array.isArray(stake.categories) ? stake.categories : []).map((cat, ci) => {
+                const rows = Array.isArray(cat?.options) && cat.options.length
+                  ? cat.options
+                  : (cat?.markets || []).flatMap((m) =>
+                    (m?.outcomes || []).map((o) => ({
+                      label: o.label || o.selection || m.market_label,
+                      odds: o.odds,
+                      return_inr: o.return_inr ?? o.payout_inr,
+                    })),
+                  )
+                if (!rows.length) return null
+                return (
+                  <div key={cat?.category || `cat-${ci}`} className="options-category">
+                    <h5>{cat?.category || 'Markets'}</h5>
+                    <div className="table-wrap">
+                      <table className="options-table">
+                        <thead><tr><th>Bet</th><th>Odds</th><th>Payout</th></tr></thead>
+                        <tbody>
+                          {rows.map((o, i) => (
+                            <tr key={i}>
+                              <td>{o.label}</td>
+                              <td className="odds-cell">{o.odds}x</td>
+                              <td className="green">{formatINR(o.return_inr ?? o.payout_inr ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              ))}
-              <a className="stake-open-btn" href={stake.stake_url} target="_blank" rel="noreferrer">Open on Stake →</a>
+                )
+              })}
+              {!(stake.categories || []).some((c) => (c?.options || []).length || (c?.markets || []).some((m) => (m?.outcomes || []).length)) && (
+                <p className="muted">No priced markets returned for this match.</p>
+              )}
+              <a className="stake-open-btn" href={stake.stake_url || 'https://stake.com/sports'} target="_blank" rel="noreferrer">Open on Stake →</a>
             </div>
           )}
         </div>

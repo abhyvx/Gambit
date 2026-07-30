@@ -789,6 +789,21 @@ def admin_accounts(request: Request):
             port_n = sum(1 for _ in port_dir.glob("*.json"))
     except Exception:
         port_n = 0
+    # When DB-backed portfolios aren't on disk, count accounts that already have bets
+    if port_n <= 0:
+        port_n = sum(1 for row in accounts if int(row.get("bet_count") or 0) > 0)
+    report = params.get("report") if isinstance(params.get("report"), dict) else {}
+    trained_history = int(
+        params.get("trained_on_history")
+        or report.get("trained_on_history")
+        or params.get("trained_on")
+        or 0
+    )
+    sport_history = (
+        params.get("trained_on_sport_history")
+        or report.get("trained_on_sport_history")
+        or {}
+    )
     return {
         "accounts": accounts,
         "odds_link": relay_heartbeat(),
@@ -819,11 +834,11 @@ def admin_accounts(request: Request):
                 "active_sessions": sum(int(row.get("sessions") or 0) for row in accounts),
             },
             "model": {
-                "trained_on": int(params.get("trained_on") or 0),
-                "trained_on_history": int(params.get("trained_on_history") or 0),
-                "trained_on_sport_history": params.get("trained_on_sport_history") or {},
-                "trained_on_boards": params.get("trained_on_boards") or {},
-                "updated_at": params.get("updated_at"),
+                "trained_on": int(params.get("trained_on") or trained_history or 0),
+                "trained_on_history": trained_history,
+                "trained_on_sport_history": sport_history,
+                "trained_on_boards": params.get("trained_on_boards") or report.get("trained_on_boards") or {},
+                "updated_at": params.get("updated_at") or report.get("updated_at"),
                 "activity_log": get_activity_log(limit=12),
             },
             "craft": craft,
@@ -1662,7 +1677,7 @@ def analyze(
     match: str | None = None,
     event_id: str | None = None,
     bankroll: float = Query(default=200.0, ge=10, le=1_000_000),
-    goal: str = Query(default="value"),
+    goal: str = Query(default="preserve"),
     risk: str = Query(default="medium"),
     structure: str = Query(default="spread"),
     target_cashout_inr: float | None = Query(default=None),

@@ -395,7 +395,7 @@ def polish_slip_legs(slip: dict, home: str, away: str, ctx: dict | None = None) 
     leg_names = [l["label"] for l in polished if l.get("label")]
     out["path_legs"] = leg_names
     pl = (out.get("path_label") or "").strip()
-    if leg_names and (not pl or pl.startswith("🎫") or "tickets ·" in pl):
+    if leg_names and (not pl or pl.startswith("") or "tickets ·" in pl):
         rebuilt = path_label_from_legs(polished)
         if rebuilt:
             out["path_label"] = rebuilt
@@ -428,7 +428,7 @@ SINGLE_MIN_PROB = 0.54          # one best bet: still solid, but don't hide ever
 SINGLE_MIN_EV = 0.0
 SINGLE_ALIGN_MIN_PROB = 0.62    # only force-align singles to a situational pick if it's this confident
 
-VALUE_MIN_PROB = 0.28               # value tab should surface more payout routes/props
+VALUE_MIN_PROB = 0.55               # every market: majority chance before "value"
 VALUE_MIN_EV = 0.02
 
 PARLAY_MIN_LEG = 0.52
@@ -812,7 +812,7 @@ def _annotate_slip(slip: dict, tab_id: str, option_index: int, *, recommended: b
     out["path_legs"] = leg_names
     pl = (slip.get("path_label") or "").strip()
     # option_summary only when path_label is a short thesis name, not the full ticket list
-    if leg_names and pl and "tickets ·" not in pl and not pl.startswith("🎫"):
+    if leg_names and pl and "tickets ·" not in pl and not pl.startswith(""):
         out["option_summary"] = ", ".join(leg_names[:3]) + (
             f" +{len(leg_names) - 3} more" if len(leg_names) > 3 else ""
         )
@@ -877,7 +877,7 @@ def _plan_from_spread_slip(slip: dict, target: float) -> dict | None:
     return {
         "plan_type": "match_card",
         "plan_type_label": label,
-        "name": slip.get("name") or "🎫 Your match card",
+        "name": slip.get("name") or " Your match card",
         "description": slip.get("description") or "",
         "why": slip.get("why") or "",
         "path_headline": path_label,
@@ -1377,7 +1377,7 @@ def _curate_picks(strategy_plans: dict, *, home: str = "", away: str = "", ctx: 
         pl = (slip.get("path_label") or "").strip()
         if slip.get("path_thesis") == "sgm" or slip.get("plan_type") == "stake_combo":
             return pl or "Stake SGM"
-        if pl and "tickets ·" not in pl and not pl.startswith("🎫"):
+        if pl and "tickets ·" not in pl and not pl.startswith(""):
             short = pl.split("·")[0].strip()
             if short and not short.endswith(" singles"):
                 return short
@@ -1730,7 +1730,7 @@ def _build_loss_min_spread(
     min_p = min(p.our_probability for p in picks)
     return {
         "id": "min_loss",
-        "name": "📉 Loss-minimizing",
+        "name": " Loss-minimizing",
         "description": f"{n} small bets · {labels}",
         "why": (
             f"Spread {format_inr(total)} across {n} likely picks ({min_p:.0%}+ each). "
@@ -1871,7 +1871,7 @@ def _target_plan_to_slip(plan: dict, target: float, home: str, away: str) -> dic
         not path_label
         or path_label in _GENERIC_VARIANT_NOTES
         or "tickets ·" in path_label
-        or path_label.startswith("🎫")
+        or path_label.startswith("")
     ):
         path_label = tickets_label
     elif not path_label:
@@ -2157,7 +2157,7 @@ def _stake_sgm_display_paths(
             "path_label": f"Stake SGM · {odds}x",
             "path_thesis": "sgm",
             "path_legs": [lbl],
-            "name": "🔗 Stake combo",
+            "name": " Stake combo",
             "description": f"{lbl} @ {odds}x — nets {format_inr(target_profit)} profit if it wins",
             "legs": [leg],
             "total_stake_inr": stake,
@@ -2330,7 +2330,7 @@ def _build_single_alternatives(pool, budget, profile, home, away, stake_only, ex
     lead_picks = easy + [p for p in unified if p.get("label") not in {e.get("label") for e in easy}]
     candidates = _enumerate_singles(
         pool, budget, profile, home, away, stake_only,
-        "singles_focus", "🎯 One best bet",
+        "singles_focus", " One best bet",
         "One clear single where the edge is worth the stake.",
         SINGLE_MIN_PROB, SINGLE_MIN_EV, 0.50, False,
         require_positive_ev=False,
@@ -2354,7 +2354,7 @@ def _build_single_alternatives(pool, budget, profile, home, away, stake_only, ex
                 "High-confidence lead — same read as easy money / build slip."
             )
             primary = _build_single_from_option(
-                matched, "singles_focus", "🎯 One best bet", why,
+                matched, "singles_focus", " One best bet", why,
                 budget, profile, stake_only, home, away,
             )
             primary["_unified_aligned"] = True
@@ -2365,7 +2365,7 @@ def _build_single_alternatives(pool, budget, profile, home, away, stake_only, ex
             ]
         elif lead_picks[0].get("our_probability", 0) >= SINGLE_ALIGN_MIN_PROB:
             primary = _build_single_from_pick(
-                lead_picks[0], "singles_focus", "🎯 One best bet",
+                lead_picks[0], "singles_focus", " One best bet",
                 lead_picks[0].get("why") or "High-confidence thesis pick.",
                 budget, profile, stake_only, home, away,
             )
@@ -2389,7 +2389,7 @@ def _build_value_alternatives(pool, budget, profile, home, away, stake_only, exc
 
     raw.extend(_enumerate_singles(
         pool, budget, profile, home, away, stake_only,
-        "value", "💰 Value-for-money",
+        "value", " Value-for-money",
         "Best single where the payout is worth the risk.",
         VALUE_MIN_PROB, -0.02, 0.45, False,
         require_positive_ev=False,
@@ -2398,7 +2398,12 @@ def _build_value_alternatives(pool, budget, profile, home, away, stake_only, exc
     ))
 
     raw = _dedupe_slips(raw)
-    raw.sort(key=lambda s: (_likely_profit(s) < 0, -_slip_ev(s), -_likely_profit(s)))
+    # Prefer higher win probability; EV only as tie-break
+    raw.sort(key=lambda s: (
+        -max((l.get("our_probability", 0) for l in s.get("legs", [])), default=0),
+        -_slip_ev(s),
+        -_likely_profit(s),
+    ))
     return [
         _annotate_slip(s, "value", i + 1, recommended=(i == 0))
         for i, s in enumerate(raw[:MAX_OPTIONS_PER_TAB])
@@ -2649,7 +2654,7 @@ def _parlay_from_legs(budget, legs_opts: list, comb_odds: float, cp: float, ev: 
     profit = round(stake * comb_odds - stake, 0)
     return {
         "id": "parlay",
-        "name": "🔗 Parlays",
+        "name": " Parlays",
         "description": f"{n}-leg parlay @ {round(comb_odds, 2)}x · {cp:.0%} all hit",
         "why": f"All {n} legs must win. Bigger payout, lower chance than singles.",
         "risk": "high",
@@ -2798,10 +2803,11 @@ class _LegProbe:
 
 
 def _score_option(o, profile: dict, home: str, away: str, prefer_core: bool) -> float:
-    """Rank: probability + EV + market quality (core > props) + game fit."""
+    """Rank: probability first, then EV + market quality (core > props) + game fit."""
     p = o.our_probability
     ev = getattr(o, "ev_pct", 0) / 100.0
-    score = p * 40 + ev * 25
+    # Cap EV contribution so longshots cannot outrank favorites
+    score = p * 55 + min(max(ev, 0), 0.12) * 20
     score += _profile_bonus(o, profile)
     if o.market in CORE_MARKETS:
         score += 15
@@ -2816,6 +2822,8 @@ def _score_option(o, profile: dict, home: str, away: str, prefer_core: bool) -> 
         score -= 8
     if getattr(o, "source", "") == "stake":
         score += 3
+    if p < 0.55:
+        score -= 25
     return score
 
 
@@ -2968,7 +2976,7 @@ def _build_parlay_slip(
     profit = round(stake * comb_odds - stake, 0)
     return {
         "id": "parlay",
-        "name": "🔗 Parlays",
+        "name": " Parlays",
         "description": f"{leg1.label} + {leg2.label} @ {round(comb_odds, 2)}x · {cp:.0%} combined",
         "why": "Only when both legs are likely AND the combined chance clears our minimum. Not a random long shot.",
         "risk": "high",
@@ -3135,7 +3143,7 @@ def _build_single_slip(
 
 def _single_from_best(pool, budget, profile, home, away, stake_only, exclude_keys, min_prob=SINGLE_MIN_PROB, min_ev=SINGLE_MIN_EV):
     return _build_single_slip(
-        "singles_focus", "🎯 One best bet",
+        "singles_focus", " One best bet",
         "The single highest-quality bet on Stake for this match.",
         pool, budget, profile, home, away, stake_only, exclude_keys,
         min_prob=min_prob, min_ev=min_ev,
@@ -3145,11 +3153,11 @@ def _single_from_best(pool, budget, profile, home, away, stake_only, exclude_key
 def _build_value_slip(pool, budget, profile, home, away, stake_only, exclude_keys, min_prob, min_ev):
     cands = _candidates(pool, profile, home, away, ALL_MARKETS, min_prob, min_ev, exclude_keys, prefer_core=False)
     if not cands:
-        return _empty("value", "💰 Value-for-money", budget, profile)
+        return _empty("value", " Value-for-money", budget, profile)
     # pick top 2 by EV-tilted score, diversified by market
     picks = _pick_diversified(cands, 2)
     if not picks:
-        return _empty("value", "💰 Value-for-money", budget, profile)
+        return _empty("value", " Value-for-money", budget, profile)
     legs = []
     reserve = _round(budget * 0.10)
     remaining = budget - reserve
@@ -3160,7 +3168,7 @@ def _build_value_slip(pool, budget, profile, home, away, stake_only, exclude_key
     sc = _scenarios_multi(legs, reserve)
     return {
         "id": "value",
-        "name": "💰 Value-for-money",
+        "name": " Value-for-money",
         "description": "Higher payout picks that are still worth the risk on this match.",
         "why": "This tab is where we take calculated risk: higher EV, lower win% than the loss-minimizing tab.",
         "risk": "high",
@@ -3186,7 +3194,8 @@ def _weighted_slip_score(slip: dict) -> float:
     tab = slip.get("tab_id") or slip.get("id") or ""
     base = tab.split("_")[0] if tab else ""
     weight = w.get(tab, w.get(base, 1.0))
-    return _slip_ev(slip) * weight
+    win_p = max((l.get("our_probability", 0) for l in slip.get("legs", [])), default=0)
+    return (win_p * 100.0 + _slip_ev(slip) * 0.15) * weight
 
 
 def _pick_recommended_slip(slips: list[dict], budget: float = 0, profile: dict | None = None) -> dict:

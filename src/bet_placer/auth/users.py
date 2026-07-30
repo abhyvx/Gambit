@@ -253,7 +253,12 @@ def list_accounts_for_admin() -> list[dict[str, Any]]:
             port = {}
         if isinstance(port, dict) and port:
             secrets = port.get("secrets") or {}
-            has_token = bool(secrets.get("stake_api_token"))
+            conn = port.get("connection") or {}
+            has_token = bool(
+                secrets.get("stake_api_token")
+                or conn.get("has_stake_token")
+                or conn.get("stake_connected")
+            )
             portfolio = port.get("portfolio") or {}
             bet_count = int(portfolio.get("bet_count") or 0)
             if bet_count <= 0:
@@ -261,7 +266,6 @@ def list_accounts_for_admin() -> list[dict[str, Any]]:
                 bet_count = len(bets) if isinstance(bets, list) else 0
             # Drop heavy arrays ASAP so GC can reclaim before next account
             port.pop("portfolio", None)
-            conn = port.get("connection") or {}
             sync_status = conn.get("last_sync_status")
             sync_message = conn.get("last_sync_message")
             del port

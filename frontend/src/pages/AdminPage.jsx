@@ -135,6 +135,21 @@ export default function AdminPage() {
         </p>
       )}
 
+      {!!patchNotes.length && (
+        <section className="panel" aria-label="Latest patch">
+          <h2 className="panel-title">Latest patch · {patchNotes[0].version}</h2>
+          <p className="muted">{patchNotes[0].title}</p>
+          <ul>
+            {(patchNotes[0].changes || []).slice(0, 3).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p className="muted" style={{ marginTop: '0.5rem' }}>
+            <a href="#admin-patch-notes">Full patch notes ↓</a>
+          </p>
+        </section>
+      )}
+
       <section className="panel">
         <h2 className="panel-title">Laptop Stake sync</h2>
         <p className="muted">
@@ -357,7 +372,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="admin-patch-notes">
         <h2 className="panel-title">Patch notes</h2>
         <p className="muted">
           Version and debugging-cycle log — what broke, what we fixed. Newest first.

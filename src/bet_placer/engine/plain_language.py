@@ -54,9 +54,9 @@ def chance_label(prob: float) -> str:
 
 def recommendation_plain(rec: str) -> str:
     return {
-        "BET": "✅ Worth a bet",
-        "SKIP": "⏭️ Skip",
-        "AVOID": "❌ Don't bet",
+        "BET": " Worth a bet",
+        "SKIP": "Skip",
+        "AVOID": " Don't bet",
     }.get(rec, rec)
 
 
@@ -75,5 +75,5 @@ def trend_note(public_heavy_on: str | None, fade: bool) -> str | None:
     if not public_heavy_on:
         return None
     if fade:
-        return f"⚠️ Everyone is on {public_heavy_on} — sometimes the crowd is wrong"
-    return f"📈 Trending: most bettors backing {public_heavy_on}"
+        return f" Everyone is on {public_heavy_on} — sometimes the crowd is wrong"
+    return f" Trending: most bettors backing {public_heavy_on}"

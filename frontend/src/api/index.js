@@ -559,8 +559,8 @@ const _insightsCache = { ts: 0, data: null }
 const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
 // Bump key whenever desk schema/version meaning changes so stale localStorage
 // (e.g. cache_version 10) cannot paint over a live Desk v15+ response.
-const INSIGHTS_DISK_KEY = 'gambit_insights_v18'
-const MIN_INSIGHTS_CACHE_VERSION = 18
+const INSIGHTS_DISK_KEY = 'gambit_insights_v19'
+const MIN_INSIGHTS_CACHE_VERSION = 19
 
 function readInsightsStore() {
   try {

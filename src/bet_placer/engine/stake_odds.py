@@ -442,6 +442,19 @@ def _priced_1x2_response(
             "categories": [],
             "source": "none",
         }
+    # Match Stake-live shape used by Odds tab: options[].return_inr
+    # (markets/outcomes kept for BetBuilder-style consumers).
+    options = [
+        {
+            "label": o["label"],
+            "selection": o.get("selection"),
+            "odds": o["odds"],
+            "return_inr": o.get("payout_inr"),
+            "payout_inr": o.get("payout_inr"),
+            "profit_inr": o.get("profit_inr"),
+        }
+        for o in outcomes
+    ]
     return {
         "available": True,
         "fixture_id": fixture_id,
@@ -452,6 +465,7 @@ def _priced_1x2_response(
         "tournament": tournament,
         "categories": [{
             "category": "Match Result",
+            "options": options,
             "markets": [{
                 "market_label": market_label,
                 "outcomes": outcomes,

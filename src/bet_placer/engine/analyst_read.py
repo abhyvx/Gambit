@@ -18,21 +18,21 @@ def analyst_read(home: str, away: str, profile: dict, human_context: dict | None
     tags: list[str] = []
     for st in stories[:6]:
         if st.signal.startswith("must_win"):
-            tags.append("🔥 Must win")
+            tags.append(" Must win")
         elif st.signal == "rivalry":
-            tags.append("🔥 Grudge")
+            tags.append(" Grudge")
         elif st.signal.startswith("momentum"):
-            tags.append("📈 Form")
+            tags.append(" Form")
         elif st.signal == "class_gap":
-            tags.append("💪 Class gap")
+            tags.append(" Class gap")
         elif st.signal.startswith("striker") or st.signal.startswith("star"):
-            tags.append("🎯 Scorer")
+            tags.append(" Scorer")
         elif "card" in st.signal:
-            tags.append("🟨 Cards")
+            tags.append(" Cards")
         elif st.signal == "knockout_fav" or st.signal == "knockout_tight":
-            tags.append("🏆 Knockout")
+            tags.append(" Knockout")
         elif st.signal == "fade_public":
-            tags.append("📉 Fade hype")
+            tags.append(" Fade hype")
 
     summary_parts = [
         f"{home} ({hi['style'].replace('_', ' ')}) vs {away} ({ai['style'].replace('_', ' ')}).",

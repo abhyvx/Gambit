@@ -2,7 +2,7 @@
 
 Goal: show EVERY field Stake offers for a game (or our full modelled catalog
 when Stake is unreachable), and on each single outcome attach our own verdict:
-our win probability, the edge vs the price, expected value, and a plain ✅/⚠️/❌
+our win probability, the edge vs the price, expected value, and a plain verdict
 call so the user can select bets exactly like Stake — and know which ones we'd
 actually back.
 
@@ -63,22 +63,22 @@ def _verdict(our_p: float | None, odds: float, is_trap: bool) -> dict:
     ev_pct = (our_p * odds - 1.0) * 100.0
 
     if is_trap:
-        tier, icon, label, tone = "trap", "⚠️", "Trap", "warn"
+        tier, icon, label, tone = "trap", "", "Trap", "warn"
         blurb = "Wins a lot but the payout barely beats your stake — not worth it."
     elif our_p < 0.18:
-        tier, icon, label, tone = "longshot", "🎲", "Long shot", "warn"
+        tier, icon, label, tone = "longshot", "", "Long shot", "warn"
         blurb = "Unlikely to happen — only for fun money."
     elif ev_pct >= 6 and our_p >= 0.45:
-        tier, icon, label, tone = "great", "✅", "Great price", "good"
+        tier, icon, label, tone = "great", "", "Great price", "good"
         blurb = "Better odds than this should be — we'd back it."
     elif ev_pct >= 2:
-        tier, icon, label, tone = "good", "👍", "Good price", "good"
+        tier, icon, label, tone = "good", "", "Good price", "good"
         blurb = "A touch better than fair — worth a look."
     elif ev_pct >= -3:
         tier, icon, label, tone = "fair", "≈", "Fair price", "neutral"
         blurb = "Priced about right — no real edge either way."
     else:
-        tier, icon, label, tone = "avoid", "❌", "Bad price", "bad"
+        tier, icon, label, tone = "avoid", "", "Bad price", "bad"
         blurb = "The bookie has the edge here — we'd skip it."
 
     return {
@@ -580,28 +580,28 @@ def _refine_verdict(our_p, odds, fair_p, prior) -> dict:
         return v
     edge = (our_p - fair_p) * 100.0
     if our_p < 0.12 and edge >= 1.5:
-        tier, icon, label, tone = "longshot", "🎲", "Long shot, fair enough price", "warn"
+        tier, icon, label, tone = "longshot", "", "Long shot, fair enough price", "warn"
         blurb = "The payout may be fair for the risk, but the outcome is still unlikely. Treat it as a small-stake flyer, not a core bet."
     elif our_p < 0.12:
-        tier, icon, label, tone = "longshot", "🎲", "Long shot", "warn"
+        tier, icon, label, tone = "longshot", "", "Long shot", "warn"
         blurb = "Unlikely — fun money only, even if the price looks generous."
     elif our_p >= 0.85 and odds <= 1.2:
-        tier, icon, label, tone = "trap", "⚠️", "Skip", "warn"
+        tier, icon, label, tone = "trap", "", "Skip", "warn"
         blurb = "Wins often but the payout barely beats your stake."
     elif edge > 18:
-        tier, icon, label, tone = "good", "🔎", "Check the line", "neutral"
+        tier, icon, label, tone = "good", "", "Check the line", "neutral"
         blurb = "Our model likes this far more than the price — verify the line before trusting it."
     elif edge >= 4 and our_p >= 0.25 and odds <= 4.5:
-        tier, icon, label, tone = "great", "✅", "Great price", "good"
+        tier, icon, label, tone = "great", "", "Great price", "good"
         blurb = f"About {edge:.0f}% better than the fair price — we'd back it."
     elif edge >= 1.5:
-        tier, icon, label, tone = "good", "👍", "Good price", "good"
+        tier, icon, label, tone = "good", "", "Good price", "good"
         blurb = "A touch better than fair — worth a look."
     elif edge >= -2:
         tier, icon, label, tone = "fair", "≈", "Fair price", "neutral"
         blurb = "Priced about right — no real edge either way."
     else:
-        tier, icon, label, tone = "avoid", "❌", "Bad price", "bad"
+        tier, icon, label, tone = "avoid", "", "Bad price", "bad"
         blurb = "The book has the edge here — we'd skip it."
     return {"tier": tier, "icon": icon, "label": label, "tone": tone,
             "blurb": blurb, "ev_pct": ev_pct, "edge_pct": round(edge, 1)}
@@ -1273,7 +1273,20 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
     # than win just because the payout looks "fair". Conviction first.
     pool = [o for o in flat
             if _is_rec_eligible(o, home, away) and plausible(o) and o.get("odds", 0) >= 1.25
-            and (o.get("our_probability") or 0) >= 0.50]
+            and (o.get("our_probability") or 0) >= 0.55]
+
+    def value_ok(o):
+        edge = o.get("edge_pct")
+        if edge is None:
+            return False
+        ev = (o.get("verdict") or {}).get("ev_pct", -99)
+        p = o.get("our_probability") or 0
+        # Majority chance on every market — edge alone never qualifies a dog
+        if p < 0.55:
+            return False
+        if is_peripheral(o):
+            return 3.0 <= edge <= 12.0 and ev >= 2.0 and p >= 0.58
+        return 1.5 <= edge <= 12.0 and ev >= 1.0 and p >= 0.55
 
     # 0) DRAW SCENARIO — we've been 0% on drawn games by always forcing a side.
     #    Lead with double chance / draw / under — not naked winner picks.
@@ -1288,7 +1301,7 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
             if aligned(o):
                 pct = round((o.get("our_probability") or 0) * 100)
                 push(o, f"Draw is live in this game — {pct}% on the safer double-chance line "
-                        "instead of forcing a winner.", "🛡️ Draw cover")
+                        "instead of forcing a winner.", "Draw cover")
         for o in sorted(
             [o for o in pool if o.get("market") == "match_winner"
              and (o.get("selection") or "").lower() == "draw"
@@ -1300,40 +1313,9 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
             if aligned(o) and value_ok(o):
                 pct = round((o.get("our_probability") or 0) * 100)
                 push(o, f"Draw priced as a live outcome (~{pct}%) — we've missed too many "
-                        "of these backing favourites.", "🤝 Draw")
+                        "of these backing favourites.", "Draw")
 
-    # 1) VALUE — genuine, *sane* edge (a sharp book is never off by >12%). The
-    #    probability floor means we never lead with a sub-coin-flip longshot, and
-    #    corners/cards need a real edge + a clear majority chance to qualify.
-    def value_ok(o):
-        edge = o.get("edge_pct")
-        if edge is None:
-            return False
-        ev = (o.get("verdict") or {}).get("ev_pct", -99)
-        p = o.get("our_probability") or 0
-        if is_peripheral(o):
-            return 3.0 <= edge <= 12.0 and ev >= 2.0 and p >= 0.58
-        return 1.5 <= edge <= 12.0 and ev >= 1.0 and p >= 0.50
-
-    value = sorted([o for o in pool if value_ok(o)],
-                   key=lambda o: (is_peripheral(o), -(o.get("edge_pct") or -99)))
-    for o in value:
-        if len(picks) >= MAX_PICKS:
-            break
-        if crowd_hype_pick(o):
-            continue
-        if draw_scenario and o.get("market") == "match_winner" and _axis_dir(o, home, away)[1] in ("home", "away"):
-            continue  # don't stack naked winner in draw games
-        if is_peripheral(o) and not has_core_pick():
-            continue   # corners/cards never lead — a scenario pick comes first
-        if aligned(o):
-            edge = round(o.get("edge_pct") or 0)
-            pct = round((o.get("our_probability") or 0) * 100)
-            scope = " on the team total" if _team_total(o) else ""
-            push(o, f"Genuine value{scope} — our model makes this ~{edge}% better than the fair "
-                    f"price, and it still lands ~{pct}% of the time.", "💰 Value")
-
-    # 2) CONVICTION — the 'easy money' spots: we're genuinely confident (clear
+    # 1) CONVICTION — the 'easy money' spots: we're genuinely confident (clear
     #    majority chance) on a market tied to how the GAME plays out (who wins,
     #    the handicap, goals, BTTS), at a fair price. No peripheral filler, and
     #    nothing that's basically a coin-flip dressed up as "fair value".
@@ -1361,7 +1343,29 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
         if aligned(o):
             pct = round((o.get("our_probability") or 0) * 100)
             push(o, f"We're genuinely confident here — about {pct}% by our model. Fairly priced, "
-                    "but a high-conviction spot worth backing.", "🎯 Strong lean")
+                    "but a high-conviction spot worth backing.", "Strong lean")
+
+    # 2) VALUE — genuine, *sane* edge (a sharp book is never off by >12%). The
+    #    probability floor means we never lead with a sub-coin-flip longshot, and
+    #    corners/cards need a real edge + a clear majority chance to qualify.
+    value = sorted(
+        [o for o in pool if value_ok(o)],
+        key=lambda o: (is_peripheral(o), -(o.get("our_probability") or 0), -(o.get("edge_pct") or -99)),
+    )
+    for o in value:
+        if len(picks) >= MAX_PICKS:
+            break
+        if crowd_hype_pick(o):
+            continue
+        if draw_scenario and o.get("market") == "match_winner" and _axis_dir(o, home, away)[1] in ("home", "away"):
+            continue  # don't stack naked winner in draw games
+        if is_peripheral(o) and not has_core_pick():
+            continue   # corners/cards never lead — a scenario pick comes first
+        if aligned(o):
+            edge = round(o.get("edge_pct") or 0)
+            pct = round((o.get("our_probability") or 0) * 100)
+            scope = " on the team total" if _team_total(o) else ""
+            push(o, f"Solid chance{scope} (~{pct}%) with a fair price edge (~{edge}% vs fair).", "Value")
 
     # 3) PLAYER read — optional fun shout, never contradicts, clearly caveated.
     if picks and len(picks) < MAX_PICKS:
@@ -1375,7 +1379,7 @@ def _resolve_recommendations(flat, thesis, read, home, away) -> list[dict]:
             o = scorers[0]
             pct = round((o.get("our_probability") or 0) * 100)
             push(o, f"Most likely scorer (~{pct}%). Scorer prices carry a steep margin, so a small, "
-                    "fun stake only — not a value play.", "⭐ Player flutter")
+                    "fun stake only — not a value play.", "Player flutter")
 
     return picks
 

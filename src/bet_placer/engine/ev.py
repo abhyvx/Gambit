@@ -62,16 +62,15 @@ def find_value_bets(
         ev = compute_ev(true_prob, market_odds.best_odds)
         roi = compute_roi(true_prob, market_odds.best_odds)
 
-        # Conviction floor: prefer favorites / coin-flips with edge, not long shots.
-        # 0.45 so 2-way sports (BB/cricket) still surface model favorites.
-        if true_prob < 0.45:
+        # Majority-chance floor across every market — no longshot "value" leads
+        if true_prob < 0.55:
             continue
         model_priced = int(getattr(market_odds, "bookmaker_count", 1) or 0) == 0
         if model_priced:
             # Odds came from our model — require conviction, not phantom +EV.
-            if true_prob < 0.52 and ev < settings.min_ev_threshold:
+            if true_prob < 0.58 and ev < settings.min_ev_threshold:
                 continue
-        elif ev < settings.min_ev_threshold:
+        elif ev < settings.min_ev_threshold and true_prob < 0.62:
             continue
         # A genuine edge in a liquid market is rarely >25%. Anything above that is
         # a miscalibration artefact — never recommend it.
@@ -87,7 +86,7 @@ def find_value_bets(
             settings.max_stake_pct / 100,
         )
 
-        rank_score = _rank_score(roi, ev, prob_est.confidence, risk, market_odds)
+        rank_score = _rank_score(roi, ev, prob_est.confidence, risk, market_odds, true_prob)
 
         value_bets.append(
             ValueBet(
@@ -167,20 +166,28 @@ def _estimate_variance(prob_est: ProbabilityEstimate) -> float:
 
 
 def _rank_score(
-    roi: float, ev: float, confidence: float, risk: float, odds: MarketOdds
+    roi: float,
+    ev: float,
+    confidence: float,
+    risk: float,
+    odds: MarketOdds,
+    true_prob: float = 0.5,
 ) -> float:
+    """Prefer sides more likely to land; cap EV so longshots cannot dominate."""
     liquidity = min(1.0, odds.bookmaker_count / 10.0)
     efficiency_penalty = 0.0
     if odds.steam_move:
-        efficiency_penalty -= 0.05  # steam can mean sharp money already took value
+        efficiency_penalty -= 0.05
     if odds.reverse_line_movement:
-        efficiency_penalty += 0.08  # RLM often signals hidden edge
-
+        efficiency_penalty += 0.08
+    capped_ev = max(0.0, min(float(ev), 0.12))
+    p = max(0.0, min(float(true_prob), 1.0))
     return (
-        roi * 0.35
-        + ev * 0.30
-        + confidence * 0.20
-        + liquidity * 0.10
-        - risk * 0.15
+        p * 0.55
+        + confidence * 0.15
+        + capped_ev * 0.15
+        + liquidity * 0.05
+        - risk * 0.10
+        - max(0.0, 0.55 - p) * 0.30
         + efficiency_penalty
     )

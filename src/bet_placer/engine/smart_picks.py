@@ -295,7 +295,7 @@ def _build_easy_money_picks(
         out.append({
             **o,
             "pick_kind": "easy_money",
-            "tag": "💎 Easy money",
+            "tag": " Easy money",
             "why": (
                 f"High-confidence read (~{pct}% to land) on a core market that fits how this "
                 "game should play — not a long-shot story bet."
@@ -380,7 +380,7 @@ def build_smart_picks(
         return {
             **o,
             "why": angle["why"],
-            "tag": angle.get("tag", "💎 Situation"),
+            "tag": angle.get("tag", " Situation"),
             "reason": angle["why"],
             "_score": score,
             "game_style": profile.get("style"),

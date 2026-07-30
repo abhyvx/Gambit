@@ -21,7 +21,7 @@ GOALS = {
     },
     "value": {
         "label": "Find edge / +EV",
-        "blurb": "Chase mispriced odds even if win% is lower.",
+        "blurb": "Prefer sides more likely to win; use price edge only as a tie-break.",
     },
     "fun": {
         "label": "Entertainment",
@@ -92,10 +92,11 @@ class BettorStyle:
         if self.goal == "preserve":
             return max(base, 0.55)
         if self.goal == "value":
-            return min(base, 0.45)
+            # Still require majority chance — value is a tie-break, not a longshot license
+            return max(base, 0.55)
         if self.goal == "fun":
-            return min(base, 0.40)
-        return base
+            return max(min(base, 0.50), 0.50)
+        return max(base, 0.55)
 
     def max_picks(self) -> int:
         n = RISKS[self.risk]["max_picks"]
@@ -166,7 +167,8 @@ def curate_bets(bets: list[dict[str, Any]], style: BettorStyle) -> list[dict[str
         out.append(b)
 
     if style.goal == "value":
-        out.sort(key=lambda b: (_bet_edge(b), _bet_prob(b)), reverse=True)
+        # Probability first, then edge — never lead with likely losers
+        out.sort(key=lambda b: (_bet_prob(b), _bet_edge(b)), reverse=True)
     elif style.goal == "preserve":
         out.sort(key=lambda b: (_bet_prob(b), _bet_edge(b)), reverse=True)
     elif style.goal == "hit_target":

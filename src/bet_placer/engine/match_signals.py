@@ -88,22 +88,22 @@ def discover_match_stories(
     if ctx.get("home_must_win"):
         story("must_win", f"{home} must take points or they're in trouble.", [
             BettingAngle("over_under_goals", "over",
-                         f"{home} chase the win — gaps open, goals follow.", "🔥 Must win",
+                         f"{home} chase the win — gaps open, goals follow.", " Must win",
                          "must_win", 10, line=2.5),
             BettingAngle("btts", "yes",
-                         f"{away} get counter chances while {home} push.", "🔥 Open game",
+                         f"{away} get counter chances while {home} push.", " Open game",
                          "must_win", 8),
             BettingAngle("first_goal_team", "home",
-                         f"{home} should throw bodies forward first.", "⚡ First blood",
+                         f"{home} should throw bodies forward first.", " First blood",
                          "must_win", 7),
         ])
     if ctx.get("away_must_win"):
         story("must_win", f"{away} need a result — they'll take risks.", [
             BettingAngle("over_under_goals", "over",
-                         f"{away} have to attack; {home} can punish transitions.", "🔥 Must win",
+                         f"{away} have to attack; {home} can punish transitions.", " Must win",
                          "must_win", 10, line=2.5),
             BettingAngle("first_goal_team", "away",
-                         f"{away} can't sit back — they need the opener.", "⚡ First blood",
+                         f"{away} can't sit back — they need the opener.", " First blood",
                          "must_win", 8),
         ])
 
@@ -112,12 +112,12 @@ def discover_match_stories(
         star = _star_for_threat(home, hi["threat"])
         angles = [
             BettingAngle("match_winner", "home",
-                         f"{home} are flying — confidence shows on the pitch.", "📈 Hot streak",
+                         f"{home} are flying — confidence shows on the pitch.", " Hot streak",
                          "momentum", 8),
         ]
         if star:
             angles.append(BettingAngle("player_goal", star,
-                                        f"{star} is {home}'s main outlet in this run.", "🎯 In-form scorer",
+                                        f"{star} is {home}'s main outlet in this run.", " In-form scorer",
                                         "momentum", 9, player=star))
         story("momentum_home", f"{home} on a hot streak.", angles)
 
@@ -125,12 +125,12 @@ def discover_match_stories(
         star = _star_for_threat(away, ai["threat"])
         angles = [
             BettingAngle("match_winner", "away",
-                         f"{away} arrive with swagger — back the form.", "📈 Hot streak",
+                         f"{away} arrive with swagger — back the form.", " Hot streak",
                          "momentum", 8),
         ]
         if star:
             angles.append(BettingAngle("player_goal", star,
-                                        f"{star} leads {away}'s attack right now.", "🎯 In-form scorer",
+                                        f"{star} leads {away}'s attack right now.", " In-form scorer",
                                         "momentum", 9, player=star))
         story("momentum_away", f"{away} riding confidence.", angles)
 
@@ -143,14 +143,14 @@ def discover_match_stories(
         ):
             angles.append(BettingAngle("first_goal_team", fav_side,
                                       f"{fav} boss the ball vs a deep {dog} — they score first.",
-                                      "💎 Control script", "control_script", 10))
+                                      " Control script", "control_script", 10))
         if class_edge >= 25:
             angles.append(BettingAngle("asian_handicap", fav_side,
                                       f"{round(gap)}-pt quality gap — {fav} win with cushion.",
-                                      "💪 Handicap", "class_gap", 8, line=-1.0 if fav_side == "home" else 1.0))
+                                      " Handicap", "class_gap", 8, line=-1.0 if fav_side == "home" else 1.0))
         if _is_low(dog_intel) or "deep" in dog_intel["note"].lower():
             angles.append(BettingAngle("btts", "no",
-                                      f"{dog} park the bus — {fav} can win to nil.", "🧱 Clean sheet",
+                                      f"{dog} park the bus — {fav} can win to nil.", " Clean sheet",
                                       "class_gap", 7))
         story("class_gap", f"{fav} should control {dog}.", angles)
 
@@ -167,7 +167,7 @@ def discover_match_stories(
                       f"{star} vs a {opp} defence that {opp_intel['weakness']}.",
                       [BettingAngle("player_goal", star,
                                     f"{star} targets {opp}'s weak spot: {opp_intel['weakness']}.",
-                                    "🎯 Mismatch", "striker_mismatch", 9, player=star)])
+                                    " Mismatch", "striker_mismatch", 9, player=star)])
 
     # ── Star-dependent attack (Haaland-type teams) ─────────────────────────────
     if "revolve around" in hi["note"].lower() or "feed him" in hi["note"].lower():
@@ -191,11 +191,11 @@ def discover_match_stories(
     if rivalry and rivalry.get("intensity", 0) >= 7:
         story("rivalry", rivalry["note"], [
             BettingAngle("over_under_goals", "over",
-                         f"Grudge match ({home} vs {away}) — neither side settles.", "🔥 Rivalry",
+                         f"Grudge match ({home} vs {away}) — neither side settles.", " Rivalry",
                          "rivalry", 9, line=2.5),
             BettingAngle("cards", "over",
                          f"{rivalry['note']} — expect a feisty, card-heavy 90.",
-                         "🟨 Grudge cards", "rivalry", 8, line=3.5),
+                         " Grudge cards", "rivalry", 8, line=3.5),
         ])
 
     # ── Card magnets (both sides hot OR famous physical teams) ──────────────
@@ -203,32 +203,32 @@ def discover_match_stories(
         story("card_battle", f"{home} and {away} both play on the edge.", [
             BettingAngle("cards", "over",
                          f"{hi['note']} + {ai['note']} — referee will be busy.",
-                         "🟨 Card battle", "discipline", 8, line=3.5),
+                         " Card battle", "discipline", 8, line=3.5),
         ])
     elif hi["discipline"] == "hot":
         story("cards_home", f"{home}'s discipline is a story ({hi['note']}).", [
             BettingAngle("cards", "over",
                          f"{home} pick up bookings — this matchup stays physical.",
-                         "🟨 Card risk", "discipline", 7, line=3.5),
+                         " Card risk", "discipline", 7, line=3.5),
         ])
     elif ai["discipline"] == "hot":
         story("cards_away", f"{away}'s discipline is a story ({ai['note']}).", [
             BettingAngle("cards", "over",
                          f"{away} run hot — cards market fits this fixture.",
-                         "🟨 Card risk", "discipline", 7, line=3.5),
+                         " Card risk", "discipline", 7, line=3.5),
         ])
 
     # ── Possession vs low block → corners (only when intel says so) ─────────
     if hi["style"] == "possession" and _is_low(ai) and "corner" in hi["note"].lower():
         story("corners_home", f"{home} pin {away} back — corners stack up.", [
             BettingAngle("corners", "over",
-                         f"{hi['note']} vs a deep {away} block.", "🚩 Corner siege",
+                         f"{hi['note']} vs a deep {away} block.", " Corner siege",
                          "corner_siege", 7, line=9.5),
         ])
     if ai["style"] == "possession" and _is_low(hi) and "corner" in ai["note"].lower():
         story("corners_away", f"{away} dominate the ball vs a low {home}.", [
             BettingAngle("corners", "over",
-                         f"{ai['note']} vs a deep {home} block.", "🚩 Corner siege",
+                         f"{ai['note']} vs a deep {home} block.", " Corner siege",
                          "corner_siege", 7, line=9.5),
         ])
 
@@ -238,13 +238,13 @@ def discover_match_stories(
             story("knockout_fav", f"Knockout — {fav} should advance but extra time looms.", [
                 BettingAngle("draw_no_bet", fav_side,
                              f"{fav} have the quality; draw refunds if it's tight at 90.",
-                             "🏆 Knockout DNB", "knockout", 8),
+                             " Knockout DNB", "knockout", 8),
             ])
         if draw_live:
             story("knockout_tight", f"Knockout coin-flip — nerves favour safety.", [
                 BettingAngle("double_chance", "home_draw" if fav == home else "draw_away",
                              f"Extra time is live — cover the draw in {home} vs {away}.",
-                             "🏆 KO safety", "knockout", 8),
+                             " KO safety", "knockout", 8),
             ])
 
     # ── Fade the crowd on a hyped favourite ─────────────────────────────────
@@ -254,10 +254,10 @@ def discover_match_stories(
         story("fade_public", f"Public money loves {hyped} — price may be stretched.", [
             BettingAngle("draw_no_bet", dog_side,
                          f"Fade the {hyped} hype; {under} with draw cover is the angle.",
-                         "📉 Contrarian", "fade_public", 8),
+                         " Contrarian", "fade_public", 8),
             BettingAngle("asian_handicap", dog_side,
                          f"{under} +1.5 while the crowd hammers {hyped}.",
-                         "📉 Dog cover", "fade_public", 7, line=1.0 if dog_side == "away" else -1.0),
+                         " Dog cover", "fade_public", 7, line=1.0 if dog_side == "away" else -1.0),
         ])
 
     # ── Fragile favourite under pressure (England-type) ───────────────────────
@@ -265,9 +265,9 @@ def discover_match_stories(
         story("fragile_fav", f"{fav} talent but {fav_intel['note']}", [
             BettingAngle("double_chance", "draw_away" if fav == home else "home_draw",
                          f"{fav} can tighten up — cover the draw vs {dog}.",
-                         "🛡️ Fragile fav", "fragile_fav", 7),
+                         " Fragile fav", "fragile_fav", 7),
             BettingAngle("over_under_goals", "under",
-                         f"{fav_intel['weakness']} — cagey affair likely.", "🧊 Low event",
+                         f"{fav_intel['weakness']} — cagey affair likely.", " Low event",
                          "fragile_fav", 6, line=2.5),
         ])
 
@@ -275,21 +275,21 @@ def discover_match_stories(
     if _is_high(hi) and _is_high(ai):
         story("open_game", f"{home} and {away} both play on the front foot.", [
             BettingAngle("over_under_goals", "over",
-                         f"{hi['style']} vs {ai['style']} — end to end.", "⚡ Open",
+                         f"{hi['style']} vs {ai['style']} — end to end.", " Open",
                          "open_game", 7, line=2.5),
             BettingAngle("btts", "yes",
                          f"Both {hi['threat']} and {ai['threat']} carry threat.",
-                         "🥅 BTTS", "open_game", 6),
+                         " BTTS", "open_game", 6),
         ])
 
     # ── Cagey low-tempo ───────────────────────────────────────────────────────
     if _is_low(hi) and _is_low(ai) and style in ("low_scoring", "tight"):
         story("cagey", f"Two cautious sides — {hi['note']}", [
             BettingAngle("over_under_goals", "under",
-                         f"{home} vs {away} profiles low-event.", "🧊 Under",
+                         f"{home} vs {away} profiles low-event.", " Under",
                          "cagey", 7, line=2.5),
             BettingAngle("half_time", "draw",
-                         f"Slow burn — 0-0 or 1-0 at the break fits.", "⏱️ HT draw",
+                         f"Slow burn — 0-0 or 1-0 at the break fits.", " HT draw",
                          "cagey", 6),
         ])
 
@@ -300,12 +300,12 @@ def discover_match_stories(
             angles = [
                 BettingAngle("btts", "yes",
                              f"{team} are streaky — goals at both ends when it clicks.",
-                             "🎢 Volatile", "streaky", 6),
+                             " Volatile", "streaky", 6),
             ]
             if star:
                 angles.append(BettingAngle("player_goal", star,
                                           f"{team} live or die by {star} — high-variance scorer bet.",
-                                          "🎢 Star swing", "streaky", 7, player=star))
+                                          " Star swing", "streaky", 7, player=star))
             story(f"streaky_{side}", f"{team}: {intel['note']}", angles)
 
     # ── Fan read (unique per match from standings math) ───────────────────────
@@ -313,11 +313,11 @@ def discover_match_stories(
         if "draw" in fan_take.lower() and draw_live:
             story("fan_draw", fan_take, [
                 BettingAngle("match_winner", "draw",
-                             fan_take, "🗣️ Fan read", "fan_read", 7),
+                             fan_take, " Fan read", "fan_read", 7),
             ])
         elif ctx.get("home_must_win") or ctx.get("away_must_win"):
             story("fan_must_win", fan_take, [
-                BettingAngle("btts", "yes", fan_take, "🗣️ Fan read", "fan_read", 6),
+                BettingAngle("btts", "yes", fan_take, " Fan read", "fan_read", 6),
             ])
 
     # ── Prove-it / redemption (narrative keywords) ────────────────────────────
@@ -329,7 +329,7 @@ def discover_match_stories(
                 side = "home" if team == home else "away"
                 story(f"redemption_{side}", sentence, [
                     BettingAngle("over_under_goals", "over",
-                                 f"{sentence} — they attack, goals follow.", "💪 Prove it",
+                                 f"{sentence} — they attack, goals follow.", " Prove it",
                                  "redemption", 8, line=2.5),
                 ])
 
@@ -342,10 +342,10 @@ def discover_match_stories(
                     story("quality_edge", sentence.strip(), [
                         BettingAngle("match_winner", side,
                                      f"{sentence.strip()} — back the quality edge.",
-                                     "💪 Quality", "quality_edge", 7),
+                                     " Quality", "quality_edge", 7),
                         BettingAngle("draw_no_bet", side,
                                      f"{team} should edge it; draw refunds if tight.",
-                                     "🛡️ DNB", "quality_edge", 6),
+                                     " DNB", "quality_edge", 6),
                     ])
                 break
 

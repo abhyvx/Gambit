@@ -142,7 +142,7 @@ def analyze_all_options(
 
         if human_context.get("trending_on"):
             if prob.selection == "home" and human_context["trending_on"] == match.home_team:
-                human_notes.append(f"📈 Stake bettors piling on {match.home_team}")
+                human_notes.append(f" Stake bettors piling on {match.home_team}")
             if human_context.get("fade_public") and prob.selection == "home":
                 human_notes.append("Crowd might be overhyping the favourite")
 
@@ -215,7 +215,7 @@ def analyze_all_options(
         ))
 
     order = {"BET": 0, "SKIP": 1, "AVOID": 2}
-    options.sort(key=lambda o: (order.get(o.recommendation, 9), -o.ev_pct))
+    options.sort(key=lambda o: (order.get(o.recommendation, 9), -o.our_probability, -o.ev_pct))
     return options
 
 

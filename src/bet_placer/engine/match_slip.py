@@ -209,29 +209,29 @@ def _resolve_strategy_plan(strategies: dict, key: str) -> dict:
 def _build_human_story(ctx: dict, home: str, away: str) -> list[str]:
     story = []
     if ctx.get("fan_take"):
-        story.append(f"🗣️ {ctx['fan_take']}")
+        story.append(f" {ctx['fan_take']}")
     if ctx.get("narrative"):
-        story.append(f"📰 {ctx['narrative']}")
+        story.append(f" {ctx['narrative']}")
     if ctx.get("home_must_win"):
-        story.append(f"⚡ {home} MUST WIN")
+        story.append(f" {home} MUST WIN")
     if ctx.get("away_must_win"):
-        story.append(f"⚡ {away} MUST WIN")
+        story.append(f" {away} MUST WIN")
     morale = ctx.get("morale", {})
     if morale.get("home"):
-        story.append(f"💪 {home} morale: {morale['home']}/10")
+        story.append(f" {home} morale: {morale['home']}/10")
     if morale.get("away"):
-        story.append(f"💪 {away} morale: {morale['away']}/10")
+        story.append(f" {away} morale: {morale['away']}/10")
     if ctx.get("group_stakes"):
-        story.append(f"🏆 {ctx['group_stakes']}")
+        story.append(f" {ctx['group_stakes']}")
     read = ctx.get("analyst_read") or {}
     if read.get("summary"):
-        story.append(f"📊 {read['summary'][:220]}")
+        story.append(f" {read['summary'][:220]}")
     if read.get("tags"):
         story.append(" · ".join(read["tags"][:4]))
     st = ctx.get("stake_stats") or {}
     if ctx.get("stake_priced") and st.get("total_bets"):
         story.append(
-            f"💸 Priced from Stake — {st['total_bets']:,} bets / "
+            f" Priced from Stake — {st['total_bets']:,} bets / "
             f"${st.get('total_bet_value_usd', 0):,.0f} staked on this game"
         )
     return story

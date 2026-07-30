@@ -438,7 +438,7 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         from bet_placer.ml.factor_store import ensure_rich_summary, load_summary
 
         prior = dict(factors)
-        disk = ensure_rich_summary(load_summary() or factors)
+        disk = ensure_rich_summary(load_summary() or factors, allow_rebuild=False)
         # Merge: take max counts so a thin host rebuild cannot wipe teams/players
         by_type = dict(prior.get("by_type") or {})
         for k, v in (disk.get("by_type") or {}).items():

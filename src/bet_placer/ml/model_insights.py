@@ -774,73 +774,104 @@ def _rebalance_market_rows(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep equal per-sport market coverage in desk containers."""
     out = dict(payload)
     containers = list(out.get("containers") or [])
-    sport_rows = []
+
+    # Rebuild sport rows from existing 15a + any sport-tagged rows in niches/outcomes
+    sport_rows: list[dict] = []
     for c in containers:
         if c.get("id") == "15a_sport_markets":
-            sport_rows = list(c.get("rows") or [])
-            break
-    if not sport_rows:
-        sport_rows = list(out.get("depth", {}).get("sport_markets") or [])
-    # Pull from niches tagged with sport if needed
+            sport_rows.extend(c.get("rows") or [])
+        if c.get("id") == "15_niche_replay":
+            for row in c.get("rows") or []:
+                raw = str(row.get("raw") or row.get("market") or "").lower()
+                # Map market families onto sports when the row has no sport tag
+                if row.get("sport"):
+                    sport_rows.append({**row, "market": f"{row['sport']} · {row.get('market')}"})
+                    continue
+                if raw in {"moneyline", "spread", "point spread", "bb_totals_alt", "totals"} and "soccer" not in raw:
+                    # moneyline/totals/spread appear in BB+CK; keep both tags via copies below
+                    sport_rows.append({**row, "sport": "basketball", "market": f"basketball · {row.get('market')}"})
+                    if raw == "moneyline":
+                        sport_rows.append({**row, "sport": "cricket", "market": f"cricket · {row.get('market')}"})
+                if raw in {
+                    "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
+                    "result", "btts", "asian handicap", "draw no bet", "double chance",
+                    "match result (1x2)", "both teams to score",
+                }:
+                    sport_rows.append({**row, "sport": "soccer", "market": f"soccer · {row.get('market')}"})
+                if raw.startswith("cricket"):
+                    sport_rows.append({**row, "sport": "cricket", "market": f"cricket · {row.get('market')}"})
+
     by_sport: dict[str, list] = {s: [] for s in SPORTS}
+    seen: set[tuple] = set()
     for row in sport_rows:
         sp = row.get("sport")
+        label = str(row.get("market") or "")
         if not sp:
-            label = str(row.get("market") or "")
             for cand in SPORTS:
                 if label.startswith(f"{cand} ·") or label.startswith(f"{cand} "):
                     sp = cand
                     break
-        if sp in by_sport:
-            by_sport[sp].append(row)
+        if sp not in by_sport:
+            continue
+        key = (sp, label.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        by_sport[sp].append({**row, "sport": sp, "market": label if " · " in label else f"{sp} · {label}"})
+
     balanced = []
     for sp in SPORTS:
         balanced.extend(sorted(by_sport.get(sp) or [], key=lambda r: -(r.get("n") or 0))[:6])
-    if balanced:
-        for i, c in enumerate(containers):
-            if c.get("id") == "15a_sport_markets":
-                containers[i] = {
-                    **c,
-                    "title": "15a · Markets by sport",
-                    "desc": (
-                        "Equal desk for soccer, basketball, and cricket — "
-                        "moneyline, totals, spreads, and sport niches (AH/DNB/DC/corners/cards)."
-                    ),
-                    "rows": balanced,
+    if not balanced:
+        return out
+
+    for i, c in enumerate(containers):
+        if c.get("id") == "15a_sport_markets":
+            containers[i] = {
+                **c,
+                "title": "15a · Markets by sport",
+                "desc": (
+                    "Equal desk for soccer, basketball, and cricket — "
+                    "moneyline, totals, spreads, and sport niches (AH/DNB/DC/corners/cards)."
+                ),
+                "rows": balanced,
+            }
+        if c.get("id") == "15_niche_replay":
+            niches = list(c.get("rows") or [])
+            niche_keys = {
+                "asian handicap", "draw no bet", "double chance", "corners", "cards",
+                "point spread", "totals (o/u)", "cricket t20 / leagues", "cricket odi",
+                "cricket tests", "basketball totals (alt lines)",
+            }
+            true_n = [
+                r for r in niches
+                if str(r.get("market") or "").lower() in niche_keys
+                or str(r.get("raw") or "").lower() in {
+                    "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
+                    "spread", "totals", "cricket_t20", "cricket_odi", "cricket_test", "bb_totals_alt",
                 }
-            if c.get("id") == "15_niche_replay":
-                # True niches first, then core popular — keep sport mix via 15a
-                niches = list(c.get("rows") or [])
-                niche_names = {
-                    "asian handicap", "draw no bet", "double chance", "corners", "cards",
-                    "point spread", "totals (o/u)",
-                }
-                true_n = [r for r in niches if str(r.get("market") or "").lower() in niche_names
-                          or str(r.get("raw") or "").lower() in {
-                              "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
-                              "spread", "totals",
-                          }]
-                popular = [r for r in niches if r not in true_n]
-                containers[i] = {
-                    **c,
-                    "title": "15 · Market replay (all sports)",
-                    "desc": (
-                        "Graded replay across soccer niches (AH, DNB, DC, corners, cards) plus "
-                        "basketball ML/totals/spread and cricket match-winner / format splits."
-                    ),
-                    "rows": (true_n + popular)[:16] or niches[:16],
-                }
-            if c.get("id") == "22_epoch_curves":
-                containers[i] = {
-                    **c,
-                    "desc": (
-                        "Block desk ROI and hit rate from graded epochs only. "
-                        "Dashed line = best so far (learning), solid = block mean."
-                    ),
-                    "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else c.get("status"),
-                    "n": len(_finite_nums((out.get("curves") or {}).get("craft_roi"))),
-                }
-        out["containers"] = containers
+            ]
+            popular = [r for r in niches if r not in true_n]
+            containers[i] = {
+                **c,
+                "title": "15 · Market replay (all sports)",
+                "desc": (
+                    "Graded replay across soccer niches (AH, DNB, DC, corners, cards) plus "
+                    "basketball ML/totals/spread and cricket match-winner / format splits."
+                ),
+                "rows": (true_n + popular)[:16] or niches[:16],
+            }
+        if c.get("id") == "22_epoch_curves":
+            containers[i] = {
+                **c,
+                "desc": (
+                    "Block desk ROI and hit rate from graded epochs only. "
+                    "Dashed line = best so far (learning), solid = block mean."
+                ),
+                "status": "ready" if len(_finite_nums((out.get("curves") or {}).get("craft_roi"))) >= 2 else c.get("status"),
+                "n": len(_finite_nums((out.get("curves") or {}).get("craft_roi"))),
+            }
+    out["containers"] = containers
     return out
 
 

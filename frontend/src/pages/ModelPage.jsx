@@ -682,7 +682,7 @@ function InsightContainer({ c, curves, sportKeys }) {
             const rows = trendRows.filter((t) => t.sport === k && t.roi != null)
             return (smooth && smooth.length >= 2) || rows.length >= 2
           }) && (
-            <p className="muted">No monthly series yet — wait for betting evolution data on this host.</p>
+            <p className="muted">No monthly series yet. Wait for betting evolution data on this host.</p>
           )}
         </div>
       )}
@@ -887,7 +887,7 @@ export default function ModelPage() {
         <div className="model-boot" role="status" aria-live="polite">
           <div className="spinner" />
           <p>Loading model desk…</p>
-          <small className="muted">Cached desk — opens instantly.</small>
+          <small className="muted">Cached desk. Opens instantly.</small>
         </div>
       </div>
     )
@@ -926,7 +926,7 @@ export default function ModelPage() {
         <ul className="model-desk-revision-notes">
           {(deskRev.notes || [
             'Glossary under Holdout ROI / hit rate / desk gate',
-            'Desk gate shows Below target / Hit — never a fake Training spinner',
+            'Desk gate shows Below target / Hit. Never a fake Training spinner',
             'Self-improvement curve is best-so-far ROI across graded blocks',
           ]).map((note) => (
             <li key={note}>{note}</li>
@@ -1014,16 +1014,16 @@ export default function ModelPage() {
         </div>
         <div className="insight-glossary">
           <p>
-            <strong>Holdout ROI</strong> — {(ins?.metric_glossary?.holdout_roi)
+            <strong>Holdout ROI</strong>:{' '}{(ins?.metric_glossary?.holdout_roi)
               || 'Paper profit on one frozen match set. Same games every epoch. Not live bankroll.'}
           </p>
           <p>
-            <strong>Holdout hit rate</strong> — {(ins?.metric_glossary?.holdout_hit_rate)
+            <strong>Holdout hit rate</strong>:{' '}{(ins?.metric_glossary?.holdout_hit_rate)
               || 'Share of holdout tickets that won (target 60%+).'}
           </p>
           <p>
-            <strong>Craft targets / desk gate</strong> — {(ins?.metric_glossary?.craft_targets)
-              || 'Bar: 25% overall ROI, every sport above 0%, accuracy ≥60%.'}
+            <strong>Craft targets / desk gate</strong>:{' '}{(ins?.metric_glossary?.craft_targets)
+              || 'Bar: 25% overall ROI, every sport above 0%, accuracy at least 60%.'}
             {' '}{(ins?.metric_glossary?.train_gate) || ''}
           </p>
         </div>

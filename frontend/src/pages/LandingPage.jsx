@@ -28,6 +28,12 @@ export default function LandingPage() {
         >
           Enter
         </button>
+        <p className="landing-legal">
+          18+ · Analytics only · Not a bookmaker ·{' '}
+          <a href="/app/legal/terms">Terms</a>
+          {' · '}
+          <a href="/app/guide">Guide</a>
+        </p>
       </main>
     </div>
   )

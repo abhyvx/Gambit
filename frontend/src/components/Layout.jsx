@@ -356,7 +356,9 @@ export default function Layout() {
                     {confirmBusy ? 'Saving…' : 'Confirm I placed this'}
                   </button>
                 )}
-                <p className="sidebar-disclaimer">18+ · Bet responsibly.</p>
+                <p className="sidebar-disclaimer">
+                  18+ · Bet responsibly · <Link to="/app/legal/terms">Terms</Link>
+                </p>
               </div>
             </aside>
           )}

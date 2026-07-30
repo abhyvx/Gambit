@@ -78,7 +78,7 @@ export function AuthProvider({ children }) {
           <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Account" onClick={(ev) => ev.stopPropagation()}>
             <h2>{mode === 'signup' ? 'Create account' : 'Sign in'}</h2>
             <p className="muted">
-              Private journal + optional Stake API token. Analytics only — we never place bets for you.
+              Private journal and optional Stake API token. Analytics only. We never place bets for you.
             </p>
             <form onSubmit={submit} className="auth-form">
               {mode === 'signup' && (

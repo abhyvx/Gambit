@@ -823,11 +823,11 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
             "current epoch graded zero bets."
         ),
         "train_gate": (
-            "Clears only when overall ROI ≥ 25%, every sport ROI > 0, and hit rate ≥ 60%. "
-            "Shows Ready / Below target / Hit — never a fake Training spinner for a stored desk."
+            "Clears only when overall ROI is at least 25%, every sport ROI is above 0, and hit rate is at least 60%. "
+            "Shows Ready / Below target / Hit. Never a fake Training spinner for a stored desk."
         ),
         "craft_targets": (
-            "The bar the craft loop aims at: 25% overall ROI, every sport above 0%, accuracy ≥60%."
+            "The bar the craft loop aims at: 25% overall ROI, every sport above 0%, accuracy at least 60%."
         ),
     }
     out = _merge_bundled_learning(out)

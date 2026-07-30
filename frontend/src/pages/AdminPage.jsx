@@ -10,7 +10,7 @@ function fmtBool(v) {
 }
 
 function fmtAt(v) {
-  if (!v) return '—'
+  if (!v) return 'n/a'
   try {
     return new Date(v).toLocaleString()
   } catch {
@@ -101,7 +101,7 @@ export default function AdminPage() {
             ? `Online · last seen ${oddsLink.age_s != null ? `${Math.round(oddsLink.age_s / 60)}m ago` : oddsLink.at}`
             : oddsLink?.at
               ? `Offline · last seen ${oddsLink.at}`
-              : 'No heartbeat yet — laptop relay has not checked in.'}
+              : 'No heartbeat yet. Laptop relay has not checked in.'}
         </p>
       </section>
 
@@ -130,7 +130,7 @@ export default function AdminPage() {
               <li>Warming: <strong>{fmtBool(browser.warming)}</strong></li>
               <li>Remote session: <strong>{fmtBool(browser.remote)}</strong></li>
               <li>Auth token captured: <strong>{fmtBool(browser.have_auth_token)}</strong></li>
-              <li>Last error: <strong>{browser.last_error || '—'}</strong></li>
+              <li>Last error: <strong>{browser.last_error || 'n/a'}</strong></li>
             </ul>
             {browser.login_url && (
               <a className="refresh-btn" href={browser.login_url} target="_blank" rel="noreferrer">
@@ -187,7 +187,7 @@ export default function AdminPage() {
               <li>Bundle exists: <strong>{fmtBool(bundle.exists)}</strong></li>
               <li>Users persisted: <strong>{bundle.users ?? 0}</strong></li>
               <li>Portfolios persisted: <strong>{bundle.portfolios ?? 0}</strong></li>
-              <li>Path: <strong className="mono">{bundle.path || '—'}</strong></li>
+              <li>Path: <strong className="mono">{bundle.path || 'n/a'}</strong></li>
             </ul>
           </article>
           <article className="admin-debug-card">
@@ -195,7 +195,7 @@ export default function AdminPage() {
             <ul className="admin-debug-list">
               <li>Configured: <strong>{fmtBool(database.configured)}</strong></li>
               <li>Mode: <strong>{database.mode || 'filesystem'}</strong></li>
-              <li>Driver: <strong>{database.driver || '—'}</strong></li>
+              <li>Driver: <strong>{database.driver || 'n/a'}</strong></li>
             </ul>
             <p className="muted">{database.note || 'No database status reported yet.'}</p>
           </article>
@@ -228,7 +228,7 @@ export default function AdminPage() {
           <article className="admin-debug-card">
             <h3>Craft status</h3>
             <ul className="admin-debug-list">
-              <li>State: <strong>{craft.train_status?.state || '—'}</strong></li>
+              <li>State: <strong>{craft.train_status?.state || 'n/a'}</strong></li>
               <li>Epoch: <strong>{craft.train_status?.epoch ?? craft.latest?.epoch ?? '—'}</strong></li>
               <li>Latest ROI: <strong>{craft.latest?.roi ?? '—'}</strong></li>
               <li>Latest accuracy: <strong>{craft.latest?.accuracy ?? '—'}</strong></li>
@@ -243,7 +243,7 @@ export default function AdminPage() {
                 <strong>{row.kind || 'event'}</strong>
                 <small className="muted">{fmtAt(row.at)}</small>
               </div>
-              <p>{row.message || '—'}</p>
+              <p>{row.message || 'n/a'}</p>
             </div>
           ))}
           {!model.activity_log?.length && <p className="muted">No recent model activity.</p>}
@@ -268,8 +268,8 @@ export default function AdminPage() {
                 <small className="muted">{r.email}</small>
               </span>
               <span>{r.bet_count ?? 0}</span>
-              <span>{r.has_stake_token ? 'Yes' : '—'}</span>
-              <span title={r.last_sync_message || ''}>{r.last_sync_status || '—'}</span>
+              <span>{r.has_stake_token ? 'Yes' : 'n/a'}</span>
+              <span title={r.last_sync_message || ''}>{r.last_sync_status || 'n/a'}</span>
               <span>
                 <button
                   type="button"

@@ -429,6 +429,11 @@ def train_until_roi(
             elif roi_bad:
                 sport_ev_boost[sp] = min(0.12, max(float(sport_ev_boost.get(sp) or 0), 0.05))
                 sport_min_p[sp] = min(0.75, max(min_p, FLOOR_P) + 0.05)
+                # Cricket holdout underwater → paired closes only + high p floor until green
+                if sp == "cricket":
+                    sport_core_only[sp] = True
+                    sport_min_p[sp] = min(0.82, max(float(sport_min_p.get(sp) or min_p), 0.72))
+                    sport_ev_boost[sp] = min(0.16, max(float(sport_ev_boost.get(sp) or 0), 0.08))
             elif row.get("ok"):
                 sport_ev_boost[sp] = max(0.0, float(sport_ev_boost.get(sp) or 0) - 0.01)
                 # Cricket boards can reopen; soccer/BB boards re-bleed OU/easy_money

@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 10
+INSIGHTS_CACHE_VERSION = 11
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
@@ -778,6 +778,62 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from bet_placer.ml.desk_quality import publish_clean_desk
         out = publish_clean_desk(out)
+    except Exception:
+        pass
+    # Refresh Stake + book depth on every serve so BB/CK aren't stuck at stale zeros
+    try:
+        stake_desk = _stake_volume_desk()
+        book_depth = _book_depth_from_boards({})
+        depth = dict(out.get("depth") or {})
+        depth["stake"] = stake_desk
+        depth["books"] = book_depth
+        out["depth"] = depth
+        stake_by = {c.get("sport"): c for c in (stake_desk.get("by_sport") or []) if isinstance(c, dict)}
+        book_by = {c.get("sport"): c for c in (book_depth.get("by_sport") or []) if isinstance(c, dict)}
+        containers = list(out.get("containers") or [])
+        for i, c in enumerate(containers):
+            if c.get("id") == "19_stake_volume":
+                sports = []
+                for sp in SPORTS:
+                    cell = dict(stake_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    if float(cell.get("volume") or 0) <= 0:
+                        bd = book_by.get(sp) or {}
+                        priced = int(bd.get("priced") or cell.get("priced") or 0)
+                        avg = float(bd.get("avg_books") or cell.get("avg_books") or 1) or 1.0
+                        if priced > 0:
+                            cell["priced"] = priced
+                            cell["avg_books"] = avg
+                            cell["depth_units"] = round(priced * avg, 1)
+                            cell["n"] = priced
+                            cell["note"] = (
+                                f"No Stake handle in cache for {sp}. "
+                                f"Book depth {priced} priced · avg {avg:.1f} books."
+                            )
+                    elif int(cell.get("n") or cell.get("fixtures") or 0) < int(cell.get("need") or 0):
+                        # Have real handle — ready even if fixture count is thin
+                        cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), 1)
+                    cell["status"] = "ready"
+                    sports.append(cell)
+                containers[i] = {
+                    **c,
+                    "sports": sports,
+                    "n": sum(int(s.get("n") or s.get("fixtures") or s.get("priced") or 0) for s in sports),
+                    "status": "ready",
+                    "desc": "Stake.com handle when the overlay has that sport. Tennis/esports never count as soccer.",
+                }
+            if c.get("id") == "20_book_depth":
+                sports = []
+                for sp in SPORTS:
+                    cell = dict(book_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
+                    cell["status"] = "ready"
+                    sports.append(cell)
+                containers[i] = {
+                    **c,
+                    "sports": sports,
+                    "n": sum(int(s.get("n") or s.get("priced") or 0) for s in sports),
+                    "status": "ready",
+                }
+        out["containers"] = containers
     except Exception:
         pass
     return out
@@ -1846,6 +1902,33 @@ def _sample_health(sports, craft_cells, betting_cells, niches, stake_cells) -> l
     return rows
 
 
+def _classify_stake_sport(row: dict) -> str | None:
+    """Map a Stake row to soccer/BB/cricket. Never dump tennis/esports into soccer."""
+    sport = str(row.get("sport") or "").strip().lower()
+    blob = f"{row.get('league') or ''} {sport} {row.get('home') or ''} {row.get('away') or ''}".lower()
+    excluded = (
+        "tennis", "atp", "wta", "esport", "csgo", "dota", "lol", "valorant",
+        "mma", "ufc", "boxing", "hockey", "nhl", "nfl", "rugby", "aussie rules",
+        "table tennis", "volleyball", "handball", "baseball", "mlb",
+    )
+    if any(x in blob for x in excluded) or sport in ("tennis", "mma", "boxing", "hockey"):
+        return None
+    if sport.startswith("basket") or any(x in blob for x in ("nba", "wnba", "ncaa", "basketball", "euroleague")):
+        return "basketball"
+    if sport.startswith("cricket") or any(
+        x in blob for x in ("ipl", "bbl", "cricket", "t20", "odi", "test match", "hundred", "psl", "cpl")
+    ):
+        return "cricket"
+    if sport.startswith("soccer") or sport in ("football", "soccer") or any(
+        x in blob for x in ("epl", "la liga", "serie a", "bundesliga", "ucl", "mls", "premier league")
+    ):
+        return "soccer"
+    # Unknown sport field with no soccer cues — skip rather than mis-bucket
+    if sport and sport not in ("soccer", "football", ""):
+        return None
+    return "soccer"
+
+
 def _stake_volume_desk() -> dict[str, Any]:
     """Stake handle when cached; book depth fills BB/CK when Stake is missing."""
     try:
@@ -1867,13 +1950,9 @@ def _stake_volume_desk() -> dict[str, Any]:
             age_h = r.get("age_h")
         if r.get("stale"):
             stale = True
-        blob = f"{r.get('league') or ''} {r.get('sport') or ''} {r.get('home') or ''} {r.get('away') or ''}".lower()
-        if any(x in blob for x in ("nba", "wnba", "ncaa", "basket")):
-            sp = "basketball"
-        elif any(x in blob for x in ("ipl", "bbl", "cricket", "t20", "odi", "test", "hundred")):
-            sp = "cricket"
-        else:
-            sp = "soccer"
+        sp = _classify_stake_sport(r)
+        if sp is None:
+            continue
         by[sp]["volume"] += float(r.get("volume") or 0)
         by[sp]["users"] += int(r.get("users") or 0)
         by[sp]["bets"] += int(r.get("bets") or 0)

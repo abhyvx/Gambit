@@ -203,11 +203,12 @@ def _stake_volume_rows(*, allow_stale: bool = True) -> list[dict]:
             # De-dupe against fixtures already listed
             if any(_norm(r.get("home") or "") == _norm(home or "") and _norm(r.get("away") or "") == _norm(away or "") for r in rows):
                 continue
+            ov_sport = ov.get("sport") or stats.get("sport") or stats.get("tournament") or ""
             rows.append({
                 "home": home,
                 "away": away,
                 "league": stats.get("tournament") or "Stake",
-                "sport": "Soccer",
+                "sport": ov_sport or "Soccer",
                 "volume": vol,
                 "users": users,
                 "bets": bets,

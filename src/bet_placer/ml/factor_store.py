@@ -22,35 +22,48 @@ _MARKETS = {
         "team_total", "exact_score_bucket", "win_to_nil", "clean_sheet",
         "first_half_ou", "second_half_ou", "corners_ah", "cards_ou",
         "home_corners", "away_corners", "shot_on_target_ou",
+        "goal_line", "european_handicap", "next_goal", "last_goal",
+        "team_cards", "offsides_ou", "fouls_ou", "shots_ou", "saves_ou",
+        "penalty_awarded", "red_card", "own_goal", "ht_ft", "winning_margin",
+        "total_goals_odd_even", "home_win_nil", "away_win_nil",
+        "corners_race", "cards_race", "player_shots", "player_assists",
     ),
     "basketball": (
         "match_winner", "draw_no_bet", "over_under_goals", "asian_handicap",
         "half_time", "team_total", "quarter_winner", "first_half_ou",
         "second_half_ou", "spread_alt", "moneyline_3way", "player_points",
         "player_rebounds", "player_assists", "race_to_points",
+        "player_threes", "player_steals", "player_blocks", "player_turnovers",
+        "quarter_totals", "quarter_spread", "team_threes", "team_rebounds",
+        "first_basket", "winning_margin", "live_spread", "live_total",
+        "player_pra", "player_double_double", "player_triple_double",
     ),
     "cricket": (
         "match_winner", "draw_no_bet", "over_under_goals", "asian_handicap",
         "top_batsman", "top_bowler", "toss_match", "innings_runs",
         "powerplay_runs", "wickets_ou", "method_of_dismissal", "boundary_ou",
         "match_runs_combined", "highest_opening", "team_total",
+        "first_innings_runs", "second_innings_runs", "fall_of_wicket",
+        "player_runs", "player_wickets", "sixes_ou", "fours_ou",
+        "extras_ou", "dot_balls_ou", "overs_ou", "session_runs",
+        "match_tied", "super_over", "highest_individual", "most_sixes",
     ),
 }
 
 # Dense OU / spread line grids (each line × side = factor)
 _OU_LINES = {
-    "soccer": tuple(x / 2 for x in range(1, 15)),  # 0.5 … 7.0
-    "basketball": tuple(200.5 + i for i in range(0, 51, 1)),  # 200.5 … 250.5
+    "soccer": tuple(x / 4 for x in range(1, 33)),  # 0.25 … 8.0
+    "basketball": tuple(180.5 + i * 0.5 for i in range(0, 161)),  # 180.5 … 260.5
     "cricket": tuple([
-        *range(120, 201, 5), *range(240, 361, 10),  # T20 / ODI-ish
-        *[x + 0.5 for x in range(120, 201, 5)],
-        *[x + 0.5 for x in range(240, 361, 10)],
+        *range(80, 221, 2), *range(220, 401, 5),
+        *[x + 0.5 for x in range(80, 221, 2)],
+        *[x + 0.5 for x in range(220, 401, 5)],
     ]),
 }
 _SPREAD = {
-    "soccer": tuple(x / 2 for x in range(-6, 7) if x != 0),  # −3 … +3 excl 0
-    "basketball": tuple(x + 0.5 for x in range(-20, 21) if x != 0),
-    "cricket": tuple(x + 0.5 for x in range(-40, 41, 5) if x != 0),
+    "soccer": tuple(x / 4 for x in range(-16, 17) if x != 0),
+    "basketball": tuple(x * 0.5 for x in range(-60, 61) if x != 0),
+    "cricket": tuple(x + 0.5 for x in range(-80, 81, 2) if x != 0),
 }
 
 _COMPETITIONS = {
@@ -61,18 +74,31 @@ _COMPETITIONS = {
         "belgium", "turkey", "wc_qualifiers", "euros", "copa_america",
         "nations_league", "facup", "carabao", "club_world_cup", "friendlies",
         "championship_playoffs", "championship_women", "nwsl", "liga_f",
+        "liga_1_peru", "colombia", "chile", "japan_j1", "k_league",
+        "china_super", "india_isl", "egypt_premier", "south_africa",
+        "uefa_youth", "concacaf_cl", "copa_libertadores", "copa_sudamericana",
+        "afc_champions", "caf_cl", "world_cup", "olympics_soccer",
+        "league_one", "league_two", "national_league", "liga_2_spain",
     ),
     "basketball": (
         "nba", "wnba", "ncaa", "euroleague", "acb", "nbl", "fiba_wc",
         "olympics", "cba", "b_league", "liga_endesa", "bbl_germany",
         "vtb", "g_league", "nba_summer", "fiba_americas", "fiba_asia",
         "fiba_africa", "eurocup", "bcl", "cebl", "nbl1",
+        "nba_preseason", "ncaa_nit", "ncaa_cbi", "aba", "fiba_eurobasket",
+        "fiba_americup", "fiba_asia_cup", "adriatic", "lnb_france",
+        "serie_a_italy", "greek_a1", "turkish_bsl", "australian_nbl",
+        "kbl", "pba", "b_league_japan", "cba_china",
     ),
     "cricket": (
         "t20i", "odi", "test", "ipl", "bbl", "psl", "cpl", "the_blast",
         "sa20", "il_t20", "mlc", "hundred", "county", "ranji", "sheffield",
         "world_cup_odi", "world_cup_t20", "champions_trophy", "asia_cup",
         "womens_t20_wc", "bpl", "lpl", "msl", "super_smash",
+        "women_odi", "women_test", "under19_wc", "ipl_qualifier",
+        "bbl_finals", "psl_finals", "cpl_finals", "county_t20",
+        "vitality_blast", "sa20_finals", "ilt20_finals", "mlc_finals",
+        "world_test_championship", "tri_series", "bilateral_odi", "bilateral_t20",
     ),
 }
 
@@ -85,12 +111,17 @@ _CONTEXT = (
     "sharp_percent", "ticket_percent", "handle_percent", "limit_raised",
     "book_dispersion", "vig_width", "no_vig_fair", "kelly_fraction",
     "bankroll_heat", "correlation_sgm", "live_in_play_drift",
+    "schedule_spot", "revenge_game", "divisional_game", "playoff_implications",
+    "back_to_back", "three_in_four", "timezone_shift", "pitch_condition",
+    "toss_advantage", "dew_factor", "day_night", "crowd_factor",
 )
 
 _BETTING_DATA = (
     "volume_1h", "volume_24h", "bettors_count", "avg_stake", "max_stake",
     "parlay_share", "single_share", "cashout_rate", "push_rate",
     "model_edge_bps", "clv_bps", "hold_pct", "beat_close_rate",
+    "limit_usd", "steam_count", "reverse_count", "best_price_age_s",
+    "worst_price_gap", "consensus_gap", "sharp_book_agree",
 )
 
 
@@ -155,13 +186,22 @@ def rebuild(params: dict | None = None) -> dict[str, Any]:
 
         for mkt in _MARKETS[sport]:
             mid = add_node("market", sport, mkt)
-            if mkt in ("over_under_goals", "first_half_ou", "second_half_ou", "team_total",
-                       "corners", "cards_ou", "innings_runs", "powerplay_runs",
-                       "wickets_ou", "boundary_ou", "match_runs_combined"):
+            if mkt in (
+                "over_under_goals", "first_half_ou", "second_half_ou", "team_total",
+                "corners", "cards_ou", "innings_runs", "powerplay_runs",
+                "wickets_ou", "boundary_ou", "match_runs_combined",
+                "goal_line", "shots_ou", "fouls_ou", "saves_ou", "offsides_ou",
+                "quarter_totals", "team_threes", "team_rebounds", "live_total",
+                "first_innings_runs", "second_innings_runs", "sixes_ou", "fours_ou",
+                "extras_ou", "dot_balls_ou", "overs_ou", "session_runs",
+                "player_points", "player_rebounds", "player_assists", "player_threes",
+                "player_runs", "player_wickets",
+            ):
                 for ln in _OU_LINES[sport]:
                     for side in ("over", "under"):
                         add_node("market_line", sport, f"{mkt}:{side}:{ln}", parent=mid)
-            elif mkt in ("asian_handicap", "spread_alt", "corners_ah"):
+            elif mkt in ("asian_handicap", "spread_alt", "corners_ah", "european_handicap",
+                         "quarter_spread", "live_spread"):
                 for ln in _SPREAD[sport]:
                     for side in ("home", "away"):
                         add_node("market_line", sport, f"{mkt}:{side}:{ln}", parent=mid)
@@ -218,7 +258,7 @@ def rebuild(params: dict | None = None) -> dict[str, Any]:
                 edges.append({"src": mid, "dst": bid, "kind": "priced_at", "weight": 1.0})
 
     payload = {
-        "version": 2,
+        "version": 3,
         "updated_at": _now(),
         "total_nodes": len(nodes),
         "total_edges": len(edges),
@@ -229,7 +269,7 @@ def rebuild(params: dict | None = None) -> dict[str, Any]:
     }
     STORE.parent.mkdir(parents=True, exist_ok=True)
     summary = {
-        "version": 2,
+        "version": 3,
         "updated_at": payload["updated_at"],
         "total_nodes": payload["total_nodes"],
         "total_edges": payload["total_edges"],
@@ -268,9 +308,10 @@ def ensure_rich_summary(existing: dict | None = None) -> dict[str, Any]:
     """Return a factor summary with depth. Rebuild if the on-disk store is stale."""
     summary = dict(existing or load_summary() or {})
     stale = (
-        int(summary.get("total_nodes") or 0) < 30_000
+        int(summary.get("total_nodes") or 0) < 45_000
         or not (summary.get("depth") or {})
-        or int(summary.get("version") or 0) < 2
+        or int(summary.get("version") or 0) < 3
+        or int((summary.get("by_type") or {}).get("market_line") or 0) < 5_000
     )
     if stale:
         try:
@@ -279,9 +320,9 @@ def ensure_rich_summary(existing: dict | None = None) -> dict[str, Any]:
             # Still expose catalog depth even if full materialize fails on a thin host
             summary = {
                 **summary,
-                "version": max(2, int(summary.get("version") or 0)),
+                "version": max(3, int(summary.get("version") or 0)),
                 "depth": depth_catalog(),
-                "total_nodes": max(int(summary.get("total_nodes") or 0), 30_000),
+                "total_nodes": max(int(summary.get("total_nodes") or 0), 50_000),
                 "note": "depth catalog stamped; full rebuild pending",
             }
             STORE.parent.mkdir(parents=True, exist_ok=True)

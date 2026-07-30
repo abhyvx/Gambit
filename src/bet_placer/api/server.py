@@ -1320,7 +1320,7 @@ def model_insights():
     # Fast craft+evolution desk so graphs never stay blank
     try:
         fallback = craft_fallback_desk()
-        if fallback.get("containers"):
+        if fallback.get("containers") and int(fallback.get("total_corpus") or 0) > 100:
             _INSIGHTS_CACHE = (now, fallback)
             try:
                 save_insights_cache(fallback)

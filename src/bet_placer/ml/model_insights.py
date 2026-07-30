@@ -677,6 +677,11 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def save_insights_cache(payload: dict[str, Any]) -> None:
     path = _insights_disk_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _read_insights_file(max_age_s=0)
+    incoming_corpus = int(payload.get("total_corpus") or 0)
+    if existing and int(existing.get("total_corpus") or 0) > 1000:
+        if incoming_corpus <= 0 or incoming_corpus < int(existing.get("total_corpus") or 0) // 2:
+            return
     # Drop bulky nested epoch dumps if craft leaked them
     slim = _sanitize_insights_payload(dict(payload))
     craft = dict(slim.get("craft") or {})
@@ -701,15 +706,15 @@ def _read_insights_file(max_age_s: float) -> dict[str, Any] | None:
 
 
 def _insights_cache_usable(raw: dict[str, Any]) -> bool:
-    ver = int(raw.get("cache_version") or 0)
     corpus = int(raw.get("total_corpus") or 0)
     has_body = bool(raw.get("containers") or raw.get("curves"))
     if not has_body:
         return False
-    if ver >= INSIGHTS_CACHE_VERSION:
+    # Only serve finished desks — empty rebuilds must not mask the release bundle.
+    if corpus > 1000:
         return True
-    # Legacy release bundles (pre cache_version) — still valid when corpus is real
-    return corpus > 1000
+    status = str(raw.get("status") or "")
+    return status == "ready" and corpus > 100
 
 
 def load_insights_cache(max_age_s: float = 3600.0) -> dict[str, Any] | None:
@@ -761,6 +766,15 @@ def ensure_insights_cache_on_disk() -> dict[str, Any] | None:
     hit = load_insights_cache(max_age_s=30 * 86400)
     if hit:
         return hit
+    # Drop poisoned empty cache written by a cold craft run
+    path = _insights_disk_path()
+    if path.is_file():
+        raw = _read_insights_file(max_age_s=0)
+        if raw and not _insights_cache_usable(raw):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
     if not _INSIGHTS_RELEASE_FETCHED:
         _INSIGHTS_RELEASE_FETCHED = True
         hit = fetch_release_insights_cache()

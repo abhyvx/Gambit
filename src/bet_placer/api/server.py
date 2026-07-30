@@ -250,27 +250,33 @@ def _ensure_craft_training() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    try:
-        from bet_placer.persistence.db import import_legacy_files_if_empty, init_db
+    """Bind health ASAP — never block port detection on DB/Turso/warmups."""
 
-        init_db()
-        logger.info("database bootstrap: %s", import_legacy_files_if_empty())
-    except Exception:
-        logger.debug("database bootstrap skipped", exc_info=True)
-    try:
-        from bet_placer.auth.persist import restore_users_bundle, write_users_bundle
-        out = restore_users_bundle(force=False)
-        logger.info("users bundle restore: %s", out)
-        write_users_bundle()
-    except Exception:
-        logger.debug("users bundle restore skipped", exc_info=True)
-    _warmup_data()
-    _prefetch_stake_overlay()
-    _warmup_stake_browser()
-    _stake_odds_keepalive_loop()
-    _warmup_model()
-    _ensure_craft_training()
-    _warmup_insights()
+    def _boot() -> None:
+        try:
+            from bet_placer.persistence.db import import_legacy_files_if_empty, init_db
+
+            init_db()
+            logger.info("database bootstrap: %s", import_legacy_files_if_empty())
+        except Exception:
+            logger.warning("database bootstrap skipped", exc_info=True)
+        try:
+            from bet_placer.auth.persist import restore_users_bundle, write_users_bundle
+
+            out = restore_users_bundle(force=False)
+            logger.info("users bundle restore: %s", out)
+            write_users_bundle()
+        except Exception:
+            logger.debug("users bundle restore skipped", exc_info=True)
+        _warmup_data()
+        _prefetch_stake_overlay()
+        _warmup_stake_browser()
+        _stake_odds_keepalive_loop()
+        _warmup_model()
+        _ensure_craft_training()
+        _warmup_insights()
+
+    threading.Thread(target=_boot, daemon=True, name="api-boot").start()
     yield
     # Tear the browser down cleanly so we don't orphan Chrome (which would lock
     # the profile and break Stake on the next launch).
@@ -393,29 +399,33 @@ class StakeSyncJobsComplete(BaseModel):
 
 @app.get("/api/health")
 def health():
-    settings = get_settings()
-    from bet_placer.config import remote_stake_browser_enabled
-    from bet_placer.engine.stake_odds import stake_overlay_status
-    overlay = stake_overlay_status()
-    stake_status = {}
-    if stake_network_enabled():
-        try:
-            from bet_placer.data.stake_browser import browser_status
-            stake_status = {**browser_status(), "overlay": overlay}
-        except Exception:
-            stake_status = {"overlay": overlay}
-    elif settings.stake_relay_secret or overlay.get("have_data"):
-        stake_status = {"relay": bool(settings.stake_relay_secret), "overlay": overlay}
-    return {
-        "status": "ok",
-        "odds_api_configured": bool(settings.odds_api_key),
-        "stake_token_configured": bool(settings.stake_api_token),
-        "stake_use_browser": settings.stake_use_browser,
-        "stake_remote": remote_stake_browser_enabled(),
-        "stake_relay": bool(settings.stake_relay_secret),
-        "stake_live": stake_network_enabled(),
-        "stake_browser": stake_status,
-    }
+    """Liveness for Render — must stay fast and never depend on Turso/Stake."""
+    try:
+        settings = get_settings()
+        from bet_placer.config import remote_stake_browser_enabled
+        from bet_placer.engine.stake_odds import stake_overlay_status
+        overlay = stake_overlay_status()
+        stake_status = {}
+        if stake_network_enabled():
+            try:
+                from bet_placer.data.stake_browser import browser_status
+                stake_status = {**browser_status(), "overlay": overlay}
+            except Exception:
+                stake_status = {"overlay": overlay}
+        elif settings.stake_relay_secret or overlay.get("have_data"):
+            stake_status = {"relay": bool(settings.stake_relay_secret), "overlay": overlay}
+        return {
+            "status": "ok",
+            "odds_api_configured": bool(settings.odds_api_key),
+            "stake_token_configured": bool(settings.stake_api_token),
+            "stake_use_browser": settings.stake_use_browser,
+            "stake_remote": remote_stake_browser_enabled(),
+            "stake_relay": bool(settings.stake_relay_secret),
+            "stake_live": stake_network_enabled(),
+            "stake_browser": stake_status,
+        }
+    except Exception:
+        return {"status": "ok"}
 
 
 @app.get("/api/categories")

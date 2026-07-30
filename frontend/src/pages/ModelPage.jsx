@@ -29,21 +29,26 @@ function trainGateLabel(craft) {
   if (bets <= 0 && (state === 'running' || state === 'training' || state === 'building')) {
     state = 'idle'
   }
+  const roi = deskRoi(craft)
+  const target = Number(craft?.target_roi ?? ts.target_roi ?? 0.25)
+  const gates = ts.gates || {}
+  if (gates.all_ok || state === 'hit_target') return 'Hit'
+  // Below the 25% bar (or sport gates failing) → never say Training / Ready
+  if (roi == null || Number(roi) < target || gates.roi_ok === false || gates.acc_ok === false) {
+    return 'Below target'
+  }
   const labels = {
     running: 'Updating',
     hit_target: 'Hit',
     finished_without_hit: 'Below target',
-    finished: 'Ready',
-    open: 'Ready',
-    idle: 'Ready',
+    finished: 'Below target',
+    open: 'Below target',
+    idle: 'Below target',
     needs_train: 'Below target',
   }
   if (labels[state]) return labels[state]
-  if (!state) return 'Ready'
-  const gates = ts.gates || {}
-  if (gates.all_ok) return 'Hit'
-  if (gates.roi_ok === false || gates.acc_ok === false) return 'Below target'
-  return String(state).replace(/_/g, ' ')
+  if (!state) return 'Below target'
+  return 'Below target'
 }
 
 function liveHoldoutRoi(craft) {
@@ -88,7 +93,7 @@ function overviewLine(ins, craft) {
   if (epochs > 0) parts.push(`${epochs.toLocaleString()} craft epochs`)
   if (boxes > 0) parts.push(`${boxes} desk boxes`)
   if (roi != null && Number.isFinite(Number(roi))) parts.push(`desk ROI ${roiPct(roi)}`)
-  if (!parts.length) return 'Training desk for soccer, basketball, and cricket.'
+  if (!parts.length) return 'Soccer · basketball · cricket desk from stored graded data.'
   return parts.join(' · ')
 }
 
@@ -504,16 +509,26 @@ function InsightContainer({ c, curves, sportKeys }) {
       )}
 
       {c.kind === 'market_list' && (
-        <div className="stat-grid stat-grid--compact">
-          {(c.rows || []).map((row) => (
-            <div className="stat-cell" key={row.market}>
-              <span className="stat-label">{String(row.market || '').replace(/_/g, ' ')}</span>
-              <strong className="stat-value">{pct(row.accuracy ?? row.hit_rate)}</strong>
-              <small>
-                <StatusPill status={row.status} n={row.n} need={row.need} />
-              </small>
-            </div>
-          ))}
+        <div className="insight-market-scroll">
+          <div className="stat-grid stat-grid--compact">
+            {(c.rows || []).slice(0, 120).map((row, idx) => (
+              <div className="stat-cell" key={`${row.market}-${idx}`}>
+                <span className="stat-label">{String(row.market || '').replace(/_/g, ' ')}</span>
+                <strong className="stat-value">
+                  {row.accuracy != null || row.hit_rate != null
+                    ? pct(row.accuracy ?? row.hit_rate)
+                    : (row.kind === 'market_line' || row.kind === 'competition' ? 'line' : fmt(row.n))}
+                </strong>
+                <small>
+                  <StatusPill status={row.status} n={row.n} need={row.need} />
+                  {row.sport ? ` · ${row.sport}` : ''}
+                </small>
+              </div>
+            ))}
+          </div>
+          {(c.rows || []).length > 120 && (
+            <p className="muted">Showing 120 of {fmt((c.rows || []).length)} market factors.</p>
+          )}
         </div>
       )}
 
@@ -922,27 +937,23 @@ export default function ModelPage() {
               {roiPct(deskRoi(craft))}
             </strong>
             <small>
-              {(ins?.metric_glossary?.holdout_roi)
-                || ((craft?.holdout_source === 'champion' || Number(craft?.train_status?.bets || 0) <= 0)
-                  ? 'Paper profit on frozen matches · champion slice while epoch is empty'
-                  : 'Paper profit on the same frozen matches every run')}
+              Paper profit on a frozen match set (same games every run).
+              {' '}Champion = best graded slice. Target {roiPct(craft.target_roi || 0.25)}.
             </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Holdout hit rate</span>
             <strong className="stat-value">{pct(deskHitRate(craft))}</strong>
             <small>
-              {(ins?.metric_glossary?.holdout_hit_rate)
-                || `Share of holdout tickets that won · target ${pct(craft.target_accuracy || 0.60)}`}
+              Share of those frozen tickets that won. Target {pct(craft.target_accuracy || 0.60)}.
             </small>
           </div>
           <div className="stat-cell">
             <span className="stat-label">Desk gate</span>
             <strong className="stat-value">{trainGateLabel(craft)}</strong>
             <small>
-              {(ins?.metric_glossary?.train_gate)
-                || `${fmt(craft.train_status?.epoch || craft.n_epochs)} epochs`}
-                {ins?.desk_quality?.ok_count ? ` · ${ins.desk_quality.ok_count} boxes ready` : ''}
+              Clears at ≥25% ROI · every sport &gt; 0% · hit ≥60%. Not a live Training spinner.
+              {ins?.desk_quality?.ok_count ? ` · ${ins.desk_quality.ok_count} boxes ready` : ''}
             </small>
           </div>
           <div className="stat-cell">
@@ -958,11 +969,28 @@ export default function ModelPage() {
             <span className="stat-label">Factors</span>
             <strong className="stat-value">{fmt(ins?.factors?.total_nodes || containers.find((c) => c.id === '18_factor_graph')?.total_nodes)}</strong>
             <small>
-              {ins?.factors?.depth
-                ? `${Object.values(ins.factors.depth.markets_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} markets · ${Object.values(ins.factors.depth.competitions_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} comps`
-                : 'trained graph nodes'}
+              {ins?.factors?.by_type?.market_line != null
+                ? `${fmt(ins.factors.by_type.market_line)} market lines · ${fmt(ins.factors.by_type.market || 0)} markets · ${fmt(ins.factors.by_type.competition || 0)} comps`
+                : (ins?.factors?.depth
+                  ? `${Object.values(ins.factors.depth.markets_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} markets · ${Object.values(ins.factors.depth.competitions_per_sport || {}).reduce((a, b) => a + Number(b || 0), 0)} comps`
+                  : 'trained graph nodes')}
             </small>
           </div>
+        </div>
+        <div className="insight-glossary">
+          <p>
+            <strong>Holdout ROI</strong> — {(ins?.metric_glossary?.holdout_roi)
+              || 'Paper profit on one frozen match set. Same games every epoch. Not live bankroll.'}
+          </p>
+          <p>
+            <strong>Holdout hit rate</strong> — {(ins?.metric_glossary?.holdout_hit_rate)
+              || 'Share of holdout tickets that won (target 60%+).'}
+          </p>
+          <p>
+            <strong>Craft targets / desk gate</strong> — {(ins?.metric_glossary?.craft_targets)
+              || 'Bar: 25% overall ROI, every sport above 0%, accuracy ≥60%.'}
+            {' '}{(ins?.metric_glossary?.train_gate) || ''}
+          </p>
         </div>
       </section>
 

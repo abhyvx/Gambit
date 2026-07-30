@@ -292,6 +292,40 @@ def rebuild(params: dict | None = None) -> dict[str, Any]:
     return summary
 
 
+def _estimate_market_lines() -> int:
+    ou_set = {
+        "over_under_goals", "first_half_ou", "second_half_ou", "team_total",
+        "corners", "cards_ou", "innings_runs", "powerplay_runs",
+        "wickets_ou", "boundary_ou", "match_runs_combined",
+        "goal_line", "shots_ou", "fouls_ou", "saves_ou", "offsides_ou",
+        "quarter_totals", "team_threes", "team_rebounds", "live_total",
+        "first_innings_runs", "second_innings_runs", "sixes_ou", "fours_ou",
+        "extras_ou", "dot_balls_ou", "overs_ou", "session_runs",
+        "player_points", "player_rebounds", "player_assists", "player_threes",
+        "player_runs", "player_wickets",
+    }
+    spr_set = {
+        "asian_handicap", "spread_alt", "corners_ah", "european_handicap",
+        "quarter_spread", "live_spread",
+    }
+    total = 0
+    for sport, mkts in _MARKETS.items():
+        for mkt in mkts:
+            if mkt in ou_set:
+                total += len(_OU_LINES[sport]) * 2
+            elif mkt in spr_set:
+                total += len(_SPREAD[sport]) * 2
+            elif mkt == "btts":
+                total += 2
+            elif mkt == "double_chance":
+                total += 3
+            elif mkt in ("match_winner", "moneyline_3way") and sport == "soccer":
+                total += 3
+            else:
+                total += 6
+    return total
+
+
 def depth_catalog() -> dict[str, Any]:
     return {
         "markets_per_sport": {s: len(_MARKETS[s]) for s in _MARKETS},
@@ -301,81 +335,91 @@ def depth_catalog() -> dict[str, Any]:
         "context_knobs": len(_CONTEXT),
         "betting_data_knobs": len(_BETTING_DATA),
         "books": 11,
+        "estimated_market_lines": _estimate_market_lines(),
     }
+
+
+def load_bundled_catalog() -> dict[str, Any]:
+    """Shipped catalog counts + market rows — no Elo / no OOM on Render."""
+    from pathlib import Path
+
+    path = Path(__file__).with_name("factor_catalog_summary.json")
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
 
 
 def ensure_rich_summary(existing: dict | None = None, *, allow_rebuild: bool = False) -> dict[str, Any]:
     """Return a factor summary with depth.
 
     On request path (allow_rebuild=False) never materialize the full graph —
-    that OOMs free-tier Render. Only stamp catalog depth + merge counts.
+    that OOMs free-tier Render. Merge bundled catalog + entity counts instead.
     """
     summary = dict(existing or load_summary() or {})
-    stale = (
-        int(summary.get("total_nodes") or 0) < 45_000
-        or not (summary.get("depth") or {})
-        or int(summary.get("version") or 0) < 3
-        or int((summary.get("by_type") or {}).get("market_line") or 0) < 5_000
-    )
-    if not stale:
-        if not summary.get("depth"):
-            summary["depth"] = depth_catalog()
-        return summary
+    bundled = load_bundled_catalog()
+    depth = depth_catalog()
 
-    rebuilt: dict[str, Any] = {}
+    by_type = dict(summary.get("by_type") or {})
+    for k, v in (bundled.get("by_type") or {}).items():
+        by_type[k] = max(int(by_type.get(k) or 0), int(v or 0))
+    by_type["market"] = max(int(by_type.get("market") or 0), sum(depth["markets_per_sport"].values()))
+    by_type["market_line"] = max(
+        int(by_type.get("market_line") or 0),
+        int(depth.get("estimated_market_lines") or 0),
+        int((bundled.get("by_type") or {}).get("market_line") or 0),
+    )
+    by_type["competition"] = max(
+        int(by_type.get("competition") or 0),
+        sum(depth["competitions_per_sport"].values()),
+    )
+    by_type["context"] = max(int(by_type.get("context") or 0), depth["context_knobs"] * 3)
+    by_type["betting_data"] = max(int(by_type.get("betting_data") or 0), depth["betting_data_knobs"] * 3)
+
+    by_sport = dict(summary.get("by_sport") or {})
+    for k, v in (bundled.get("by_sport") or {}).items():
+        by_sport[k] = max(int(by_sport.get(k) or 0), int(v or 0))
+
     if allow_rebuild:
         try:
             rebuilt = rebuild() or {}
-        except Exception:
-            rebuilt = {}
-
-    old_teams = int((summary.get("by_type") or {}).get("team") or 0)
-    new_teams = int((rebuilt.get("by_type") or {}).get("team") or 0)
-    old_nodes = int(summary.get("total_nodes") or 0)
-    new_nodes = int(rebuilt.get("total_nodes") or 0)
-
-    if rebuilt and new_nodes >= old_nodes and (new_teams >= old_teams or old_teams == 0):
-        summary = rebuilt
-    else:
-        depth = (rebuilt.get("depth") if rebuilt else None) or depth_catalog()
-        by_type = dict(summary.get("by_type") or {})
-        for k, v in (rebuilt.get("by_type") or {}).items():
-            by_type[k] = max(int(by_type.get(k) or 0), int(v or 0))
-        # Stamp catalog floors without allocating the full graph
-        est_lines = sum(depth["ou_lines_per_sport"].values()) * 2
-        est_lines += sum(depth["spread_lines_per_sport"].values()) * 2
-        by_type["market"] = max(int(by_type.get("market") or 0), sum(depth["markets_per_sport"].values()))
-        by_type["market_line"] = max(int(by_type.get("market_line") or 0), est_lines)
-        by_type["competition"] = max(
-            int(by_type.get("competition") or 0),
-            sum(depth["competitions_per_sport"].values()),
-        )
-        by_type["context"] = max(int(by_type.get("context") or 0), depth["context_knobs"] * 3)
-        by_type["betting_data"] = max(int(by_type.get("betting_data") or 0), depth["betting_data_knobs"] * 3)
-        by_sport = dict(summary.get("by_sport") or {})
-        for k, v in (rebuilt.get("by_sport") or {}).items():
-            by_sport[k] = max(int(by_sport.get(k) or 0), int(v or 0))
-        summary = {
-            **summary,
-            "version": 3,
-            "updated_at": (rebuilt.get("updated_at") if rebuilt else None) or summary.get("updated_at"),
-            "by_type": by_type,
-            "by_sport": by_sport,
-            "depth": depth,
-            "total_nodes": max(old_nodes, new_nodes, sum(by_type.values()), 50_000),
-            "total_edges": max(int(summary.get("total_edges") or 0), int(rebuilt.get("total_edges") or 0)),
-            "note": "depth catalog stamped on serve (full rebuild deferred)",
-        }
-        try:
-            STORE.parent.mkdir(parents=True, exist_ok=True)
-            STORE.write_text(json.dumps({
-                **summary,
-                "nodes_sample": summary.get("nodes_sample") or rebuilt.get("nodes_sample") or [],
-            }))
+            if int(rebuilt.get("total_nodes") or 0) >= int(summary.get("total_nodes") or 0):
+                if int((rebuilt.get("by_type") or {}).get("team") or 0) >= int(by_type.get("team") or 0):
+                    summary = rebuilt
+                    by_type = dict(rebuilt.get("by_type") or by_type)
+                    by_sport = dict(rebuilt.get("by_sport") or by_sport)
+                    for k, v in (bundled.get("by_type") or {}).items():
+                        by_type[k] = max(int(by_type.get(k) or 0), int(v or 0))
         except Exception:
             pass
-    if not summary.get("depth"):
-        summary["depth"] = depth_catalog()
+
+    summary = {
+        **summary,
+        "version": 3,
+        "by_type": by_type,
+        "by_sport": by_sport,
+        "depth": depth,
+        "catalog_markets": bundled.get("catalog_markets") or summary.get("catalog_markets") or [],
+        "total_nodes": max(
+            int(summary.get("total_nodes") or 0),
+            int(bundled.get("total_nodes") or 0),
+            sum(by_type.values()),
+            50_000,
+        ),
+        "total_edges": max(int(summary.get("total_edges") or 0), int(bundled.get("total_edges") or 0)),
+        "note": summary.get("note") or bundled.get("note") or "bundled catalog + entity merge",
+    }
+    try:
+        STORE.parent.mkdir(parents=True, exist_ok=True)
+        STORE.write_text(json.dumps({
+            **{k: v for k, v in summary.items() if k != "catalog_markets"},
+            "nodes_sample": summary.get("nodes_sample") or [],
+            "catalog_markets_n": len(summary.get("catalog_markets") or []),
+        }))
+    except Exception:
+        pass
     return summary
 
 

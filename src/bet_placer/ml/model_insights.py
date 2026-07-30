@@ -628,7 +628,7 @@ def _insights_disk_path():
     return data_path("model_insights_cache.json")
 
 
-INSIGHTS_CACHE_VERSION = 12
+INSIGHTS_CACHE_VERSION = 13
 _INSIGHTS_RELEASE_FETCHED = False
 
 # Craft chart curves only — drop sentinels / empty-epoch junk, keep mild negatives.
@@ -778,62 +778,6 @@ def _sanitize_insights_payload(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from bet_placer.ml.desk_quality import publish_clean_desk
         out = publish_clean_desk(out)
-    except Exception:
-        pass
-    # Refresh Stake + book depth on every serve so BB/CK aren't stuck at stale zeros
-    try:
-        stake_desk = _stake_volume_desk()
-        book_depth = _book_depth_from_boards({})
-        depth = dict(out.get("depth") or {})
-        depth["stake"] = stake_desk
-        depth["books"] = book_depth
-        out["depth"] = depth
-        stake_by = {c.get("sport"): c for c in (stake_desk.get("by_sport") or []) if isinstance(c, dict)}
-        book_by = {c.get("sport"): c for c in (book_depth.get("by_sport") or []) if isinstance(c, dict)}
-        containers = list(out.get("containers") or [])
-        for i, c in enumerate(containers):
-            if c.get("id") == "19_stake_volume":
-                sports = []
-                for sp in SPORTS:
-                    cell = dict(stake_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
-                    if float(cell.get("volume") or 0) <= 0:
-                        bd = book_by.get(sp) or {}
-                        priced = int(bd.get("priced") or cell.get("priced") or 0)
-                        avg = float(bd.get("avg_books") or cell.get("avg_books") or 1) or 1.0
-                        if priced > 0:
-                            cell["priced"] = priced
-                            cell["avg_books"] = avg
-                            cell["depth_units"] = round(priced * avg, 1)
-                            cell["n"] = priced
-                            cell["note"] = (
-                                f"No Stake handle in cache for {sp}. "
-                                f"Book depth {priced} priced · avg {avg:.1f} books."
-                            )
-                    elif int(cell.get("n") or cell.get("fixtures") or 0) < int(cell.get("need") or 0):
-                        # Have real handle — ready even if fixture count is thin
-                        cell["n"] = max(int(cell.get("n") or 0), int(cell.get("fixtures") or 0), 1)
-                    cell["status"] = "ready"
-                    sports.append(cell)
-                containers[i] = {
-                    **c,
-                    "sports": sports,
-                    "n": sum(int(s.get("n") or s.get("fixtures") or s.get("priced") or 0) for s in sports),
-                    "status": "ready",
-                    "desc": "Stake.com handle when the overlay has that sport. Tennis/esports never count as soccer.",
-                }
-            if c.get("id") == "20_book_depth":
-                sports = []
-                for sp in SPORTS:
-                    cell = dict(book_by.get(sp) or {"sport": sp, "n": 0, "status": "ready"})
-                    cell["status"] = "ready"
-                    sports.append(cell)
-                containers[i] = {
-                    **c,
-                    "sports": sports,
-                    "n": sum(int(s.get("n") or s.get("priced") or 0) for s in sports),
-                    "status": "ready",
-                }
-        out["containers"] = containers
     except Exception:
         pass
     return out

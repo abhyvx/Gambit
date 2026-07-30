@@ -701,7 +701,8 @@ def build_bet_menu(home: str, away: str, budget_inr: float = 300.0, sport: str |
     source = "model"
     if open_match:
         try:
-            overlay_map = get_stake_overlay_map(launch_browser=True)
+            # HTTP Build path must never launch Playwright/Browserbase (OOM on free tier).
+            overlay_map = get_stake_overlay_map(launch_browser=False)
             fixture = match_overlay(home_n, away_n, overlay_map)
         except Exception as exc:
             logger.warning("Bet-builder: Stake overlay failed for %s vs %s: %s", home_n, away_n, exc)

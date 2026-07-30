@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchAdminAccounts,
+  fetchLaptopSyncStatus,
   requeueFailedSyncJobs,
   requestLaptopOddsSync,
-  revokeAdminSessions,
 } from '../api'
 import { useEntryReady } from '../components/EntryScreen'
 import './pages.css'
@@ -26,9 +26,9 @@ function fmtAt(v) {
 export default function AdminPage() {
   useEntryReady()
   const { user, ready, openAuth } = useAuth()
-  const [rows, setRows] = useState([])
   const [oddsLink, setOddsLink] = useState(null)
   const [debug, setDebug] = useState(null)
+  const [syncStatus, setSyncStatus] = useState(null)
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState('')
@@ -37,12 +37,15 @@ export default function AdminPage() {
     setErr('')
     try {
       const data = await fetchAdminAccounts()
-      setRows(data?.accounts || [])
       setOddsLink(data?.odds_link || null)
       setDebug(data?.admin_debug || null)
+      try {
+        setSyncStatus(await fetchLaptopSyncStatus())
+      } catch {
+        setSyncStatus(null)
+      }
     } catch (e) {
       setErr(e?.message || 'Admin access denied.')
-      setRows([])
       setDebug(null)
     }
   }
@@ -50,6 +53,26 @@ export default function AdminPage() {
   useEffect(() => {
     if (user?.is_admin) load()
   }, [user?.is_admin])
+
+  // Poll while a laptop odds request is pending
+  useEffect(() => {
+    if (!user?.is_admin || syncStatus?.status !== 'pending') return undefined
+    const id = setInterval(async () => {
+      try {
+        const next = await fetchLaptopSyncStatus()
+        setSyncStatus(next)
+        if (next?.status === 'confirmed') {
+          setNote(
+            `Confirmed: laptop pushed ${next.fixtures ?? 'odds'} fixture(s) at ${fmtAt(next.confirmed_at)}.`
+          )
+          load()
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 4000)
+    return () => clearInterval(id)
+  }, [user?.is_admin, syncStatus?.status])
 
   if (!ready) {
     return (
@@ -95,53 +118,22 @@ export default function AdminPage() {
         <div>
           <h1>Admin</h1>
           <p className="subtitle">
-            Debug + patch notes. Stake tokens stay sealed and are never shown here.
+            Debug + laptop Stake sync. Stake tokens stay sealed.
           </p>
         </div>
         <button type="button" className="refresh-btn" onClick={load}>Refresh</button>
       </header>
 
+      <nav className="admin-nav" aria-label="Admin sections">
+        <Link className="admin-nav-link is-active" to="/app/admin">Overview</Link>
+        <Link className="admin-nav-link" to="/app/admin/users">Users</Link>
+      </nav>
+
       {(err || note) && (
-        <p className={`muted ${err ? '' : ''}`} role={err ? 'alert' : 'status'}>
+        <p className="muted" role={err ? 'alert' : 'status'}>
           {err || note}
         </p>
       )}
-
-      <section className="panel">
-        <h2 className="panel-title">Patch notes</h2>
-        <p className="muted">
-          Version and debugging-cycle log — what broke, what we fixed. Newest first.
-        </p>
-        <div className="admin-patch-list">
-          {patchNotes.map((entry) => (
-            <article className="admin-patch-card" key={`${entry.version}-${entry.cycle}`}>
-              <h3>{entry.title || entry.version}</h3>
-              <div className="admin-patch-meta">
-                <span>{entry.version}</span>
-                <span>{entry.cycle}</span>
-                <span>{entry.at || 'n/a'}</span>
-              </div>
-              {!!entry.fixed?.length && (
-                <>
-                  <p className="patch-label">Broken</p>
-                  <ul>
-                    {entry.fixed.map((line) => <li key={line}>{line}</li>)}
-                  </ul>
-                </>
-              )}
-              {!!entry.changes?.length && (
-                <>
-                  <p className="patch-label">Fixed / shipped</p>
-                  <ul>
-                    {entry.changes.map((line) => <li key={line}>{line}</li>)}
-                  </ul>
-                </>
-              )}
-            </article>
-          ))}
-          {!patchNotes.length && <p className="muted">No patch notes yet.</p>}
-        </div>
-      </section>
 
       <section className="panel">
         <h2 className="panel-title">Laptop Stake sync</h2>
@@ -152,6 +144,16 @@ export default function AdminPage() {
               ? `Relay offline · last seen ${oddsLink.at}`
               : 'No laptop heartbeat yet. Run ./scripts/start_stake_relay.sh locally.'}
         </p>
+        {syncStatus?.status && syncStatus.status !== 'idle' && (
+          <p className={`portfolio-status ${syncStatus.status === 'confirmed' ? 'ok' : ''}`} role="status">
+            Request {syncStatus.status}
+            {syncStatus.requested_at ? ` · asked ${fmtAt(syncStatus.requested_at)}` : ''}
+            {syncStatus.status === 'confirmed' && syncStatus.fixtures != null
+              ? ` · ${syncStatus.fixtures} fixtures`
+              : ''}
+            {syncStatus.status === 'pending' ? ' · waiting for laptop relay push…' : ''}
+          </p>
+        )}
         <div className="admin-actions">
           <button
             type="button"
@@ -164,6 +166,15 @@ export default function AdminPage() {
               try {
                 const out = await requestLaptopOddsSync()
                 setNote(out?.message || 'Laptop odds sync requested.')
+                setSyncStatus({
+                  id: out?.id,
+                  status: out?.status || 'pending',
+                  requested_at: out?.requested_at,
+                  open_url: out?.open_url || 'https://stake.com/',
+                })
+                if (out?.open_url) {
+                  window.open(out.open_url, '_blank', 'noopener,noreferrer')
+                }
                 await load()
               } catch (e) {
                 setErr(e?.message || 'Laptop sync request failed.')
@@ -195,7 +206,13 @@ export default function AdminPage() {
           >
             {busy === 'requeue' ? 'Re-queuing…' : 'Re-queue failed imports'}
           </button>
+          <a className="refresh-btn" href="https://stake.com/" target="_blank" rel="noreferrer">
+            Open Stake.com
+          </a>
         </div>
+        <p className="muted" style={{ marginTop: '0.75rem' }}>
+          Request opens Stake and flags the cloud. Confirmation appears after your laptop relay POSTs odds.
+        </p>
       </section>
 
       <section className="panel">
@@ -211,9 +228,6 @@ export default function AdminPage() {
               <li><span>Startup warmup</span><strong>{fmtBool(stake.warmup_on_startup)}</strong></li>
               <li><span>Odds loop</span><strong>{stake.odds_loop_seconds || 0}s</strong></li>
             </ul>
-            <p className="muted">
-              Remote Yes means cloud browser path — no local Stake popup on Render.
-            </p>
           </article>
 
           <article className="admin-debug-card">
@@ -225,11 +239,6 @@ export default function AdminPage() {
               <li><span>Auth token</span><strong>{fmtBool(browser.have_auth_token)}</strong></li>
               <li><span>Last error</span><strong title={browser.last_error || ''}>{browser.last_error || 'n/a'}</strong></li>
             </ul>
-            {browser.login_url && (
-              <a className="refresh-btn" href={browser.login_url} target="_blank" rel="noreferrer">
-                Open remote Stake live view
-              </a>
-            )}
           </article>
 
           <article className="admin-debug-card">
@@ -268,11 +277,14 @@ export default function AdminPage() {
           <article className="admin-debug-card">
             <h3>Users</h3>
             <ul className="admin-debug-list">
-              <li><span>Accounts</span><strong>{users.accounts ?? rows.length}</strong></li>
+              <li><span>Accounts</span><strong>{users.accounts ?? 0}</strong></li>
               <li><span>With Stake token</span><strong>{users.with_stake_token ?? 0}</strong></li>
               <li><span>Total bets</span><strong>{users.bets_total ?? 0}</strong></li>
               <li><span>Active sessions</span><strong>{users.active_sessions ?? 0}</strong></li>
             </ul>
+            <p className="muted" style={{ marginTop: '0.75rem' }}>
+              <Link to="/app/admin/users">Open users dashboard →</Link>
+            </p>
           </article>
           <article className="admin-debug-card">
             <h3>Persistence bundle</h3>
@@ -346,47 +358,38 @@ export default function AdminPage() {
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Accounts ({rows.length})</h2>
-        <div className="admin-table">
-          <div className="admin-row admin-row--head">
-            <span>User</span>
-            <span>Bets</span>
-            <span>Token</span>
-            <span>Sync</span>
-            <span />
-          </div>
-          {rows.map((r) => (
-            <div className="admin-row" key={r.id}>
-              <span>
-                <strong>{r.name || r.email}</strong>
-                <small className="muted">{r.email}</small>
-              </span>
-              <span>{r.bet_count ?? 0}</span>
-              <span>{r.has_stake_token ? 'Yes' : 'n/a'}</span>
-              <span title={r.last_sync_message || ''}>{r.last_sync_status || 'n/a'}</span>
-              <span>
-                <button
-                  type="button"
-                  className="refresh-btn"
-                  disabled={busy === r.id}
-                  onClick={async () => {
-                    setBusy(r.id)
-                    try {
-                      await revokeAdminSessions(r.id)
-                      await load()
-                    } catch (e) {
-                      setErr(e?.message || 'Revoke failed')
-                    } finally {
-                      setBusy('')
-                    }
-                  }}
-                >
-                  {busy === r.id ? '…' : 'Revoke sessions'}
-                </button>
-              </span>
-            </div>
+        <h2 className="panel-title">Patch notes</h2>
+        <p className="muted">
+          Version and debugging-cycle log — what broke, what we fixed. Newest first.
+        </p>
+        <div className="admin-patch-list">
+          {patchNotes.map((entry) => (
+            <article className="admin-patch-card" key={`${entry.version}-${entry.cycle}`}>
+              <h3>{entry.title || entry.version}</h3>
+              <div className="admin-patch-meta">
+                <span>{entry.version}</span>
+                <span>{entry.cycle}</span>
+                <span>{entry.at || 'n/a'}</span>
+              </div>
+              {!!entry.fixed?.length && (
+                <>
+                  <p className="patch-label">Broken</p>
+                  <ul>
+                    {entry.fixed.map((line) => <li key={line}>{line}</li>)}
+                  </ul>
+                </>
+              )}
+              {!!entry.changes?.length && (
+                <>
+                  <p className="patch-label">Fixed / shipped</p>
+                  <ul>
+                    {entry.changes.map((line) => <li key={line}>{line}</li>)}
+                  </ul>
+                </>
+              )}
+            </article>
           ))}
-          {!rows.length && !err && <p className="muted">No accounts yet.</p>}
+          {!patchNotes.length && <p className="muted">No patch notes yet.</p>}
         </div>
       </section>
     </div>

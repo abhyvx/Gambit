@@ -294,8 +294,17 @@ def _stake_unavailable_reason(exc: Exception) -> str:
     )
 
 
-def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dict:
-    """Best-effort Stake payouts; on cloud falls back to ESPN/book 1X2 so Odds tab still works."""
+def get_stake_match_odds(
+    home: str,
+    away: str,
+    budget_inr: float = 300.0,
+    *,
+    allow_launch: bool = False,
+) -> dict:
+    """Best-effort Stake payouts; on cloud falls back to ESPN/book 1X2 so Odds tab still works.
+
+    allow_launch=False (default for HTTP): never start Chromium / Browserbase.
+    """
     global _overlay_fail_ts, _overlay_cache, _overlay_cache_ts
 
     from bet_placer.config import stake_network_enabled
@@ -326,9 +335,15 @@ def get_stake_match_odds(home: str, away: str, budget_inr: float = 300.0) -> dic
             )
             return resp
 
-    # Cloud: never hang on Playwright — serve ESPN/book estimate as priced board
-    if not stake_network_enabled():
-        return _book_payout_fallback(home, away, budget_inr)
+    # HTTP / cloud: never hang on Playwright — serve ESPN/book estimate as priced board
+    if not allow_launch or not stake_network_enabled():
+        book = _book_payout_fallback(home, away, budget_inr)
+        if book.get("available"):
+            book["note"] = (
+                (book.get("note") or "")
+                + " Live Stake scrape skipped on this host — use laptop relay or Admin → Request laptop odds sync."
+            ).strip()
+        return book
 
     fixture = None
     try:
@@ -1486,18 +1501,27 @@ def _reset_stale_overlay_fetch() -> None:
         _overlay_cache_lock.notify_all()
 
 
-def refresh_stake_overlay() -> dict:
-    """Force a fast trending refresh (used by /api/stake/refresh)."""
+def refresh_stake_overlay(*, allow_launch: bool = False) -> dict:
+    """Force a trending refresh (used by /api/stake/refresh).
+
+    allow_launch=False (HTTP default): never start Chromium/Browserbase — disk/relay only.
+    """
     from bet_placer.config import stake_network_enabled
-    if not stake_network_enabled():
-        warm_stake_cache_from_disk()
+    warm_stake_cache_from_disk()
+    if not allow_launch or not stake_network_enabled():
         with _overlay_cache_lock:
             n = len(_overlay_cache)
         return {
             "fixtures": n,
             "status": stake_overlay_status(),
             "skipped": True,
-            "reason": "Stake live scrape needs STAKE_USE_BROWSER=true (local). Cloud uses relay/cache or ESPN/model prices.",
+            "reason": (
+                "Live Stake scrape skipped on HTTP — using relay/cache. "
+                "Admin → Request laptop odds sync while the relay runs."
+            ),
+            "message": (
+                f"Using {n} cached Stake fixtures. Live scrape stays off on this host."
+            ),
         }
     global _overlay_fetching, _overlay_fetch_started
     with _overlay_cache_lock:

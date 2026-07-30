@@ -9,6 +9,7 @@ import ModelPage from './pages/ModelPage'
 import PortfolioPage from './pages/PortfolioPage'
 import SettingsPage from './pages/SettingsPage'
 import AdminPage from './pages/AdminPage'
+import AdminUsersPage from './pages/AdminUsersPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPages'
 import { BankrollProvider } from './context/BankrollContext'
 import { AuthProvider } from './context/AuthContext'
@@ -30,6 +31,7 @@ export default function App() {
               <Route path="account" element={<SettingsPage />} />
               <Route path="settings" element={<Navigate to="/app/account" replace />} />
               <Route path="admin" element={<AdminPage />} />
+              <Route path="admin/users" element={<AdminUsersPage />} />
               <Route path="legal/privacy" element={<PrivacyPage />} />
               <Route path="legal/terms" element={<TermsPage />} />
               <Route path="guide" element={<GuidePage />} />

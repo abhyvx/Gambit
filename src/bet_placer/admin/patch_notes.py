@@ -11,6 +11,24 @@ from typing import Any
 # Newest first. version ≈ desk / product revision; cycle = debugging pass.
 PATCH_NOTES: list[dict[str, Any]] = [
     {
+        "version": "v18",
+        "cycle": "odds-safe-admin-split",
+        "at": "2026-07-30",
+        "title": "Safe odds path, craft labels, Admin users split",
+        "fixed": [
+            "Opening Recs / Odds / Build could blank the app when the API launched browser and died",
+            "Request laptop odds sync did not open Stake or confirm when odds landed",
+            "Model takeaways still showed stale +0.0% craft and messy Stake dump lines",
+            "Container titles used jargon; patch notes sat at the top of Admin; users mixed into overview",
+        ],
+        "changes": [
+            "Match-slip, stake-odds, bet-builder, and stake connect/refresh never launch Playwright on HTTP",
+            "Laptop odds request opens Stake.com and polls until relay confirms fixture push",
+            "Paper craft targets re-sync after bundled learning; plain-English titles for all desk boxes",
+            "Admin Users is its own dashboard; patch notes moved to the bottom",
+        ],
+    },
+    {
         "version": "v17",
         "cycle": "admin-ux-sync-takeaways",
         "at": "2026-07-30",

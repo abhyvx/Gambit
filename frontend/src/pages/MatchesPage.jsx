@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   fetchEvents, fetchAnalysis, fetchWorldCup, fetchErrorMessage,
-  connectStakeSession, refreshStakeOverlay,
+  refreshStakeOverlay,
 } from '../api'
 import { useBankroll, formatINR } from '../context/BankrollContext'
 import VerdictBadge from '../components/VerdictBadge'
@@ -319,12 +319,19 @@ export default function MatchesPage() {
     setStakeBusy(true)
     setStakeMsg(null)
     try {
-      await connectStakeSession()
+      try {
+        window.open('https://stake.com/', '_blank', 'noopener,noreferrer')
+      } catch { /* popup blocked */ }
       const r = await refreshStakeOverlay()
-      setStakeMsg(r?.message || 'Stake session ready. Refresh the board for prices.')
+      setStakeMsg(
+        r?.message
+        || (r?.skipped
+          ? `Using ${r?.fixtures ?? 0} cached Stake prices. Use Admin → Request laptop odds sync for fresh lines.`
+          : 'Stake cache refreshed. Refresh the board for prices.')
+      )
       setReloadKey((k) => k + 1)
     } catch (e) {
-      setStakeMsg(fetchErrorMessage(e, 'Stake connect failed'))
+      setStakeMsg(fetchErrorMessage(e, 'Stake refresh failed'))
     } finally {
       setStakeBusy(false)
     }

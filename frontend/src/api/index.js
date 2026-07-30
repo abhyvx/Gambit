@@ -167,13 +167,16 @@ export async function fetchBetBuilder({ home, away, budgetInr = 200, sport } = {
     budget_inr: String(budgetInr),
   })
   if (sport) params.set('sport', sport)
-  const r = await fetch(`${API}/worldcup/bet-builder?${params}`)
-  if (!r.ok) throw new Error(`Bet builder failed (${r.status})`)
+  const r = await fetch(`${API}/worldcup/bet-builder?${params}`, { signal: AbortSignal.timeout(45000) })
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '')
+    throw new Error(detail?.slice(0, 160) || `Bet builder failed (${r.status})`)
+  }
   return r.json()
 }
 
 export async function fetchMatchSlipRefresh({
-  home, away, budgetInr = 200, targetCashoutInr = 1000, refreshStake = true, sport,
+  home, away, budgetInr = 200, targetCashoutInr = 1000, refreshStake = false, sport,
   goal, risk, structure,
 } = {}) {
   const params = new URLSearchParams({
@@ -181,13 +184,13 @@ export async function fetchMatchSlipRefresh({
     away,
     budget_inr: String(budgetInr),
     target_cashout_inr: String(targetCashoutInr),
-    refresh_stake: String(refreshStake),
+    refresh_stake: 'false',
   })
   if (sport) params.set('sport', sport)
   if (goal) params.set('goal', goal)
   if (risk) params.set('risk', risk)
   if (structure) params.set('structure', structure)
-  const r = await fetch(`${API}/worldcup/match-slip?${params}`, { signal: AbortSignal.timeout(90000) })
+  const r = await fetch(`${API}/worldcup/match-slip?${params}`, { signal: AbortSignal.timeout(45000) })
   if (!r.ok) {
     const detail = await r.text().catch(() => '')
     throw new Error(detail?.slice(0, 160) || `Match slip refresh failed (${r.status})`)
@@ -344,6 +347,15 @@ export async function requestLaptopOddsSync() {
   if (!r.ok) {
     const raw = await r.json().catch(() => ({}))
     throw new Error(raw.detail || `Laptop sync request failed (${r.status})`)
+  }
+  return r.json()
+}
+
+export async function fetchLaptopSyncStatus() {
+  const r = await fetch(`${API}/admin/laptop-sync-status`, { headers: authHeaders() })
+  if (!r.ok) {
+    const raw = await r.json().catch(() => ({}))
+    throw new Error(raw.detail || `Laptop sync status failed (${r.status})`)
   }
   return r.json()
 }
@@ -510,7 +522,8 @@ export async function fetchStakeOdds({ home, away, budgetInr = 200 } = {}) {
     away,
     budget_inr: String(budgetInr),
   })
-  const r = await fetch(`${API}/worldcup/stake-odds?${params}`, { signal: AbortSignal.timeout(90000) })
+  // Keep short — server never launches browser; long waits look like a blank crash
+  const r = await fetch(`${API}/worldcup/stake-odds?${params}`, { signal: AbortSignal.timeout(20000) })
   if (!r.ok) throw new Error(`Stake odds failed (${r.status})`)
   return r.json()
 }
@@ -546,8 +559,8 @@ const _insightsCache = { ts: 0, data: null }
 const INSIGHTS_CLIENT_TTL_MS = 24 * 3600_000
 // Bump key whenever desk schema/version meaning changes so stale localStorage
 // (e.g. cache_version 10) cannot paint over a live Desk v15+ response.
-const INSIGHTS_DISK_KEY = 'gambit_insights_v17'
-const MIN_INSIGHTS_CACHE_VERSION = 17
+const INSIGHTS_DISK_KEY = 'gambit_insights_v18'
+const MIN_INSIGHTS_CACHE_VERSION = 18
 
 function readInsightsStore() {
   try {

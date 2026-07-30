@@ -280,6 +280,67 @@ def _fill_craft_markets(payload: dict, curves: dict) -> list[dict]:
     return rows[:400]
 
 
+def _first_finite(*vals: Any) -> float | None:
+    """First numeric value that is not None (0.0 is valid)."""
+    for v in vals:
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _plain_titles(c: dict) -> dict:
+    """Force plain-English titles/descriptions (bundled patches keep old jargon)."""
+    out = dict(c)
+    cid = str(out.get("id") or "")
+    labels = {
+        "01_corpus": ("1 · Match history depth", "How many graded games sit under each sport."),
+        "02_walkforward": ("2 · Rating accuracy", "Hit rate when ratings only use past games to score later games."),
+        "03_board_acc": ("3 · Finished-board accuracy", "Finished ESPN windows graded against the model. Thin boards fall back to history."),
+        "04_teams": ("4 · Teams covered", "Rated clubs / franchises / nations in the Elo store."),
+        "05_players": ("5 · Players covered", "Player nodes from lineups and box scores."),
+        "06_craft_targets": (
+            "6 · Paper craft targets",
+            "Paper ROI on one frozen match set (same games every epoch). "
+            "Hit rate = share of those tickets that won. "
+            "Gate clears at 25% overall ROI, every sport above 0%, hit rate ≥60%.",
+        ),
+        "07_craft_roi_sport": (
+            "7 · Paper ROI by sport",
+            "Paper profit by sport on holdout / close-price pairs. Red craft stays gated; green pairs can show instead.",
+        ),
+        "08_craft_acc_sport": ("8 · Paper hit rate by sport", "Share of paper tickets that won, by sport."),
+        "09_craft_volume": ("9 · Paper ticket volume", "How many paper tickets graded per sport."),
+        "10_craft_equity": (
+            "10 · Learning curve (best so far)",
+            "Best-so-far paper ROI across graded blocks. Rising = learning. Flat = champion locked.",
+        ),
+        "11_craft_markets": ("11 · Markets graded", "Market families with ticket volume from craft + replay."),
+        "12_betting_pairs": ("12 · Close-price pairs", "Historical close-price bet pairs used for monthly / yearly paper checks."),
+        "13_monthly_roi": ("13 · Monthly paper ROI", "Close-price monthly pairs (history). Separate from holdout craft ROI in box 7."),
+        "14_yearly_volume": ("14 · Yearly ticket volume", "Paper tickets graded per year from close-price history."),
+        "15_niche_replay": ("15 · Niche market replay", "Thin / niche markets replayed on stored boards."),
+        "16_calibration": ("16 · Probability calibration", "Do predicted probabilities match how often tickets actually win?"),
+        "17_confidence_tiers": ("17 · Confidence tiers", "Hit rate by model confidence bucket."),
+        "18_factor_graph": ("18 · Factor graph", "Nodes the desk uses: teams, players, markets, context knobs."),
+        "19_stake_volume": ("19 · Stake handle (when cached)", "Stake.com handle when the overlay has that sport."),
+        "20_book_depth": ("20 · Book depth", "Priced fixtures from ESPN + Odds API disk cache."),
+        "21_soccer_leagues": ("21 · Soccer leagues covered", "League fuel behind soccer ratings and boards."),
+        "22_epoch_curves": ("22 · Epoch path", "Best-so-far ROI and hit rate across graded blocks."),
+        "23_sample_health": ("23 · Sample health", "Whether each sport has enough graded samples to trust the desk."),
+        "24_takeaways": ("24 · Takeaways", "Highest-signal desk lines only."),
+        "25_craft_notes": ("25 · Recent craft notes", "Latest trainer notes (sport gates, ROI, what just ran)."),
+    }
+    if cid in labels:
+        title, desc = labels[cid]
+        out["title"] = title
+        out["desc"] = desc
+    return out
+
+
 def _normalize_train_status(craft: dict) -> dict:
     """Stale 'running' with zero bets is not live training — show desk-ready."""
     out = dict(craft)
@@ -289,36 +350,38 @@ def _normalize_train_status(craft: dict) -> dict:
     if bets <= 0 and state in ("running", "training", "building"):
         ts["state"] = "idle"
         ts["note"] = "Champion desk locked. Empty epoch not shown as training."
-    # Never surface fake 0% holdout from an empty epoch
+    # Never surface fake 0% holdout from an empty epoch when a champion exists
     if bets <= 0:
-        hold = (
-            out.get("champion_roi")
-            or out.get("best_roi")
-            or ts.get("champion_roi")
-            or ts.get("best_roi")
-            or out.get("holdout_roi")
+        hold = _first_finite(
+            out.get("champion_roi"),
+            out.get("best_roi"),
+            ts.get("champion_roi"),
+            ts.get("best_roi"),
         )
-        try:
-            if hold is not None and float(hold) == 0 and (
-                out.get("champion_roi") is not None or ts.get("champion_roi") is not None
-            ):
-                hold = out.get("champion_roi") if out.get("champion_roi") is not None else ts.get("champion_roi")
-        except (TypeError, ValueError):
-            pass
-        if hold is not None:
+        live_hold = _first_finite(out.get("holdout_roi"), ts.get("holdout_roi"))
+        # Prefer champion/best when live holdout is missing or a flat empty-epoch zero
+        if hold is not None and (live_hold is None or (live_hold == 0.0 and hold != 0.0)):
             out["holdout_roi"] = hold
             ts["holdout_roi"] = hold
             out["holdout_source"] = "champion"
-        acc = (
-            out.get("holdout_accuracy")
-            or out.get("champion_accuracy")
-            or out.get("best_accuracy")
-            or ts.get("champion_accuracy")
-            or ts.get("best_accuracy")
+        elif live_hold is not None:
+            out["holdout_roi"] = live_hold
+            ts["holdout_roi"] = live_hold
+        acc = _first_finite(
+            out.get("champion_accuracy"),
+            out.get("best_accuracy"),
+            ts.get("champion_accuracy"),
+            ts.get("best_accuracy"),
+            out.get("holdout_accuracy"),
+            ts.get("holdout_accuracy"),
         )
         if acc is not None:
             out["holdout_accuracy"] = acc
             ts["holdout_accuracy"] = acc
+        if out.get("best_bets") is None:
+            bb = _first_finite(ts.get("champion_bets"), ts.get("best_bets"), out.get("bets"))
+            if bb is not None and bb > 0:
+                out["best_bets"] = int(bb)
     out["train_status"] = ts
     return out
 
@@ -592,34 +655,89 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         c = dict(c)
         cid = str(c.get("id") or "")
 
-        # Plain-English descriptions (no "training" wording)
+        # Plain-English titles + descriptions (no jargon / fake training wording)
         if cid == "01_corpus":
-            c["desc"] = "Graded history + board games per sport. Esports and off-board sports excluded."
+            c["title"] = "1 · Match history depth"
+            c["desc"] = "How many graded games sit under each sport."
+        elif cid == "02_walkforward":
+            c["title"] = "2 · Rating accuracy"
+            c["desc"] = "Hit rate when ratings only use past games to score later games."
         elif cid == "03_board_acc":
-            c["desc"] = "Finished ESPN board windows graded against the model. Thin boards fall back to history."
+            c["title"] = "3 · Finished-board accuracy"
+            c["desc"] = "Finished ESPN windows graded against the model. Thin boards fall back to history."
+        elif cid == "04_teams":
+            c["title"] = "4 · Teams covered"
+            c["desc"] = "Rated clubs / franchises / nations in the Elo store."
+        elif cid == "05_players":
+            c["title"] = "5 · Players covered"
+            c["desc"] = "Player nodes from lineups and box scores."
         elif cid == "06_craft_targets":
-            c["title"] = "6 · Craft targets"
+            c["title"] = "6 · Paper craft targets"
             c["desc"] = (
-                "Holdout ROI = paper profit on one frozen match set (same games every epoch), "
-                "so improvement is real. Holdout hit rate = share of those tickets that won. "
-                "Gate = whether desk ROI, every sport, and accuracy cleared the bar. "
-                "Champion locks the best graded slice when a new epoch is empty."
+                "Paper ROI on one frozen match set (same games every epoch). "
+                "Hit rate = share of those tickets that won. "
+                "Gate clears at 25% overall ROI, every sport above 0%, hit rate ≥60%."
             )
         elif cid == "07_craft_roi_sport":
+            c["title"] = "7 · Paper ROI by sport"
             c["desc"] = (
-                "Paper ROI by sport on the holdout / close-price pairs. "
-                "If craft holdout is red for a sport, live picks stay gated and the desk shows paired close-price ROI instead."
+                "Paper profit by sport on holdout / close-price pairs. "
+                "Red craft stays gated; green pairs can show instead."
             )
+        elif cid == "08_craft_acc_sport":
+            c["title"] = "8 · Paper hit rate by sport"
+            c["desc"] = "Share of paper tickets that won, by sport."
+        elif cid == "09_craft_volume":
+            c["title"] = "9 · Paper ticket volume"
+            c["desc"] = "How many paper tickets graded per sport."
         elif cid == "10_craft_equity":
-            c["desc"] = "Best-so-far block ROI (paper). Rising = learning. Flat = champion already locked."
+            c["title"] = "10 · Learning curve (best so far)"
+            c["desc"] = "Best-so-far paper ROI across graded blocks. Rising = learning. Flat = champion locked."
         elif cid == "11_craft_markets":
-            c["desc"] = "Market families with ticket volume from craft + market replay (not an empty placeholder)."
+            c["title"] = "11 · Markets graded"
+            c["desc"] = "Market families with ticket volume from craft + replay."
+        elif cid == "12_betting_pairs":
+            c["title"] = "12 · Close-price pairs"
+            c["desc"] = "Historical close-price bet pairs used for monthly / yearly paper checks."
         elif cid == "13_monthly_roi":
+            c["title"] = "13 · Monthly paper ROI"
             c["desc"] = "Close-price monthly pairs (history). Separate from holdout craft ROI in box 7."
+        elif cid == "14_yearly_volume":
+            c["title"] = "14 · Yearly ticket volume"
+            c["desc"] = "Paper tickets graded per year from close-price history."
+        elif cid == "15_niche_replay":
+            c["title"] = "15 · Niche market replay"
+            c["desc"] = "Thin / niche markets replayed on stored boards."
+        elif cid == "16_calibration":
+            c["title"] = "16 · Probability calibration"
+            c["desc"] = "Do predicted probabilities match how often tickets actually win?"
+        elif cid == "17_confidence_tiers":
+            c["title"] = "17 · Confidence tiers"
+            c["desc"] = "Hit rate by model confidence bucket."
+        elif cid == "18_factor_graph":
+            c["title"] = "18 · Factor graph"
+            c["desc"] = "Nodes the desk uses: teams, players, markets, context knobs."
         elif cid == "19_stake_volume":
-            c["desc"] = "Stake.com handle when the overlay has that sport. Tennis/esports never count as soccer."
+            c["title"] = "19 · Stake handle (when cached)"
+            c["desc"] = "Stake.com handle when the overlay has that sport."
+        elif cid == "20_book_depth":
+            c["title"] = "20 · Book depth"
+            c["desc"] = "Priced fixtures from ESPN + Odds API disk cache."
+        elif cid == "21_soccer_leagues":
+            c["title"] = "21 · Soccer leagues covered"
+            c["desc"] = "League fuel behind soccer ratings and boards."
         elif cid == "22_epoch_curves":
-            c["desc"] = "Self-improvement = best-so-far ROI and hit rate across graded blocks (never a decline curve)."
+            c["title"] = "22 · Epoch path"
+            c["desc"] = "Best-so-far ROI and hit rate across graded blocks."
+        elif cid == "23_sample_health":
+            c["title"] = "23 · Sample health"
+            c["desc"] = "Whether each sport has enough graded samples to trust the desk."
+        elif cid == "24_takeaways":
+            c["title"] = "24 · Takeaways"
+            c["desc"] = "Highest-signal desk lines only."
+        elif cid == "25_craft_notes":
+            c["title"] = "25 · Recent craft notes"
+            c["desc"] = "Latest trainer notes (sport gates, ROI, what just ran)."
 
         if c.get("kind") == "sport_grid":
             by_sp = {str(s.get("sport")): dict(s) for s in (c.get("sports") or []) if isinstance(s, dict)}
@@ -888,17 +1006,114 @@ def publish_clean_desk(payload: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     out = _merge_bundled_learning(out)
+    # Re-normalize after merge so paper craft does not stay stuck at empty-epoch 0
+    craft = _normalize_train_status(dict(out.get("craft") or {}))
+    out["craft"] = craft
+    containers = []
+    for c in out.get("containers") or []:
+        if not isinstance(c, dict):
+            containers.append(c)
+            continue
+        if c.get("kind") == "targets" or c.get("id") == "06_craft_targets":
+            c = dict(c)
+            hold = _first_finite(
+                craft.get("holdout_roi"),
+                craft.get("champion_roi"),
+                craft.get("best_roi"),
+                c.get("holdout_roi"),
+                c.get("champion_roi"),
+                c.get("best_roi"),
+            )
+            if hold is not None:
+                c["holdout_roi"] = hold
+                champ = _first_finite(craft.get("champion_roi"), craft.get("best_roi"))
+                if champ is not None and abs(float(hold) - float(champ)) < 1e-9:
+                    c["holdout_source"] = "champion"
+                elif _first_finite(craft.get("holdout_roi")) is None or float(hold) == 0.0:
+                    c["holdout_source"] = "champion"
+            acc = _first_finite(
+                craft.get("holdout_accuracy"),
+                craft.get("champion_accuracy"),
+                craft.get("best_accuracy"),
+                c.get("holdout_accuracy"),
+                c.get("best_accuracy"),
+            )
+            if acc is not None:
+                c["holdout_accuracy"] = acc
+            if c.get("best_roi") is None:
+                c["best_roi"] = craft.get("best_roi") or craft.get("champion_roi")
+            if c.get("best_accuracy") is None:
+                c["best_accuracy"] = craft.get("best_accuracy") or craft.get("champion_accuracy")
+            if not c.get("best_bets"):
+                c["best_bets"] = craft.get("best_bets")
+            c["n_epochs"] = c.get("n_epochs") or craft.get("n_epochs") or (craft.get("train_status") or {}).get("epoch")
+            c["champion_roi"] = craft.get("champion_roi") or c.get("champion_roi")
+            c["train_status"] = craft.get("train_status") or c.get("train_status")
+            c["status"] = "ready"
+        # Always re-apply plain titles after bundled patch (which carries old jargon titles)
+        c = _plain_titles(c)
+        containers.append(c)
+    out["containers"] = containers
+    out = _rewrite_takeaways(out)
     out["desk_revision"] = {
-        "version": max(int(out.get("cache_version") or 0), 17),
-        "label": "Desk v17 · patch notes + sync retry",
+        "version": max(int(out.get("cache_version") or 0), 18),
+        "label": "Desk v18 · safe odds + clear labels",
         "notes": [
-            "Info on each box opens the Guide for that container",
-            "Takeaways are short ranked lines only",
-            "Admin patch notes track each version / debugging cycle",
-            "Self-improvement = best-so-far ROI across graded blocks",
+            "Odds / Build / Recs never launch browser on the API host",
+            "Takeaways and craft labels are plain English",
+            "Paper craft targets re-sync after bundled learning merge",
+            "Admin Users is its own dashboard; patch notes at the bottom",
         ],
     }
-    out["cache_version"] = max(int(out.get("cache_version") or 0), 17)
+    out["cache_version"] = max(int(out.get("cache_version") or 0), 18)
+    return out
+
+
+def _rewrite_takeaways(payload: dict[str, Any]) -> dict[str, Any]:
+    """Replace messy / stale takeaway bullets with short live lines every serve."""
+    out = dict(payload)
+    craft = out.get("craft") or {}
+    best = _first_finite(craft.get("best_roi"), craft.get("champion_roi"), craft.get("holdout_roi")) or 0.0
+    hold_f = _first_finite(craft.get("holdout_roi"), craft.get("champion_roi"), craft.get("best_roi"))
+    if hold_f is not None and hold_f <= 0 and best > 0:
+        hold_f = best
+    epochs = int(craft.get("n_epochs") or (craft.get("train_status") or {}).get("epoch") or 0)
+    lines: list[str] = []
+    if best > 0:
+        lines.append(f"Paper craft best ROI {best * 100:+.1f}% · gate still needs 25% overall")
+    elif hold_f is not None:
+        lines.append(f"Paper holdout ROI {hold_f * 100:+.1f}% · gate still needs 25% overall")
+    if epochs > 0:
+        lines.append(f"{epochs:,} craft epochs logged")
+    # Sport ROIs from container 07
+    for c in out.get("containers") or []:
+        if c.get("id") != "07_craft_roi_sport":
+            continue
+        bits = []
+        for s in c.get("sports") or []:
+            if s.get("roi") is None:
+                continue
+            try:
+                bits.append(f"{s.get('sport')} {float(s['roi']) * 100:+.1f}%")
+            except (TypeError, ValueError):
+                continue
+        if bits:
+            lines.append("Sport paper ROI: " + " · ".join(bits))
+        break
+    factors = out.get("factors") or {}
+    if factors.get("total_nodes"):
+        lines.append(f"Factor graph {int(factors['total_nodes']):,} nodes")
+    lines = lines[:6] or ["Desk is loading graded craft numbers."]
+    containers = []
+    for c in out.get("containers") or []:
+        if c.get("id") == "24_takeaways":
+            containers.append({**c, "rows": lines, "desc": "Highest-signal desk lines only."})
+        elif c.get("id") == "25_craft_notes":
+            rows = list(c.get("rows") or [])[:5]
+            containers.append({**c, "rows": rows or ["No craft notes yet."]})
+        else:
+            containers.append(c)
+    out["containers"] = containers
     return out
 
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { formatINR, useBankroll } from '../context/BankrollContext'
-import { fetchStakeOdds, connectStakeSession, fetchErrorMessage, fetchMatchSlipRefresh } from '../api/index'
+import { fetchStakeOdds, fetchErrorMessage, fetchMatchSlipRefresh } from '../api/index'
 import BetBuilder from './BetBuilder'
 import HitTargetPanel from './HitTargetPanel'
 
@@ -759,15 +759,13 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
   }
 
   const connectStake = () => {
+    // Do not call /api/stake/connect — browser warmup OOMs the free-tier API.
     setStakeConnecting(true)
-    connectStakeSession()
-      .then(() => loadStake())
-      .catch((err) => setStake({
-        available: false,
-        reason: fetchErrorMessage(err, 'Could not open Stake browser.'),
-        categories: [],
-      }))
-      .finally(() => setStakeConnecting(false))
+    try {
+      window.open('https://stake.com/', '_blank', 'noopener,noreferrer')
+    } catch { /* popup blocked */ }
+    loadStake()
+    setStakeConnecting(false)
   }
 
   useEffect(() => {
@@ -790,21 +788,19 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
 
   useEffect(() => { loadStake() }, [home, away, perMatchBudget, status]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Do not auto-fire refreshStake=true — that path used to launch browser and kill free-tier API.
   useEffect(() => {
     if (!home || !away || status === 'completed' || tab !== 'target') return
     if (!liveSlip || targetStakeSyncedRef.current) return
     targetStakeSyncedRef.current = true
-    loadMatchSlip({ refreshStake: true })
-  }, [home, away, status, tab, targetCashout, perMatchBudget, liveSlip, loadMatchSlip])
+  }, [home, away, status, tab, targetCashout, perMatchBudget, liveSlip])
 
-  // Re-price with Stake only after the fast slip load succeeds so the first request stays visible.
   useEffect(() => {
     if (!stake?.available || tab !== 'recs' || status === 'completed' || !liveSlip || stakeSyncedRef.current) {
       return
     }
     stakeSyncedRef.current = true
-    loadMatchSlip({ refreshStake: true })
-  }, [stake?.available, tab, home, away, status, liveSlip, loadMatchSlip])
+  }, [stake?.available, tab, home, away, status, liveSlip])
 
   useEffect(() => { setTargetDraft(String(targetCashout)) }, [targetCashout])
 
@@ -885,7 +881,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     updateTargetCashout(n)
     setTargetDraft(String(n))
     if (status !== 'completed') {
-      loadMatchSlip({ refreshStake: tab === 'target' || Boolean(stake?.available) })
+      loadMatchSlip({ refreshStake: false })
     }
   }
 
@@ -894,7 +890,7 @@ export default function MatchSlipPanel({ slip, home, away, fanPrediction, status
     setBudgetDraft(String(n))
     updatePerMatchBudget(n)
     if (status !== 'completed') {
-      loadMatchSlip({ refreshStake: Boolean(stake?.available) })
+      loadMatchSlip({ refreshStake: false })
     }
   }
 

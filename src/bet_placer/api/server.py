@@ -585,10 +585,16 @@ def stake_relay(body: StakeRelayPayload):
     if not settings.stake_relay_secret or body.secret != settings.stake_relay_secret:
         raise HTTPException(status_code=401, detail="Invalid relay secret")
     from bet_placer.engine.stake_odds import ingest_stake_relay
-    from bet_placer.portfolio.store import touch_relay_heartbeat
+    from bet_placer.portfolio.store import confirm_laptop_odds_sync, touch_relay_heartbeat
 
     touch_relay_heartbeat()
-    return ingest_stake_relay({"fixtures": body.fixtures})
+    out = ingest_stake_relay({"fixtures": body.fixtures})
+    try:
+        n = int((out or {}).get("ingested") or len(body.fixtures or {}) or 0)
+        confirm_laptop_odds_sync(fixtures=n)
+    except Exception:
+        logger.debug("laptop sync confirm skipped", exc_info=True)
+    return out
 
 
 @app.get("/api/stake/snapshot")
@@ -623,67 +629,25 @@ def stake_refresh():
 
 @app.post("/api/stake/connect")
 def stake_connect():
-    """Warm Stake browser (local or cloud) and refresh odds overlay."""
-    from bet_placer.config import remote_stake_browser_enabled, stake_network_enabled
+    """Warm Stake cache only — never launch Playwright/Browserbase on this HTTP path."""
     from bet_placer.engine.stake_odds import stake_overlay_status, warm_stake_cache_from_disk
 
-    if not remote_stake_browser_enabled():
-        warm_stake_cache_from_disk()
-        overlay = stake_overlay_status()
-        n = overlay.get("fixtures", 0)
-        return {
-            "connected": False,
-            "browser": {"ready": False, "remote_required": True, "remote": False},
-            "overlay": overlay,
-            "fixtures": n,
-            "message": (
-                f"Showing {n} cached Stake prices. Remote Browserbase/CDP is not configured yet, "
-                "so the app will not open a local Stake popup. Configure Browserbase for live odds, "
-                "or use the per-user API token flow for portfolio imports."
-            ),
-        }
-
-    if not stake_network_enabled():
-        warm_stake_cache_from_disk()
-        overlay = stake_overlay_status()
-        n = overlay.get("fixtures", 0)
-        return {
-            "connected": False,
-            "browser": {"ready": False, "cloud": True},
-            "overlay": overlay,
-            "fixtures": n,
-            "message": (
-                f"Showing {n} cached Stake prices (odds link). "
-                "Account login is not available on this host — use Portfolio Confirm or scripts/stake_login.py on your Mac."
-                if overlay.get("have_data")
-                else "Stake prices appear once the odds feed is connected. Account login needs your Mac script or Browserbase."
-            ),
-        }
-    from bet_placer.data.stake_browser import browser_status, warmup_visible
-    from bet_placer.engine.stake_odds import refresh_stake_overlay, stake_overlay_status
-
-    ok = warmup_visible(timeout=300)
-    browser = browser_status()
-    overlay_status = stake_overlay_status()
-    refresh_result = None
-    if ok or browser.get("ready"):
-        try:
-            refresh_result = refresh_stake_overlay()
-            overlay_status = refresh_result.get("status") or overlay_status
-        except Exception as exc:
-            overlay_status = {**overlay_status, "refresh_error": str(exc)[:200]}
+    warm_stake_cache_from_disk()
+    overlay = stake_overlay_status()
+    n = overlay.get("fixtures", 0)
     return {
-        "connected": bool(ok or browser.get("ready")),
-        "browser": browser,
-        "overlay": overlay_status,
-        "fixtures": refresh_result.get("fixtures") if refresh_result else overlay_status.get("fixtures", 0),
+        "connected": bool(overlay.get("have_data")),
+        "browser": {"ready": False, "http_safe": True},
+        "overlay": overlay,
+        "fixtures": n,
+        "open_url": "https://stake.com/",
         "message": (
-            f"Stake connected — {overlay_status.get('fixtures', 0)} matches priced"
-            if overlay_status.get("have_data")
+            f"Showing {n} cached Stake prices. Live scrape is off on this API host — "
+            "use Admin → Request laptop odds sync while your relay runs, or open Stake.com to place."
+            if overlay.get("have_data")
             else (
-                "Stake window is open — finish sign-in if asked, then Connect again."
-                if not browser.get("ready")
-                else "Browser ready — pulling odds failed; try Connect again in a moment."
+                "No Stake cache yet. Run ./scripts/start_stake_relay.sh on your laptop, "
+                "then Admin → Request laptop odds sync. Open Stake.com to place bets."
             )
         ),
     }
@@ -881,6 +845,14 @@ def admin_request_laptop_sync(request: Request):
 
     _require_admin(request)
     return request_laptop_odds_sync()
+
+
+@app.get("/api/admin/laptop-sync-status")
+def admin_laptop_sync_status(request: Request):
+    from bet_placer.portfolio.store import laptop_sync_status
+
+    _require_admin(request)
+    return laptop_sync_status()
 
 
 @app.post("/api/admin/requeue-sync-jobs")
@@ -1133,13 +1105,14 @@ def worldcup_stake_odds(
     away: str = Query(..., min_length=1, max_length=80),
     budget_inr: float = Query(default=200.0, ge=50, le=5000),
 ):
-    """On-demand exact Stake payouts for one clicked match (best-effort)."""
+    """On-demand Stake payouts for one match — cache/relay/book only (never launch browser)."""
     from bet_placer.engine.stake_odds import get_stake_match_odds
 
     home, away = home.strip(), away.strip()
     if not home or not away:
         raise HTTPException(status_code=422, detail="home and away must be non-empty team names")
-    return get_stake_match_odds(home, away, budget_inr)
+    # HTTP path must stay light on free tier — browser launches OOM the dyno
+    return get_stake_match_odds(home, away, budget_inr, allow_launch=False)
 
 
 @app.get("/api/worldcup/bet-builder")
@@ -1164,23 +1137,21 @@ def worldcup_match_slip(
     away: str = Query(..., min_length=1, max_length=80),
     budget_inr: float = Query(default=200.0, ge=50, le=5000),
     target_cashout_inr: float = Query(default=1000.0, ge=100, le=100000),
-    refresh_stake: bool = Query(default=True),
+    refresh_stake: bool = Query(default=False),
     sport: str | None = Query(default=None),
     goal: str | None = Query(default=None),
     risk: str | None = Query(default=None),
     structure: str | None = Query(default=None),
 ):
-    """Rebuild match slip with live Stake lines and SGMs for one fixture."""
+    """Rebuild match slip. Never launches Playwright on this HTTP path (relay/cache only)."""
     from bet_placer.api.serializers import to_json
-    from bet_placer.config import stake_network_enabled
     from bet_placer.engine.worldcup_pipeline import rebuild_match_slip_for_teams
 
     home, away = home.strip(), away.strip()
-    # Cloud: never try Playwright — ESPN/model prices still build recs
-    launch = bool(refresh_stake) and stake_network_enabled()
+    # Ignore refresh_stake for browser launch — keep API alive on free tier
     try:
         slip = rebuild_match_slip_for_teams(
-            home, away, budget_inr, target_cashout_inr, launch_stake=launch, sport=sport,
+            home, away, budget_inr, target_cashout_inr, launch_stake=False, sport=sport,
             goal=goal, risk=risk, structure=structure,
         )
     except Exception as exc:
@@ -1191,6 +1162,12 @@ def worldcup_match_slip(
         ) from exc
     if not slip:
         raise HTTPException(status_code=404, detail=f"No active fixture for {home} vs {away}")
+    if refresh_stake:
+        slip = dict(slip)
+        slip["stake_note"] = (
+            "Live Stake scrape is off on this host. Prices use laptop relay / cache / board estimates. "
+            "Use Admin → Request laptop odds sync while the relay is running."
+        )
     return to_json(slip)
 
 

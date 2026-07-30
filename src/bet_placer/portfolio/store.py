@@ -1187,23 +1187,69 @@ def request_laptop_odds_sync() -> dict[str, Any]:
     """Flag that the laptop relay should push odds ASAP on its next poll."""
     path = data_path("laptop_sync_request.json")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"requested_at": _utc_now(), "kind": "odds_overlay"}
+    req_id = secrets.token_hex(6)
+    payload = {
+        "id": req_id,
+        "requested_at": _utc_now(),
+        "kind": "odds_overlay",
+        "status": "pending",
+        "confirmed_at": None,
+        "fixtures": None,
+        "open_url": "https://stake.com/",
+    }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Keep a durable status copy the Admin UI can poll after consume
+    status_path = data_path("laptop_sync_status.json")
+    status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     hb = relay_heartbeat()
     return {
         "ok": True,
+        "id": req_id,
         "requested_at": payload["requested_at"],
+        "status": "pending",
+        "open_url": payload["open_url"],
         "relay_online": bool(hb.get("online")),
         "message": (
-            "Laptop relay will push on its next cycle."
+            "Request queued. Keep ./scripts/start_stake_relay.sh running — we will mark it confirmed when odds land."
             if hb.get("online")
-            else "Request stored. Start ./scripts/start_stake_relay.sh on your laptop."
+            else "Request stored. Start ./scripts/start_stake_relay.sh on your laptop, then wait for confirmation."
         ),
     }
 
 
+def laptop_sync_status() -> dict[str, Any]:
+    path = data_path("laptop_sync_status.json")
+    if not path.is_file():
+        return {"status": "idle", "message": "No laptop odds request yet."}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "idle", "message": "No laptop odds request yet."}
+    if not isinstance(raw, dict):
+        return {"status": "idle"}
+    return raw
+
+
+def confirm_laptop_odds_sync(*, fixtures: int | None = None) -> None:
+    """Called when /api/stake/relay ingests fixtures after an admin request."""
+    path = data_path("laptop_sync_status.json")
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(raw, dict) or raw.get("status") != "pending":
+        return
+    raw["status"] = "confirmed"
+    raw["confirmed_at"] = _utc_now()
+    if fixtures is not None:
+        raw["fixtures"] = int(fixtures)
+    path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+
 def consume_laptop_sync_request() -> dict[str, Any] | None:
-    """Relay pulls and clears a pending odds push request."""
+    """Relay pulls and clears a pending odds push request (status file stays for UI)."""
     path = data_path("laptop_sync_request.json")
     if not path.is_file():
         return None

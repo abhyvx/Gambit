@@ -21,6 +21,10 @@ MIN_BET_P = {
     "double_chance": 0.60,
     "corners": 0.60,
     "cards": 0.60,
+    "cricket_t20": 0.60,
+    "cricket_odi": 0.60,
+    "cricket_test": 0.60,
+    "bb_totals_alt": 0.60,
 }
 STRONG_P = 0.68
 MAX_BETS_PER_MATCH = 8
@@ -35,6 +39,8 @@ SEL_LABEL = {
     "btts_no": "BTTS — No",
     "over_220.5": "Over 220.5 points",
     "under_220.5": "Under 220.5 points",
+    "over_210.5": "Over 210.5 points",
+    "under_230.5": "Under 230.5 points",
     "home_spread": "Home covers −3.5",
     "away_spread": "Away covers +3.5",
     "home_ml": "Home moneyline",
@@ -65,11 +71,16 @@ MKT_LABEL = {
     "double_chance": "Double chance",
     "corners": "Corners",
     "cards": "Cards",
+    "cricket_t20": "Cricket T20 / leagues",
+    "cricket_odi": "Cricket ODI",
+    "cricket_test": "Cricket Tests",
+    "bb_totals_alt": "Basketball totals (alt lines)",
 }
 
 _PICK_ORDER = (
     "result", "moneyline", "btts", "totals", "spread",
     "asian_handicap", "draw_no_bet", "double_chance", "corners", "cards",
+    "cricket_t20", "cricket_odi", "cricket_test", "bb_totals_alt",
 )
 
 
@@ -423,6 +434,8 @@ def replay_multi_markets(verbose: bool = False) -> dict[str, Any]:
                 ("totals", "under_220.5", 1.0 - over_p),
                 ("spread", "home_spread", ph),
                 ("spread", "away_spread", pa),
+                ("bb_totals_alt", "over_210.5", min(0.92, over_p + 0.08)),
+                ("bb_totals_alt", "under_230.5", min(0.92, (1.0 - over_p) + 0.08)),
             ]
             picks = []
             for grp, sel, p in _pick_bets(events):
@@ -430,6 +443,11 @@ def replay_multi_markets(verbose: bool = False) -> dict[str, Any]:
                     hit = (hs > aws) if "home" in sel else (aws > hs)
                 elif grp == "totals":
                     hit = (tot > line) if "over" in sel else (tot < line)
+                elif grp == "bb_totals_alt":
+                    if "210.5" in sel:
+                        hit = tot > 210.5
+                    else:
+                        hit = tot < 230.5
                 else:
                     hit = (hs - aws > spread) if "home" in sel else (aws - hs > -spread)
                 picks.append((grp, sel, p, hit))
@@ -458,15 +476,27 @@ def replay_multi_markets(verbose: bool = False) -> dict[str, Any]:
             probs = _predict(ratings, canon_team(home), canon_team(away), "cricket") if ratings else {
                 "home": 0.5, "away": 0.5,
             }
+            ph = float(probs.get("home") or 0.5)
+            pa = float(probs.get("away") or 0.5)
+            league = (g.get("league") or "cricket").lower()
+            if any(x in league for x in ("t20", "ipl", "bbl", "psl", "cpl", "blast")):
+                fmt_grp = "cricket_t20"
+            elif "odi" in league or "list" in league:
+                fmt_grp = "cricket_odi"
+            elif "test" in league:
+                fmt_grp = "cricket_test"
+            else:
+                fmt_grp = "cricket_t20"
             events = [
-                ("moneyline", "home_ml", float(probs.get("home") or 0.5)),
-                ("moneyline", "away_ml", float(probs.get("away") or 0.5)),
+                ("moneyline", "home_ml", ph),
+                ("moneyline", "away_ml", pa),
+                (fmt_grp, "home_ml", ph),
+                (fmt_grp, "away_ml", pa),
             ]
             picks = []
             for grp, sel, p in _pick_bets(events):
                 hit = (hs > aws) if "home" in sel else (aws > hs)
                 picks.append((grp, sel, p, hit))
-            league = g.get("league") or "cricket"
             _add("cricket", picks, f"{home} vs {away} ({league})")
     except Exception as exc:
         if verbose:

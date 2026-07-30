@@ -45,6 +45,7 @@ export default function PortfolioPage() {
   const [manualBusy, setManualBusy] = useState(false)
   const [stakeToken, setStakeToken] = useState('')
   const [tokenBusy, setTokenBusy] = useState(false)
+  const [betsShown, setBetsShown] = useState(12)
   const { user, ready, openAuth } = useAuth()
   useEntryReady(!loading)
 
@@ -210,44 +211,44 @@ export default function PortfolioPage() {
           )}
         </div>
         <div className="portfolio-hero-actions">
-          <button
-            className="refresh-btn"
-            onClick={() => {
-              if (!user) {
-                openAuth('login')
-                return
-              }
-              runAction('connect', connectPortfolioSession)
-            }}
-            disabled={busy === 'connect'}
-            title="Connect your Stake account"
-          >
-            {busy === 'connect' ? 'Connecting…' : (user ? 'Connect Stake' : 'Sign in to connect Stake')}
-          </button>
-          <button
-            className="refresh-btn"
-            onClick={() => {
-              if (!user) {
-                openAuth('login')
-                return
-              }
-              runAction('snapshot', refreshPortfolioSnapshot)
-            }}
-            disabled={!user || !canSync || busy === 'snapshot'}
-            title={
-              !user
-                ? 'Sign in first'
-                : !portfolioReady
-                ? 'Enable portfolio sync below first'
-                : 'Refresh Stake bet history'
-            }
-          >
-            {busy === 'snapshot' ? 'Refreshing…' : (user ? 'Sync Stake' : 'Sign in to sync')}
-          </button>
+          {stakeLoggedIn ? (
+            <button
+              className="refresh-btn"
+              onClick={() => {
+                if (!user) {
+                  openAuth('login')
+                  return
+                }
+                runAction('snapshot', refreshPortfolioSnapshot)
+              }}
+              disabled={!user || !canSync || busy === 'snapshot'}
+              title={!user ? 'Sign in first' : 'Refresh Stake bet history'}
+            >
+              {busy === 'snapshot' ? 'Refreshing…' : 'Sync Stake'}
+            </button>
+          ) : (
+            <button
+              className="refresh-btn"
+              onClick={() => {
+                if (!user) {
+                  openAuth('login')
+                  return
+                }
+                const el = document.getElementById('stake-connect-panel')
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                else runAction('connect', connectPortfolioSession)
+              }}
+              disabled={busy === 'connect'}
+              title="Connect your Stake account"
+            >
+              {busy === 'connect' ? 'Connecting…' : (user ? 'Connect Stake' : 'Sign in to connect Stake')}
+            </button>
+          )}
         </div>
       </header>
 
-      <section className="portfolio-card fade-up">
+      {!stakeLoggedIn ? (
+      <section className="portfolio-card fade-up" id="stake-connect-panel">
         <div className="portfolio-card-head">
           <div>
             <h2>Connect Stake</h2>
@@ -356,6 +357,53 @@ export default function PortfolioPage() {
           </p>
         )}
       </section>
+      ) : (
+      <section className="portfolio-card fade-up">
+        <div className="portfolio-card-head">
+          <div>
+            <h2>Stake connected</h2>
+            <p className="muted">
+              Token saved to your account. Use Sync Stake to refresh history — no need to paste the token again.
+            </p>
+          </div>
+          <span className="portfolio-pill ok">Connected</span>
+        </div>
+        <details className="portfolio-reconnect">
+          <summary className="muted">Replace API token</summary>
+          <div className="stake-token-box" style={{ marginTop: '0.75rem' }}>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder="Paste a new Stake API token"
+              value={stakeToken}
+              onChange={(e) => setStakeToken(e.target.value.trim())}
+            />
+            <div className="stake-token-actions">
+              <button
+                type="button"
+                className="refresh-btn"
+                disabled={tokenBusy || !stakeToken || !user}
+                onClick={async () => {
+                  setTokenBusy(true)
+                  setErr('')
+                  try {
+                    const next = await connectStakeApiToken(stakeToken)
+                    setState(next)
+                    setStakeToken('')
+                  } catch (e) {
+                    setErr(fetchErrorMessage(e, 'Could not update Stake token.'))
+                  } finally {
+                    setTokenBusy(false)
+                  }
+                }}
+              >
+                {tokenBusy ? 'Saving…' : 'Update token'}
+              </button>
+            </div>
+          </div>
+        </details>
+      </section>
+      )}
 
       {(showStatusError || statusBanner) && (
         <div className={`portfolio-alert ${showStatusError ? 'error' : ''}`}>
@@ -744,8 +792,9 @@ export default function PortfolioPage() {
             No bets yet. Confirm a slip with amounts, add a past bet above, or import your Stake history with an API token.
           </p>
         ) : (
+          <>
           <div className="portfolio-bets">
-            {portfolio.bets.map((bet) => (
+            {portfolio.bets.slice(0, betsShown).map((bet) => (
               <div key={bet.id} className={`portfolio-bet status-${bet.result || bet.status || 'unknown'}`}>
                 <div className="portfolio-bet-top">
                   <div>
@@ -831,6 +880,27 @@ export default function PortfolioPage() {
               </div>
             ))}
           </div>
+          {portfolio.bets.length > betsShown && (
+            <button
+              type="button"
+              className="refresh-btn"
+              style={{ marginTop: '0.75rem' }}
+              onClick={() => setBetsShown((n) => n + 20)}
+            >
+              Show more ({portfolio.bets.length - betsShown} left)
+            </button>
+          )}
+          {betsShown > 12 && portfolio.bets.length > 12 && (
+            <button
+              type="button"
+              className="refresh-btn"
+              style={{ marginTop: '0.5rem', marginLeft: '0.5rem' }}
+              onClick={() => setBetsShown(12)}
+            >
+              Show less
+            </button>
+          )}
+          </>
         )}
       </section>
     </div>

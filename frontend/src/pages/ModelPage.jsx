@@ -92,18 +92,18 @@ function chartRoi(v) {
   return `${(Number(v) * 100).toFixed(1)}%`
 }
 
-/** Accept plain numbers or {roi|v} points from the API. Drop −1 sentinels. */
+/** Accept plain numbers or {roi|v} points from the API. Drop −1 sentinels and junk dips. */
 function asChartNumber(v) {
   if (v == null) return null
-    if (typeof v === 'object') {
+  if (typeof v === 'object') {
     const n = Number(v.roi ?? v.v ?? v.value)
     if (!Number.isFinite(n) || n === -1) return null
-    if (n < 0) return null
+    if (n < -0.35) return null
     return n
   }
   const n = Number(v)
   if (!Number.isFinite(n) || n === -1) return null
-  if (n < 0) return null
+  if (n < -0.35) return null
   return n
 }
 
@@ -620,7 +620,19 @@ function InsightContainer({ c, curves, sportKeys }) {
           <MultiLineChart
             title="Block desk ROI (graded epochs only)"
             series={[
-              { key: 'all 3', color: 'var(--accent, #c4a574)', values: curves.craft_roi || [] },
+              {
+                key: 'block ROI',
+                color: 'var(--accent, #c4a574)',
+                values: (curves.craft_roi || []).filter((v) => v != null).length >= 2
+                  ? curves.craft_roi
+                  : (curves.craft_roi_all || []),
+              },
+              {
+                key: 'best so far',
+                color: 'var(--accent, #c4a574)',
+                dashed: true,
+                values: curves.craft_roi_best || [],
+              },
               { key: 'soccer', color: SPORT_COLOR.soccer, values: (curves.craft_sport_roi || {}).soccer || [] },
               { key: 'basketball', color: SPORT_COLOR.basketball, values: (curves.craft_sport_roi || {}).basketball || [] },
               { key: 'cricket', color: SPORT_COLOR.cricket, values: (curves.craft_sport_roi || {}).cricket || [] },
@@ -631,6 +643,12 @@ function InsightContainer({ c, curves, sportKeys }) {
             title="Craft hit rate by block (graded)"
             series={[
               { key: 'blocks', color: 'var(--green, #3d8b6e)', values: curves.craft_accuracy || [] },
+              {
+                key: 'best so far',
+                color: 'var(--green, #3d8b6e)',
+                dashed: true,
+                values: curves.craft_accuracy_best || [],
+              },
             ].filter((s) => (s.values || []).filter((v) => v != null && Number.isFinite(Number(v))).length >= 2)}
             format={(v) => pct(v)}
           />

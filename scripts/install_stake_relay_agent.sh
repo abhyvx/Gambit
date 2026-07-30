@@ -44,6 +44,7 @@ EOF
 
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
-echo "Installed $PLIST — runs every 10 min."
+echo "Installed $PLIST — short push every 10 min (starts, scrapes, exits). No 24/7 terminal."
 echo "First time: run ./scripts/start_stake_relay.sh once and finish Cloudflare in Chrome."
 echo "Logs: ~/Library/Logs/gambit-stake-relay.log"
+echo "User fallback: Portfolio → Connect with Stake API token (no laptop required)."

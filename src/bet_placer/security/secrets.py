@@ -9,8 +9,9 @@ from functools import lru_cache
 
 
 def _raw_key() -> bytes:
-    # Prefer explicit key; else derive from relay secret so cloud has a stable key without new env.
-    raw = (os.environ.get("GAMBIT_SECRETS_KEY") or os.environ.get("STAKE_RELAY_SECRET") or "gambit-relay-v1-abhyvx").strip()
+    raw = (os.environ.get("GAMBIT_SECRETS_KEY") or "").strip()
+    if not raw:
+        raise RuntimeError("GAMBIT_SECRETS_KEY is required for encrypted secret storage")
     return hashlib.sha256(raw.encode("utf-8")).digest()
 
 

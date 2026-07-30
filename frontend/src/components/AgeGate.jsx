@@ -4,12 +4,13 @@ import { GambitMark } from './GambitLogo'
 const KEY = 'gambit_age_ack_v1'
 
 export default function AgeGate() {
-  const [ack, setAck] = useState(true)
+  const [ack, setAck] = useState(null)
 
   useEffect(() => {
-    try { setAck(localStorage.getItem(KEY) === '1') } catch { setAck(true) }
+    try { setAck(localStorage.getItem(KEY) === '1') } catch { setAck(false) }
   }, [])
 
+  if (ack == null) return null
   if (ack) return null
 
   const accept = () => {

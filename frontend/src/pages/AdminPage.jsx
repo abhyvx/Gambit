@@ -20,7 +20,7 @@ function fmtAt(v) {
 
 export default function AdminPage() {
   useEntryReady()
-  const { user, openAuth } = useAuth()
+  const { user, ready, openAuth } = useAuth()
   const [rows, setRows] = useState([])
   const [oddsLink, setOddsLink] = useState(null)
   const [debug, setDebug] = useState(null)
@@ -44,6 +44,14 @@ export default function AdminPage() {
   useEffect(() => {
     if (user?.is_admin) load()
   }, [user?.is_admin])
+
+  if (!ready) {
+    return (
+      <div className="page">
+        <p className="muted">Loading account…</p>
+      </div>
+    )
+  }
 
   if (!user) {
     return (

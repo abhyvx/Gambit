@@ -178,7 +178,10 @@ def _espn_book_fixtures() -> dict:
 
 def main() -> int:
     cloud = _cloud_url()
-    secret = (os.getenv("STAKE_RELAY_SECRET") or "gambit-relay-v1-abhyvx").strip()
+    secret = (os.getenv("STAKE_RELAY_SECRET") or "").strip()
+    if not secret:
+        print("Set STAKE_RELAY_SECRET before pushing Stake cache.", file=sys.stderr)
+        return 1
     if not cloud:
         print("Set GAMBIT_CLOUD_URL or deploy/cloud_url.txt", file=sys.stderr)
         return 1

@@ -37,7 +37,8 @@ def main() -> int:
 
     os.environ["STAKE_USE_BROWSER"] = "true"
     os.environ["STAKE_BROWSER_HEADLESS"] = "false"
-    os.environ.setdefault("STAKE_RELAY_SECRET", "gambit-relay-v1-abhyvx")
+    if not (os.getenv("STAKE_RELAY_SECRET") or "").strip():
+        raise SystemExit("Set STAKE_RELAY_SECRET before running Stake login sync.")
     if not (os.getenv("GAMBIT_CLOUD_URL") or "").strip():
         os.environ.setdefault("GAMBIT_CLOUD_URL", "https://gambit-yqng.onrender.com")
 

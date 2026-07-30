@@ -16,7 +16,8 @@ def main() -> int:
     os.environ["STAKE_USE_BROWSER"] = "true"
     os.environ["STAKE_BROWSER_HEADLESS"] = "false"  # must be visible for CF
     os.environ.setdefault("STAKE_UPLOAD_RELEASE", "1")
-    os.environ.setdefault("STAKE_RELAY_SECRET", "gambit-relay-v1-abhyvx")
+    if not (os.getenv("STAKE_RELAY_SECRET") or "").strip():
+        raise SystemExit("Set STAKE_RELAY_SECRET before running the Stake relay.")
     if not (os.getenv("GAMBIT_CLOUD_URL") or "").strip():
         os.environ.setdefault("GAMBIT_CLOUD_URL", "https://gambit-yqng.onrender.com")
 

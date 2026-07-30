@@ -137,10 +137,10 @@ def restore_users_bundle(*, force: bool = False) -> dict[str, Any]:
 def _upload_release(path: Path) -> None:
     if not path.is_file():
         return
-    if os.getenv("STAKE_UPLOAD_RELEASE", "").strip().lower() not in ("1", "true", "yes"):
-        # Allow cloud token path without STAKE_UPLOAD_RELEASE
-        if not (os.getenv("GAMBIT_GITHUB_TOKEN") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")):
-            return
+    if os.getenv("GAMBIT_ENABLE_USER_BUNDLE_UPLOAD", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    if not (os.getenv("GAMBIT_GITHUB_TOKEN") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")):
+        return
     repo = os.getenv("GAMBIT_REPO", "abhyvx/Gambit")
     tag = os.getenv("GAMBIT_MODEL_TAG", "model-latest")
     env = os.environ.copy()

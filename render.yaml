@@ -17,9 +17,10 @@ services:
         value: "600"
       - key: GAMBIT_REPO
         value: abhyvx/Gambit
-      - key: STAKE_RELAY_SECRET
-        value: gambit-relay-v1-abhyvx
       # Optional cloud Chrome (Browserbase) — 24/7 Stake odds + Portfolio Connect.
       # Set in Render dashboard (do not commit secrets):
       #   BROWSERBASE_API_KEY
-      #   BROWSERBASE_PROJECT_ID
+      #   TURSO_AUTH_TOKEN
+      #   DATABASE_URL
+      #   STAKE_RELAY_SECRET
+      #   GAMBIT_SECRETS_KEY

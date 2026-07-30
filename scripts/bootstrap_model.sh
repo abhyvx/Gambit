@@ -12,6 +12,9 @@ if [ -n "${HOME:-}" ] && [ "$DEST" != "$HOME/.bet_placer" ]; then
 fi
 
 _restore_users() {
+  if [ "${GAMBIT_ENABLE_USER_BUNDLE_UPLOAD:-}" != "1" ] && [ "${GAMBIT_ENABLE_USER_BUNDLE_UPLOAD:-}" != "true" ] && [ "${GAMBIT_ENABLE_USER_BUNDLE_UPLOAD:-}" != "yes" ]; then
+    return
+  fi
   if [ -f "$DEST/gambit_users_bundle.json" ]; then
     (cd "$ROOT" && PYTHONPATH=src python3 - <<'PY') || true
 from bet_placer.auth.persist import restore_users_bundle
@@ -30,28 +33,12 @@ done
 [ -f "$DEST/stake_overlay_cache.json" ] || NEED_REFRESH=1
 # Portfolio journal from last sync (cloud-compatible without live Chrome)
 [ -f "$DEST/portfolio_state.json" ] || NEED_REFRESH=1
-# Accounts + per-user journals (survive Render free-disk wipe)
-[ -f "$DEST/gambit_users_bundle.json" ] || NEED_REFRESH=1
 # Model desk cache + factor graph (charts / factor box)
 [ -f "$DEST/model_insights_cache.json" ] || NEED_REFRESH=1
 [ -f "$DEST/factor_store.json" ] || NEED_REFRESH=1
 
 if [ "$NEED_REFRESH" = "0" ]; then
     echo "model: using cached state in $DEST"
-    # Always refresh accounts bundle — Render free disk wipes users on redeploy
-    API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-    JSON=$(curl -fsSL "$API" 2>/dev/null || true)
-    URL=$(echo "$JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-for a in d.get('assets',[]):
-    if a.get('name')=='gambit_users_bundle.json':
-        print(a['browser_download_url']); break
-" 2>/dev/null || true)
-    if [ -n "$URL" ]; then
-      curl -fsSL "$URL" -o "$DEST/gambit_users_bundle.json"
-      echo "  → refreshed gambit_users_bundle.json"
-    fi
     _restore_users
     exit 0
 fi
@@ -64,7 +51,7 @@ if [ -z "$JSON" ] || echo "$JSON" | grep -q '"message"'; then
     exit 0
 fi
 
-for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json portfolio_state.json gambit_users_bundle.json model_insights_cache.json factor_store.json; do
+for name in craft.db model_params.json craft_nn.joblib betting_evolution.db stake_overlay_cache.json portfolio_state.json model_insights_cache.json factor_store.json; do
   URL=$(echo "$JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

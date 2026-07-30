@@ -9,7 +9,10 @@ cd "$ROOT"
 export STAKE_USE_BROWSER=true
 # Visible Chrome required once for Cloudflare — headless alone fails on CF
 export STAKE_BROWSER_HEADLESS="${STAKE_BROWSER_HEADLESS:-false}"
-export STAKE_RELAY_SECRET="${STAKE_RELAY_SECRET:-gambit-relay-v1-abhyvx}"
+if [ -z "${STAKE_RELAY_SECRET:-}" ]; then
+  echo "Set STAKE_RELAY_SECRET before starting the Stake relay." >&2
+  exit 1
+fi
 export GAMBIT_CLOUD_URL="${GAMBIT_CLOUD_URL:-https://gambit-yqng.onrender.com}"
 # After a good push, seed GitHub release so Render bootstrap survives redeploys
 export STAKE_UPLOAD_RELEASE="${STAKE_UPLOAD_RELEASE:-1}"

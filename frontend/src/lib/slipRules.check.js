@@ -1,5 +1,5 @@
 /** ponytail: slip rule self-check — fails if multi/SGM gates regress. */
-import { canAddLeg, slipMode, combinedOdds, legsFromBet } from '../lib/slipRules.js'
+import { canAddLeg, slipMode, combinedOdds, multiHasSameMatchConflict, legsFromBet } from '../lib/slipRules.js'
 
 const a = { eventId: '1', market: 'mw', selection: 'home', odds: 2 }
 const b = { eventId: '1', market: 'btts', selection: 'yes', odds: 1.8 }
@@ -9,10 +9,13 @@ const o25 = { eventId: '1', market: 'over_under_goals', selection: 'over', line:
 const u25 = { eventId: '1', market: 'over_under_goals', selection: 'under', line: 2.5, odds: 1.9 }
 
 console.assert(canAddLeg([], a).ok)
-console.assert(canAddLeg([a], b).ok && canAddLeg([a], b).mode === 'sgm')
-console.assert(!canAddLeg([a, b], c).ok)
+console.assert(canAddLeg([a], b).ok)
+console.assert(canAddLeg([a, b], c).ok, 'same-match singles + another match allowed')
 console.assert(canAddLeg([a], c).ok && canAddLeg([a], c).mode === 'multi')
 console.assert(slipMode([a, b]) === 'sgm')
+console.assert(slipMode([a, b, c]) === 'singles')
+console.assert(multiHasSameMatchConflict([a, b]) === true)
+console.assert(multiHasSameMatchConflict([a, c]) === false)
 console.assert(combinedOdds([a, b]) === 3.6)
 // Different totals lines are both valid on an SGM (was wrongly treated as duplicate)
 console.assert(canAddLeg([a, o15], o25).ok)

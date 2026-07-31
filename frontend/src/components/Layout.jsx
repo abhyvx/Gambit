@@ -46,9 +46,9 @@ export default function Layout() {
   const [status, setStatus] = useState(null)
   const {
     clearSlip, legs, removeLeg, slipMode, slipOdds, slipPayout, slipSingles, slipMsg,
-    setLegStake, multiStake, setMultiStake, showMulti,
+    setLegStake, multiStake, setMultiStake, showMulti, multiConfirmed, sameMatchMultiBlocked,
     singlesStakeTotal, singlesPayoutTotal, totalStake, totalPayout,
-    slipOpen, setSlipOpen, slipWidth, settleLeg, confirmPlaced,
+    slipOpen, setSlipOpen, slipWidth, confirmPlaced,
   } = useBankroll()
   const [confirmBusy, setConfirmBusy] = useState(false)
   const online = status && status.status !== 'error'
@@ -232,7 +232,7 @@ export default function Layout() {
 
               {!legs?.length && (
                 <p className="muted slip-empty">
-                  Add picks from a board or Recs. Confirm I placed this tracks them in Portfolio; finished matches settle won/lost automatically.
+                  Add picks from a board or Recs. Confirm bet placed saves them to Portfolio.
                 </p>
               )}
 
@@ -241,11 +241,15 @@ export default function Layout() {
                   <div className="slip-section-label">Singles</div>
                   <div className="slip-ticket-stack">
                     {(slipSingles || []).map((leg) => (
-                      <article key={leg.id} className={`slip-ticket ${leg.result ? `is-${leg.result}` : ''}`}>
+                      <article
+                        key={leg.id}
+                        className={`slip-ticket ${leg.confirmed ? 'is-confirmed' : ''}`}
+                      >
+                        {leg.confirmed && (
+                          <span className="slip-ticket-tick" aria-hidden>✓</span>
+                        )}
                         <div className="slip-ticket-top">
-                          <span className="slip-ticket-kind">
-                            {leg.result === 'won' ? 'Won' : leg.result === 'lost' ? 'Lost' : 'Single'}
-                          </span>
+                          <span className="slip-ticket-kind">Single</span>
                           <button type="button" className="slip-leg-x" onClick={() => removeLeg(leg.id)} aria-label="Remove">×</button>
                         </div>
                         {(() => {
@@ -287,7 +291,7 @@ export default function Layout() {
                               value={leg.stake ?? ''}
                               onChange={(e) => setLegStake(leg.id, e.target.value.replace(/[^\d.]/g, ''))}
                               aria-label={`Amount for ${leg.label}`}
-                              disabled={Boolean(leg.result)}
+                              disabled={Boolean(leg.confirmed)}
                             />
                           </label>
                           {leg.payout != null && (
@@ -297,16 +301,6 @@ export default function Layout() {
                             </div>
                           )}
                         </div>
-                        {!leg.result && (
-                          <div className="slip-learn-row">
-                            <button type="button" className="slip-learn-btn won" onClick={() => settleLeg(leg.id, true)}>
-                              Won
-                            </button>
-                            <button type="button" className="slip-learn-btn lost" onClick={() => settleLeg(leg.id, false)}>
-                              Lost
-                            </button>
-                          </div>
-                        )}
                       </article>
                     ))}
                   </div>
@@ -314,14 +308,25 @@ export default function Layout() {
                   {showMulti && (
                     <>
                       <div className="slip-section-label">
-                        {slipMode === 'sgm' ? 'Same game multi' : 'Multi'}
+                        {sameMatchMultiBlocked
+                          ? 'Multi'
+                          : (slipMode === 'sgm' ? 'Same game multi' : 'Multi')}
                       </div>
-                      <article className="slip-ticket slip-ticket--multi">
+                      <article className={`slip-ticket slip-ticket--multi ${multiConfirmed ? 'is-confirmed' : ''}`}>
+                        {multiConfirmed && (
+                          <span className="slip-ticket-tick" aria-hidden>✓</span>
+                        )}
                         <div className="slip-ticket-top">
-                          <span className="slip-ticket-kind">{slipMode === 'sgm' ? 'SGM' : 'Multi'}</span>
+                          <span className="slip-ticket-kind">
+                            {sameMatchMultiBlocked ? 'Multi' : (slipMode === 'sgm' ? 'SGM' : 'Multi')}
+                          </span>
                           <span className="slip-multi-odds-pair">
-                            <span className="muted">Odds {slipOdds != null ? Number(slipOdds).toFixed(2) : '-'}</span>
-                            <span className="green">Pays {slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '-'}</span>
+                            <span className="muted">
+                              Odds {!sameMatchMultiBlocked && slipOdds != null ? Number(slipOdds).toFixed(2) : '-'}
+                            </span>
+                            <span className="green">
+                              Pays {!sameMatchMultiBlocked && slipOdds != null ? `${Number(slipOdds).toFixed(2)}×` : '-'}
+                            </span>
                           </span>
                         </div>
                         <ul className="slip-ticket-legs">
@@ -339,6 +344,7 @@ export default function Layout() {
                               value={multiStake}
                               onChange={(e) => setMultiStake(e.target.value.replace(/[^\d.]/g, ''))}
                               aria-label="Multi amount"
+                              disabled={Boolean(multiConfirmed)}
                             />
                           </label>
                           {slipPayout != null && (
@@ -367,7 +373,7 @@ export default function Layout() {
                         )}
                       </>
                     )}
-                    {showMulti && Number(multiStake) > 0 && (
+                    {showMulti && !sameMatchMultiBlocked && Number(multiStake) > 0 && (
                       <>
                         <div className="slip-summary-row">
                           <span>Multi stake</span>
@@ -415,7 +421,7 @@ export default function Layout() {
                       }
                     }}
                   >
-                    {confirmBusy ? 'Saving…' : 'Confirm I placed this'}
+                    {confirmBusy ? 'Saving…' : 'Confirm bet placed'}
                   </button>
                 )}
                 <p className="sidebar-disclaimer">

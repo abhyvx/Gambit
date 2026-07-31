@@ -1,10 +1,11 @@
-/** Slip helpers — Stake multi (1 pick / event) + SGM (same event). */
+/** Slip helpers — singles free; multi stake needs one pick per match. */
 
 export function slipMode(legs) {
   if (!legs?.length) return 'empty'
   if (legs.length === 1) return 'single'
   const events = new Set(legs.map((l) => String(l.eventId)))
   if (events.size === 1) return 'sgm'
+  if (multiHasSameMatchConflict(legs)) return 'singles'
   return 'multi'
 }
 
@@ -17,6 +18,17 @@ export function combinedOdds(legs) {
     p *= o
   }
   return Math.round(p * 100) / 100
+}
+
+/** True when any match appears more than once — fine for singles, not for a multi stake. */
+export function multiHasSameMatchConflict(legs) {
+  if (!legs?.length || legs.length < 2) return false
+  const counts = {}
+  for (const l of legs) {
+    const k = String(l.eventId)
+    counts[k] = (counts[k] || 0) + 1
+  }
+  return Object.values(counts).some((n) => n > 1)
 }
 
 function lineKey(leg) {
@@ -72,7 +84,6 @@ export function canAddLeg(legs, next) {
   const list = legs || []
   const eid = String(next.eventId)
   const same = list.filter((l) => String(l.eventId) === eid)
-  const otherEvents = new Set(list.map((l) => String(l.eventId)).filter((id) => id !== eid))
 
   if (same.some((l) => samePick(l, next))) {
     return { ok: false, reason: 'Already on your slip' }
@@ -81,28 +92,10 @@ export function canAddLeg(legs, next) {
     return { ok: false, reason: 'Conflicting pick on this market' }
   }
 
+  // Same-match extras are allowed as separate singles (e.g. two doubles from one game).
+  // Multi stake is gated separately when the user types an amount on the multi ticket.
   if (same.length) {
-    // SGM only when slip is same-game (no other events)
-    if (otherEvents.size) {
-      return {
-        ok: false,
-        reason: 'Multi bets allow one pick per match. Clear other matches to build an SGM.',
-      }
-    }
-    return { ok: true, mode: 'sgm' }
-  }
-
-  // New event while slip is already an SGM
-  const byEvent = {}
-  for (const l of list) {
-    const k = String(l.eventId)
-    byEvent[k] = (byEvent[k] || 0) + 1
-  }
-  if (Object.values(byEvent).some((n) => n > 1)) {
-    return {
-      ok: false,
-      reason: 'SGM is same-game only. Clear the slip to add another match.',
-    }
+    return { ok: true, mode: list.length ? 'sgm' : 'single' }
   }
   return { ok: true, mode: list.length ? 'multi' : 'single' }
 }

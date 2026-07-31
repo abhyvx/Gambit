@@ -1,6 +1,9 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { canAddLeg, combinedOdds, slipMode } from '../lib/slipRules'
+import { canAddLeg, combinedOdds, multiHasSameMatchConflict, slipMode } from '../lib/slipRules'
 import { recordSlipLegs, settleSlipLeg, confirmPortfolioSlip } from '../api/index'
+
+const SAME_MATCH_MULTI_MSG =
+  'These picks are from the same match — stake them as singles. Multi only works with one pick per match.'
 
 const DEFAULT_STYLE = {
   goal: 'value',
@@ -44,7 +47,9 @@ export function BankrollProvider({ children }) {
 
   const [legs, setLegs] = useState([])
   const [legStakes, setLegStakes] = useState({}) // legId -> free-typed string
-  const [legResults, setLegResults] = useState({}) // legId -> 'won' | 'lost'
+  const [legResults, setLegResults] = useState({}) // legId -> 'won' | 'lost' (portfolio settle only)
+  const [confirmedLegs, setConfirmedLegs] = useState({}) // legId -> true
+  const [multiConfirmed, setMultiConfirmed] = useState(false)
   const [multiStake, setMultiStakeState] = useState('')
   const [slipMsg, setSlipMsg] = useState(null)
   const [slipOpen, setSlipOpenState] = useState(() => {
@@ -57,8 +62,14 @@ export function BankrollProvider({ children }) {
     }
   })
 
+  const clearConfirmed = () => {
+    setConfirmedLegs({})
+    setMultiConfirmed(false)
+  }
+
   const setSlipOpen = (next) => {
     const open = typeof next === 'function' ? next(slipOpen) : Boolean(next)
+    if (!open) clearConfirmed()
     setSlipOpenState(open)
     try { localStorage.setItem('slip_rail_open', open ? '1' : '0') } catch { /* ignore */ }
   }
@@ -95,7 +106,14 @@ export function BankrollProvider({ children }) {
   }
 
   const setMultiStake = (val) => {
-    setMultiStakeState(String(val ?? ''))
+    const next = String(val ?? '')
+    if (next && multiHasSameMatchConflict(legs)) {
+      setMultiStakeState('')
+      setSlipMsg(SAME_MATCH_MULTI_MSG)
+      return
+    }
+    if (slipMsg === SAME_MATCH_MULTI_MSG) setSlipMsg(null)
+    setMultiStakeState(next)
   }
 
   const addLeg = (leg) => {
@@ -108,6 +126,7 @@ export function BankrollProvider({ children }) {
     if (!batch.length) return { added: 0, reasons: [] }
     let accepted = []
     const reasons = []
+    clearConfirmed()
     setLegs((prev) => {
       let next = [...(prev || [])]
       accepted = []
@@ -156,6 +175,11 @@ export function BankrollProvider({ children }) {
       delete next[id]
       return next
     })
+    setConfirmedLegs((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     setSlipMsg(null)
   }
 
@@ -163,6 +187,7 @@ export function BankrollProvider({ children }) {
     setLegs([])
     setLegStakes({})
     setLegResults({})
+    clearConfirmed()
     setMultiStakeState('')
     setSlipMsg(null)
   }
@@ -187,7 +212,13 @@ export function BankrollProvider({ children }) {
   }
 
   const confirmPlaced = async () => {
-    const multiOn = (legs || []).length >= 2
+    const sameMatchBlock = multiHasSameMatchConflict(legs)
+    if (sameMatchBlock && Number(multiStake) > 0) {
+      setMultiStakeState('')
+      setSlipMsg(SAME_MATCH_MULTI_MSG)
+      throw new Error(SAME_MATCH_MULTI_MSG)
+    }
+    const multiOn = (legs || []).length >= 2 && !sameMatchBlock && Number(multiStake) > 0
     const packed = (legs || []).map((leg) => ({
       ...leg,
       stake: Number(legStakes[leg.id] || 0) || undefined,
@@ -206,7 +237,11 @@ export function BankrollProvider({ children }) {
         multiStake: multiOn ? multiStake : null,
         multiOdds: multiOn ? combinedOdds(legs) : null,
       })
-      setSlipMsg((out?.connection?.last_sync_message) || 'Confirmed into your portfolio journal.')
+      const nextConfirmed = {}
+      for (const leg of legs || []) nextConfirmed[leg.id] = true
+      setConfirmedLegs(nextConfirmed)
+      setMultiConfirmed(multiOn)
+      setSlipMsg(null)
       return out
     } catch (e) {
       setSlipMsg(e?.message || 'Could not confirm placed bets.')
@@ -232,6 +267,7 @@ export function BankrollProvider({ children }) {
       sportKey: payload.sportKey,
       league: payload.meta,
     })).filter((l) => l.odds)
+    clearConfirmed()
     setLegs(next)
     setSlipOpen(true)
     setSlipMsg(null)
@@ -239,6 +275,7 @@ export function BankrollProvider({ children }) {
 
   const mode = slipMode(legs)
   const odds = combinedOdds(legs)
+  const sameMatchMultiBlocked = multiHasSameMatchConflict(legs)
   const showMulti = legs.length >= 2
 
   const singles = useMemo(() => (
@@ -248,12 +285,13 @@ export function BankrollProvider({ children }) {
         ...leg,
         stake,
         result: legResults[leg.id] || null,
+        confirmed: Boolean(confirmedLegs[leg.id]),
         payout: payoutFor(stake, leg.odds),
       }
     })
-  ), [legs, legStakes, legResults])
+  ), [legs, legStakes, legResults, confirmedLegs])
 
-  const multiPayout = showMulti ? payoutFor(multiStake, odds) : null
+  const multiPayout = showMulti && !sameMatchMultiBlocked ? payoutFor(multiStake, odds) : null
 
   const singlesStakeTotal = useMemo(() => (
     singles.reduce((s, leg) => s + (Number(leg.stake) > 0 ? Number(leg.stake) : 0), 0)
@@ -261,7 +299,7 @@ export function BankrollProvider({ children }) {
   const singlesPayoutTotal = useMemo(() => (
     singles.reduce((s, leg) => s + (leg.payout != null ? leg.payout : 0), 0)
   ), [singles])
-  const multiStakeNum = Number(multiStake) > 0 ? Number(multiStake) : 0
+  const multiStakeNum = !sameMatchMultiBlocked && Number(multiStake) > 0 ? Number(multiStake) : 0
   const totalStake = singlesStakeTotal + (showMulti ? multiStakeNum : 0)
   const totalPayout = singlesPayoutTotal + (showMulti && multiPayout != null ? multiPayout : 0)
 
@@ -304,6 +342,8 @@ export function BankrollProvider({ children }) {
       setLegStake,
       multiStake,
       setMultiStake,
+      multiConfirmed,
+      sameMatchMultiBlocked,
       showMulti,
       slipMsg,
       setSlipMsg,
